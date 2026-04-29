@@ -168,17 +168,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           .update({'transfer_id': null})
           .eq('household_id', householdId);
 
-      // 2. Delete split_transactions (references transaction.id, no household_id)
-      final txRows = await client
-          .from('transactions')
-          .select('id')
+      // 2. Delete split_transactions (has household_id directly)
+      await client.from('split_transactions')
+          .delete()
           .eq('household_id', householdId);
-      final txIds = (txRows as List).map((r) => r['id'] as String).toList();
-      if (txIds.isNotEmpty) {
-        await client.from('split_transactions')
-            .delete()
-            .inFilter('transaction_id', txIds);
-      }
 
       // 3-8. Delete in FK-safe order
       await client.from('transactions').delete().eq('household_id', householdId);
@@ -239,7 +232,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       final householdId = await ref.read(householdIdProvider.future);
       final client      = Supabase.instance.client;
 
-      final results = await Future.wait([
+      final results = await Future.wait<dynamic>([
         client.from('households').select().eq('id', householdId).single(),
         client.from('accounts').select().eq('household_id', householdId),
         client.from('category_groups').select().eq('household_id', householdId),
