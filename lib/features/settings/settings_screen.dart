@@ -135,10 +135,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         title: Text('Reset budget?',
             style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
         content: Text(
-          'This will permanently delete all transactions, categories, budget '
-          'allocations, payees, and scheduled transactions.\n\n'
-          'Your accounts will remain, but their balances will be reset to '
-          'their starting values.\n\n'
+          'This will permanently delete everything — all accounts, transactions, '
+          'categories, budget allocations, payees, and scheduled transactions.\n\n'
           'This cannot be undone.',
           style: GoogleFonts.plusJakartaSans(fontSize: 14),
         ),
@@ -173,25 +171,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           .delete()
           .eq('household_id', householdId);
 
-      // 3-8. Delete in FK-safe order
+      // 3-9. Delete in FK-safe order
       await client.from('transactions').delete().eq('household_id', householdId);
       await client.from('scheduled_transactions').delete().eq('household_id', householdId);
       await client.from('budget_months').delete().eq('household_id', householdId);
       await client.from('category_goals').delete().eq('household_id', householdId);
       await client.from('payees').delete().eq('household_id', householdId);
+      // Deleting categories sets accounts.cc_payment_category_id = NULL (ON DELETE SET NULL)
       await client.from('categories').delete().eq('household_id', householdId);
       await client.from('category_groups').delete().eq('household_id', householdId);
-
-      // 9. Reset account balances to starting values
-      final accountRows = await client
-          .from('accounts')
-          .select('id, starting_balance')
-          .eq('household_id', householdId);
-      for (final a in (accountRows as List)) {
-        await client.from('accounts')
-            .update({'current_balance': a['starting_balance']})
-            .eq('id', a['id'] as String);
-      }
+      await client.from('accounts').delete().eq('household_id', householdId);
 
       // Invalidate all providers so UI refreshes
       ref.invalidate(transactionsProvider);
