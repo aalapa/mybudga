@@ -49,6 +49,7 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
     required bool isTracking,
     String? lastFour,
     required double startingBalance,
+    DateTime? startDate,
   }) async {
     final householdId = await ref.read(householdIdProvider.future);
     final client      = ref.read(supabaseProvider);
@@ -62,6 +63,10 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
       'last_four':        lastFour?.isNotEmpty == true ? lastFour : null,
       'starting_balance': startingBalance,
       'current_balance':  startingBalance,
+      if (startDate != null)
+        'start_date': '${startDate.year}-'
+            '${startDate.month.toString().padLeft(2, '0')}-'
+            '${startDate.day.toString().padLeft(2, '0')}',
     });
     // Realtime will trigger rebuild, but invalidate immediately for snappy UI
     ref.invalidateSelf();

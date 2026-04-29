@@ -4,55 +4,75 @@ enum AccountType {
   checking,
   savings,
   creditCard,
+  lineOfCredit,
   cash,
   investment,
+  mortgage,
   loan,
   asset;
 
   static AccountType fromString(String s) => switch (s) {
-    'checking'    => AccountType.checking,
-    'savings'     => AccountType.savings,
-    'credit_card' => AccountType.creditCard,
-    'cash'        => AccountType.cash,
-    'investment'  => AccountType.investment,
-    'loan'        => AccountType.loan,
-    'asset'       => AccountType.asset,
-    _             => AccountType.checking,
+    'checking'       => AccountType.checking,
+    'savings'        => AccountType.savings,
+    'credit_card'    => AccountType.creditCard,
+    'line_of_credit' => AccountType.lineOfCredit,
+    'cash'           => AccountType.cash,
+    'investment'     => AccountType.investment,
+    'mortgage'       => AccountType.mortgage,
+    'loan'           => AccountType.loan,
+    'asset'          => AccountType.asset,
+    _                => AccountType.checking,
   };
 
   String get toDb => switch (this) {
-    AccountType.creditCard => 'credit_card',
-    _                      => name,
+    AccountType.creditCard    => 'credit_card',
+    AccountType.lineOfCredit  => 'line_of_credit',
+    _                         => name,
   };
 
   String get label => switch (this) {
-    AccountType.checking   => 'Checking',
-    AccountType.savings    => 'Savings',
-    AccountType.creditCard => 'Credit Card',
-    AccountType.cash       => 'Cash',
-    AccountType.investment => 'Investment',
-    AccountType.loan       => 'Loan',
-    AccountType.asset      => 'Asset',
+    AccountType.checking     => 'Checking',
+    AccountType.savings      => 'Savings',
+    AccountType.creditCard   => 'Credit Card',
+    AccountType.lineOfCredit => 'Line of Credit',
+    AccountType.cash         => 'Cash',
+    AccountType.investment   => 'Investment',
+    AccountType.mortgage     => 'Mortgage',
+    AccountType.loan         => 'Loan',
+    AccountType.asset        => 'Asset',
   };
 
   String get typeName => switch (this) {
-    AccountType.checking   => 'Checking account',
-    AccountType.savings    => 'Savings account',
-    AccountType.creditCard => 'Credit card',
-    AccountType.cash       => 'Cash',
-    AccountType.investment => 'Investment account',
-    AccountType.loan       => 'Loan',
-    AccountType.asset      => 'Asset',
+    AccountType.checking     => 'Checking account',
+    AccountType.savings      => 'Savings account',
+    AccountType.creditCard   => 'Credit card',
+    AccountType.lineOfCredit => 'Line of credit',
+    AccountType.cash         => 'Cash',
+    AccountType.investment   => 'Investment account',
+    AccountType.mortgage     => 'Mortgage',
+    AccountType.loan         => 'Loan',
+    AccountType.asset        => 'Asset',
   };
 
   IconData get icon => switch (this) {
-    AccountType.checking   => Icons.account_balance_outlined,
-    AccountType.savings    => Icons.savings_outlined,
-    AccountType.creditCard => Icons.credit_card_outlined,
-    AccountType.cash       => Icons.payments_outlined,
-    AccountType.investment => Icons.show_chart,
-    AccountType.loan       => Icons.home_outlined,
-    AccountType.asset      => Icons.diamond_outlined,
+    AccountType.checking     => Icons.account_balance_outlined,
+    AccountType.savings      => Icons.savings_outlined,
+    AccountType.creditCard   => Icons.credit_card_outlined,
+    AccountType.lineOfCredit => Icons.credit_score_outlined,
+    AccountType.cash         => Icons.payments_outlined,
+    AccountType.investment   => Icons.show_chart,
+    AccountType.mortgage     => Icons.home_outlined,
+    AccountType.loan         => Icons.receipt_long_outlined,
+    AccountType.asset        => Icons.diamond_outlined,
+  };
+
+  /// Whether this account type defaults to tracking (off-budget).
+  bool get defaultTracking => switch (this) {
+    AccountType.investment => true,
+    AccountType.mortgage   => true,
+    AccountType.loan       => true,
+    AccountType.asset      => true,
+    _                      => false,
   };
 }
 
@@ -66,6 +86,7 @@ class Account {
   final String? lastFour;
   final double balance;
   final bool isActive;
+  final DateTime? startDate;
 
   const Account({
     required this.id,
@@ -77,6 +98,7 @@ class Account {
     this.lastFour,
     required this.balance,
     this.isActive = true,
+    this.startDate,
   });
 
   factory Account.fromJson(Map<String, dynamic> json) => Account(
@@ -89,6 +111,9 @@ class Account {
     lastFour:    json['last_four'] as String?,
     balance:     (json['current_balance'] as num).toDouble(),
     isActive:    json['is_active'] as bool,
+    startDate:   json['start_date'] != null
+                   ? DateTime.tryParse(json['start_date'] as String)
+                   : null,
   );
 
   bool get isCreditCard => type == AccountType.creditCard;
@@ -101,6 +126,6 @@ class Account {
   Account copyWith({double? balance}) => Account(
     id: id, householdId: householdId, name: name, nickname: nickname,
     type: type, isTracking: isTracking, lastFour: lastFour,
-    balance: balance ?? this.balance, isActive: isActive,
+    balance: balance ?? this.balance, isActive: isActive, startDate: startDate,
   );
 }

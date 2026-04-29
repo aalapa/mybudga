@@ -404,6 +404,7 @@ class _AccountTile extends ConsumerWidget {
 
     return InkWell(
       onTap: () => _showAccountDetail(context, ref, account),
+      onLongPress: () => _showReconcileSheet(context, account, ref),
       borderRadius: isLast
           ? const BorderRadius.vertical(bottom: Radius.circular(16))
           : BorderRadius.zero,
@@ -443,19 +444,23 @@ class _AccountTile extends ConsumerWidget {
   }
 
   Color _iconColor(ColorScheme cs) => switch (account.type) {
-    AccountType.checking   => cs.primary,
-    AccountType.savings    => cs.tertiary,
-    AccountType.creditCard => cs.error,
-    AccountType.cash       => cs.tertiary,
-    AccountType.investment => const Color(0xFF4CAF50),
-    AccountType.loan       => cs.onSurfaceVariant,
-    AccountType.asset      => cs.onSurfaceVariant,
+    AccountType.checking     => cs.primary,
+    AccountType.savings      => cs.tertiary,
+    AccountType.creditCard   => cs.error,
+    AccountType.lineOfCredit => cs.error,
+    AccountType.cash         => cs.tertiary,
+    AccountType.investment   => const Color(0xFF4CAF50),
+    AccountType.mortgage     => cs.onSurfaceVariant,
+    AccountType.loan         => cs.onSurfaceVariant,
+    AccountType.asset        => cs.onSurfaceVariant,
   };
 }
 
 // ---------------------------------------------------------------------------
 // Account detail sheet
 // ---------------------------------------------------------------------------
+
+enum _TxFilter { all, uncleared, cleared }
 
 void _showAccountDetail(BuildContext context, WidgetRef ref, Account account) {
   showModalBottomSheet(
@@ -477,6 +482,7 @@ class _AccountDetailSheet extends ConsumerStatefulWidget {
 
 class _AccountDetailSheetState extends ConsumerState<_AccountDetailSheet> {
   int _days = 14;
+  _TxFilter _filter = _TxFilter.all;
 
   static const _periods = [
     (label: '14d',  days: 14),
@@ -618,6 +624,42 @@ class _AccountDetailSheetState extends ConsumerState<_AccountDetailSheet> {
                         ))),
                       ],
                     ),
+                    const SizedBox(height: 8),
+                    // ── Cleared filter ─────────────────────────────────────
+                    Row(
+                      children: _TxFilter.values.map((f) {
+                        final active = _filter == f;
+                        final label  = switch (f) {
+                          _TxFilter.all       => 'All',
+                          _TxFilter.uncleared => 'Uncleared',
+                          _TxFilter.cleared   => 'Cleared',
+                        };
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: GestureDetector(
+                            onTap: () => setState(() => _filter = f),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: active
+                                    ? cs.secondaryContainer
+                                    : cs.surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(label,
+                                  style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: active
+                                          ? cs.onSecondaryContainer
+                                          : cs.onSurfaceVariant)),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
                     const SizedBox(height: 12),
                   ],
                 ),
@@ -641,8 +683,19 @@ class _AccountDetailSheetState extends ConsumerState<_AccountDetailSheet> {
                           color: cs.onSurfaceVariant)),
                 ),
               ),
-              data: (txs) {
+              data: (allTxs) {
+                final txs = switch (_filter) {
+                  _TxFilter.all       => allTxs,
+                  _TxFilter.uncleared => allTxs.where((t) => !t.cleared).toList(),
+                  _TxFilter.cleared   => allTxs.where((t) => t.cleared).toList(),
+                };
+
                 if (txs.isEmpty) {
+                  final msg = switch (_filter) {
+                    _TxFilter.uncleared => 'No uncleared transactions',
+                    _TxFilter.cleared   => 'No cleared transactions',
+                    _TxFilter.all       => 'No transactions in the last $_days days',
+                  };
                   return SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 48),
@@ -651,7 +704,7 @@ class _AccountDetailSheetState extends ConsumerState<_AccountDetailSheet> {
                           Icon(Icons.receipt_long_outlined,
                               size: 48, color: cs.onSurfaceVariant),
                           const SizedBox(height: 12),
-                          Text('No transactions in the last $_days days',
+                          Text(msg,
                               style: GoogleFonts.plusJakartaSans(
                                   color: cs.onSurfaceVariant)),
                         ],
@@ -677,6 +730,15 @@ class _AccountDetailSheetState extends ConsumerState<_AccountDetailSheet> {
                           dateLabel:    entry.key,
                           transactions: entry.value,
                           fmt:          fmt,
+                          onClearToggle: (txId, nowCleared) async {
+                            await Supabase.instance.client
+                                .from('transactions')
+                                .update({'cleared': nowCleared})
+                                .eq('id', txId);
+                            ref.invalidate(accountTransactionsProvider(
+                              (accountId: account.id, days: _days),
+                            ));
+                          },
                         );
                       },
                       childCount: entries.length,
@@ -709,11 +771,13 @@ class _TxGroup extends StatelessWidget {
   final String label;
   final List<Transaction> transactions;
   final NumberFormat fmt;
+  final Future<void> Function(String txId, bool nowCleared)? onClearToggle;
 
   const _TxGroup({
     required String dateLabel,
     required this.transactions,
     required this.fmt,
+    this.onClearToggle,
   }) : label = dateLabel;
 
   @override
@@ -759,6 +823,26 @@ class _TxGroup extends StatelessWidget {
                         horizontal: 14, vertical: 12),
                     child: Row(
                       children: [
+                        // Cleared indicator — tap to toggle
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: onClearToggle != null
+                              ? () => onClearToggle!(tx.id, !tx.cleared)
+                              : null,
+                          child: Padding(
+                            padding: const EdgeInsets.only(right: 10),
+                            child: Icon(
+                              tx.cleared
+                                  ? Icons.check_circle_rounded
+                                  : Icons.circle_outlined,
+                              size: 18,
+                              color: tx.cleared
+                                  ? const Color(0xFF4CAF50)
+                                  : cs.onSurfaceVariant
+                                        .withValues(alpha: 0.3),
+                            ),
+                          ),
+                        ),
                         Container(
                           width: 36, height: 36,
                           decoration: BoxDecoration(
@@ -826,22 +910,23 @@ void _showReconcileSheet(BuildContext context, Account account, WidgetRef ref) {
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (_) => _ReconcileSheet(account: account, ref: ref),
+    builder: (_) => _ReconcileSheet(account: account, widgetRef: ref),
   );
 }
 
-class _ReconcileSheet extends StatefulWidget {
+class _ReconcileSheet extends ConsumerStatefulWidget {
   final Account account;
-  final WidgetRef ref;
-  const _ReconcileSheet({required this.account, required this.ref});
+  final WidgetRef widgetRef;
+  const _ReconcileSheet({required this.account, required this.widgetRef});
 
   @override
-  State<_ReconcileSheet> createState() => _ReconcileSheetState();
+  ConsumerState<_ReconcileSheet> createState() => _ReconcileSheetState();
 }
 
-class _ReconcileSheetState extends State<_ReconcileSheet> {
+class _ReconcileSheetState extends ConsumerState<_ReconcileSheet> {
   late final TextEditingController _ctrl;
-  bool _saving = false;
+  bool   _saving       = false;
+  double? _clearedTotal;
 
   @override
   void initState() {
@@ -849,6 +934,21 @@ class _ReconcileSheetState extends State<_ReconcileSheet> {
     _ctrl = TextEditingController(
       text: widget.account.balance.abs().toStringAsFixed(2),
     );
+    _loadClearedTotal();
+  }
+
+  Future<void> _loadClearedTotal() async {
+    try {
+      final rows = await Supabase.instance.client
+          .from('transactions')
+          .select('amount')
+          .eq('account_id', widget.account.id)
+          .eq('cleared', true)
+          .isFilter('deleted_at', null);
+      final total = (rows as List)
+          .fold(0.0, (s, r) => s + (r['amount'] as num).toDouble());
+      if (mounted) setState(() => _clearedTotal = total);
+    } catch (_) {}
   }
 
   @override
@@ -860,7 +960,7 @@ class _ReconcileSheetState extends State<_ReconcileSheet> {
     setState(() => _saving = true);
     final newBalance = widget.account.isCreditCard ? -val.abs() : val;
     try {
-      await widget.ref.read(accountsProvider.notifier).updateBalance(
+      await widget.widgetRef.read(accountsProvider.notifier).updateBalance(
         widget.account.id, newBalance,
       );
       if (mounted) Navigator.pop(context);
@@ -899,7 +999,8 @@ class _ReconcileSheetState extends State<_ReconcileSheet> {
                 style: GoogleFonts.plusJakartaSans(
                     fontSize: 22, fontWeight: FontWeight.w800, color: cs.onSurface)),
             const SizedBox(height: 6),
-            Text('Enter the actual balance from your bank statement.',
+            Text('Enter the balance from your bank statement. '
+                'Mark transactions as cleared to track what matches.',
                 style: GoogleFonts.plusJakartaSans(
                     fontSize: 13, color: cs.onSurfaceVariant)),
             const SizedBox(height: 24),
@@ -908,16 +1009,75 @@ class _ReconcileSheetState extends State<_ReconcileSheet> {
               autofocus: true,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               textInputAction: TextInputAction.done,
+              onChanged: (_) => setState(() {}),
               onSubmitted: (_) => _save(),
               style: GoogleFonts.plusJakartaSans(
                   fontSize: 28, fontWeight: FontWeight.w800, color: cs.onSurface),
               decoration: InputDecoration(
+                labelText: 'Bank statement balance',
                 prefixText: '\$ ',
                 prefixStyle: GoogleFonts.plusJakartaSans(
-                    fontSize: 28, fontWeight: FontWeight.w800, color: cs.onSurfaceVariant),
+                    fontSize: 28, fontWeight: FontWeight.w800,
+                    color: cs.onSurfaceVariant),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
+            // Cleared balance summary
+            if (_clearedTotal != null) ...[
+              Builder(builder: (context) {
+                final fmt           = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+                final statement     = double.tryParse(
+                    _ctrl.text.replaceAll(',', '')) ?? 0.0;
+                final clearedAbs    = widget.account.isCreditCard
+                    ? -_clearedTotal!.abs()
+                    : _clearedTotal!;
+                final diff          = statement - clearedAbs.abs();
+                final isMatch       = diff.abs() < 0.005;
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: isMatch
+                        ? const Color(0xFF4CAF50).withValues(alpha: 0.12)
+                        : cs.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isMatch
+                            ? Icons.check_circle_rounded
+                            : Icons.info_outline,
+                        size: 16,
+                        color: isMatch
+                            ? const Color(0xFF4CAF50)
+                            : cs.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          isMatch
+                              ? 'Cleared balance matches statement!'
+                              : 'Cleared balance: ${fmt.format(_clearedTotal!.abs())}',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13, fontWeight: FontWeight.w600,
+                              color: isMatch
+                                  ? const Color(0xFF4CAF50)
+                                  : cs.onSurfaceVariant),
+                        ),
+                      ),
+                      if (!isMatch)
+                        Text(
+                          'Diff: ${fmt.format(diff.abs())}',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12, color: cs.onSurfaceVariant),
+                        ),
+                    ],
+                  ),
+                );
+              }),
+              const SizedBox(height: 16),
+            ],
             FilledButton(
               onPressed: _saving ? null : _save,
               style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
@@ -963,6 +1123,7 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
 
   AccountType _type       = AccountType.checking;
   bool        _isTracking = false;
+  DateTime?   _startDate;
   bool        _saving     = false;
 
   @override
@@ -974,6 +1135,16 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
 
   bool get _canSave => _nameCtrl.text.trim().isNotEmpty && !_saving;
 
+  Future<void> _pickStartDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _startDate ?? DateTime.now(),
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) setState(() => _startDate = picked);
+  }
+
   Future<void> _save() async {
     if (!_canSave) return;
     setState(() => _saving = true);
@@ -981,7 +1152,8 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
       final balance = double.tryParse(
         _balanceCtrl.text.replaceAll(',', ''),
       ) ?? 0.0;
-      final isCc = _type == AccountType.creditCard;
+      final isCc = _type == AccountType.creditCard ||
+                   _type == AccountType.lineOfCredit;
 
       await widget.widgetRef.read(accountsProvider.notifier).addAccount(
         name:            _nameCtrl.text.trim(),
@@ -990,6 +1162,7 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
         isTracking:      _isTracking,
         lastFour:        isCc ? _lastFourCtrl.text.trim() : null,
         startingBalance: isCc ? -balance.abs() : balance,
+        startDate:       _startDate,
       );
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -1006,8 +1179,10 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final cs  = Theme.of(context).colorScheme;
-    final isCc = _type == AccountType.creditCard;
+    final cs   = Theme.of(context).colorScheme;
+    final fmt  = DateFormat('MMM d, yyyy');
+    final isCc = _type == AccountType.creditCard ||
+                 _type == AccountType.lineOfCredit;
 
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
@@ -1034,33 +1209,43 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
               const SizedBox(height: 20),
               Text('New Account',
                   style: GoogleFonts.plusJakartaSans(
-                      fontSize: 22, fontWeight: FontWeight.w800, color: cs.onSurface)),
+                      fontSize: 22, fontWeight: FontWeight.w800,
+                      color: cs.onSurface)),
               const SizedBox(height: 24),
 
-              Text('TYPE',
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 11, fontWeight: FontWeight.w700,
-                      color: cs.onSurfaceVariant, letterSpacing: 0.8)),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8, runSpacing: 8,
-                children: AccountType.values.map((t) {
-                  final selected = _type == t;
-                  return FilterChip(
-                    label: Text(t.label,
-                        style: GoogleFonts.plusJakartaSans(fontSize: 13)),
-                    avatar: Icon(t.icon, size: 14),
-                    selected: selected,
-                    onSelected: (_) => setState(() {
-                      _type       = t;
-                      _isTracking = t == AccountType.investment ||
-                                    t == AccountType.loan      ||
-                                    t == AccountType.asset;
-                    }),
-                  );
-                }).toList(),
+              // Type dropdown
+              DropdownButtonFormField<AccountType>(
+                value: _type,
+                decoration: InputDecoration(
+                  labelText: 'Account type',
+                  prefixIcon: Icon(_type.icon, size: 18),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                          color: cs.outline.withValues(alpha: 0.4))),
+                ),
+                items: AccountType.values.map((t) => DropdownMenuItem(
+                  value: t,
+                  child: Row(
+                    children: [
+                      Icon(t.icon, size: 16, color: cs.onSurfaceVariant),
+                      const SizedBox(width: 10),
+                      Text(t.label,
+                          style: GoogleFonts.plusJakartaSans(fontSize: 14)),
+                    ],
+                  ),
+                )).toList(),
+                onChanged: (t) {
+                  if (t == null) return;
+                  setState(() {
+                    _type       = t;
+                    _isTracking = t.defaultTracking;
+                  });
+                },
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
 
               TextField(
                 controller: _nameCtrl,
@@ -1077,7 +1262,7 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
                 textInputAction: TextInputAction.next,
                 decoration: const InputDecoration(
                   labelText: 'Nickname (optional)',
-                  hintText:  'e.g. Sapphire, Gold',
+                  hintText: 'e.g. Sapphire, Gold',
                 ),
               ),
               const SizedBox(height: 12),
@@ -1106,6 +1291,53 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
                   prefixText: '\$ ',
                 ),
               ),
+              const SizedBox(height: 12),
+
+              // Start date picker
+              InkWell(
+                onTap: _pickStartDate,
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(12),
+                    border: _startDate != null
+                        ? Border.all(
+                            color: cs.primary.withValues(alpha: 0.4))
+                        : null,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.calendar_today_outlined,
+                          size: 16,
+                          color: _startDate != null
+                              ? cs.primary
+                              : cs.onSurfaceVariant),
+                      const SizedBox(width: 12),
+                      Text(
+                        _startDate != null
+                            ? 'Tracking from ${fmt.format(_startDate!)}'
+                            : 'Start date (optional)',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 14,
+                            color: _startDate != null
+                                ? cs.onSurface
+                                : cs.onSurfaceVariant),
+                      ),
+                      if (_startDate != null) ...[
+                        const Spacer(),
+                        GestureDetector(
+                          onTap: () => setState(() => _startDate = null),
+                          child: Icon(Icons.clear,
+                              size: 16, color: cs.onSurfaceVariant),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
               const SizedBox(height: 16),
 
               Container(
@@ -1114,10 +1346,12 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: SwitchListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 4),
                   title: Text('Tracking account (off-budget)',
                       style: GoogleFonts.plusJakartaSans(
-                          fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
+                          fontSize: 14, fontWeight: FontWeight.w600,
+                          color: cs.onSurface)),
                   subtitle: Text(
                     _isTracking
                         ? "Transactions won't affect your envelopes"
@@ -1128,19 +1362,24 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
                   value: _isTracking,
                   onChanged: (v) => setState(() => _isTracking = v),
                   activeThumbColor: cs.primary,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
                 ),
               ),
               const SizedBox(height: 28),
 
               FilledButton(
                 onPressed: _canSave ? _save : null,
-                style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+                style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(52)),
                 child: _saving
-                    ? SizedBox(height: 20, width: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: cs.onPrimary))
+                    ? SizedBox(
+                        height: 20, width: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: cs.onPrimary))
                     : Text('Add Account',
-                        style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+                        style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w700)),
               ),
             ],
           ),

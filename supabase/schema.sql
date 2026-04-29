@@ -19,7 +19,7 @@ create extension if not exists "uuid-ossp";
 -- =============================================================================
 
 create type household_role         as enum ('owner', 'member');
-create type account_type           as enum ('checking', 'savings', 'credit_card', 'cash', 'investment', 'loan', 'asset');
+create type account_type           as enum ('checking', 'savings', 'credit_card', 'line_of_credit', 'cash', 'investment', 'mortgage', 'loan', 'asset');
 create type pay_frequency          as enum ('weekly', 'biweekly', 'monthly');
 create type rollover_behavior      as enum ('rollover', 'zero_out');
 create type overspending_behavior  as enum ('reduce_tbb', 'carry_forward');
@@ -74,6 +74,7 @@ create table accounts (
     current_balance         numeric(12,2) not null default 0,
     is_active               boolean not null default true,
     cc_payment_category_id  uuid,  -- FK added after categories table
+    start_date              date,
     created_at              timestamptz not null default now(),
     updated_at              timestamptz not null default now()
 );
