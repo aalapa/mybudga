@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/supabase/supabase_provider.dart';
 import '../../shared/models/account.dart';
+import '../../shared/models/transaction.dart';
 import '../../shared/providers/household_provider.dart';
 
 class AccountsNotifier extends AsyncNotifier<List<Account>> {
@@ -87,3 +88,28 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
 
 final accountsProvider =
     AsyncNotifierProvider<AccountsNotifier, List<Account>>(AccountsNotifier.new);
+
+/// Transactions for a single account over the last [days] days.
+final accountTransactionsProvider = FutureProvider.autoDispose
+    .family<List<Transaction>, ({String accountId, int days})>((ref, args) async {
+  final householdId = await ref.watch(householdIdProvider.future);
+  final client      = ref.watch(supabaseProvider);
+  final since       = DateTime.now().subtract(Duration(days: args.days));
+  final sinceStr    = '${since.year}-'
+      '${since.month.toString().padLeft(2, '0')}-'
+      '${since.day.toString().padLeft(2, '0')}';
+
+  final res = await client
+      .from('transactions')
+      .select('*, payees(id, name), categories(id, name)')
+      .eq('household_id', householdId)
+      .eq('account_id', args.accountId)
+      .gte('date', sinceStr)
+      .isFilter('deleted_at', null)
+      .order('date', ascending: false)
+      .order('created_at', ascending: false);
+
+  return (res as List)
+      .map((r) => Transaction.fromJson(r as Map<String, dynamic>))
+      .toList();
+});
