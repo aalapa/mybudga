@@ -1,10 +1,21 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/sms/sms_service.dart';
+import '../../shared/providers/categories_provider.dart';
 import '../../shared/providers/household_provider.dart';
+import '../../shared/providers/payees_provider.dart';
+import '../accounts/accounts_provider.dart';
+import '../budget/budget_provider.dart';
+import '../transactions/transactions_provider.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -20,6 +31,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _inviteSent  = false;
   bool? _smsEnabled;
   bool _smsToggling = false;
+  bool _resetting   = false;
+  bool _exporting   = false;
 
   @override
   void initState() {
@@ -110,6 +123,178 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       setState(() => _inviteSent = false);
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Reset budget
+  // ---------------------------------------------------------------------------
+
+  Future<void> _resetBudget() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Reset budget?',
+            style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
+        content: Text(
+          'This will permanently delete all transactions, categories, budget '
+          'allocations, payees, and scheduled transactions.\n\n'
+          'Your accounts will remain, but their balances will be reset to '
+          'their starting values.\n\n'
+          'This cannot be undone.',
+          style: GoogleFonts.plusJakartaSans(fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(ctx).colorScheme.error),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Reset everything'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _resetting = true);
+    try {
+      final householdId = await ref.read(householdIdProvider.future);
+      final client      = Supabase.instance.client;
+
+      // 1. Remove self-referential transfer_id to avoid FK violation
+      await client.from('transactions')
+          .update({'transfer_id': null})
+          .eq('household_id', householdId);
+
+      // 2. Delete split_transactions (references transaction.id, no household_id)
+      final txRows = await client
+          .from('transactions')
+          .select('id')
+          .eq('household_id', householdId);
+      final txIds = (txRows as List).map((r) => r['id'] as String).toList();
+      if (txIds.isNotEmpty) {
+        await client.from('split_transactions')
+            .delete()
+            .inFilter('transaction_id', txIds);
+      }
+
+      // 3-8. Delete in FK-safe order
+      await client.from('transactions').delete().eq('household_id', householdId);
+      await client.from('scheduled_transactions').delete().eq('household_id', householdId);
+      await client.from('budget_months').delete().eq('household_id', householdId);
+      await client.from('category_goals').delete().eq('household_id', householdId);
+      await client.from('payees').delete().eq('household_id', householdId);
+      await client.from('categories').delete().eq('household_id', householdId);
+      await client.from('category_groups').delete().eq('household_id', householdId);
+
+      // 9. Reset account balances to starting values
+      final accountRows = await client
+          .from('accounts')
+          .select('id, starting_balance')
+          .eq('household_id', householdId);
+      for (final a in (accountRows as List)) {
+        await client.from('accounts')
+            .update({'current_balance': a['starting_balance']})
+            .eq('id', a['id'] as String);
+      }
+
+      // Invalidate all providers so UI refreshes
+      ref.invalidate(transactionsProvider);
+      ref.invalidate(accountsProvider);
+      ref.invalidate(budgetProvider);
+      ref.invalidate(categoriesProvider);
+      ref.invalidate(payeesProvider);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Budget reset complete.',
+              style: GoogleFonts.plusJakartaSans()),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Reset failed: $e',
+              style: GoogleFonts.plusJakartaSans()),
+          backgroundColor: Theme.of(context).colorScheme.error,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _resetting = false);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Export backup
+  // ---------------------------------------------------------------------------
+
+  Future<void> _exportBackup() async {
+    setState(() => _exporting = true);
+    try {
+      final householdId = await ref.read(householdIdProvider.future);
+      final client      = Supabase.instance.client;
+
+      final results = await Future.wait([
+        client.from('households').select().eq('id', householdId).single(),
+        client.from('accounts').select().eq('household_id', householdId),
+        client.from('category_groups').select().eq('household_id', householdId),
+        client.from('categories').select().eq('household_id', householdId),
+        client.from('category_goals').select().eq('household_id', householdId),
+        client.from('budget_months').select().eq('household_id', householdId),
+        client.from('payees').select().eq('household_id', householdId),
+        client.from('transactions')
+            .select()
+            .eq('household_id', householdId)
+            .isFilter('deleted_at', null),
+        client.from('scheduled_transactions').select().eq('household_id', householdId),
+      ]);
+
+      final backup = {
+        'version':               1,
+        'exported_at':           DateTime.now().toIso8601String(),
+        'household':             results[0],
+        'accounts':              results[1],
+        'category_groups':       results[2],
+        'categories':            results[3],
+        'category_goals':        results[4],
+        'budget_months':         results[5],
+        'payees':                results[6],
+        'transactions':          results[7],
+        'scheduled_transactions': results[8],
+      };
+
+      final jsonStr  = const JsonEncoder.withIndent('  ').convert(backup);
+      final dir      = await getTemporaryDirectory();
+      final stamp    = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
+      final filePath = '${dir.path}/mybudga_backup_$stamp.json';
+      await File(filePath).writeAsString(jsonStr);
+
+      await Share.shareXFiles(
+        [XFile(filePath, mimeType: 'application/json')],
+        subject: 'MyBudga Backup $stamp',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Backup failed: $e',
+              style: GoogleFonts.plusJakartaSans()),
+          backgroundColor: Theme.of(context).colorScheme.error,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sign out
+  // ---------------------------------------------------------------------------
 
   Future<void> _signOut() async {
     final confirmed = await showDialog<bool>(
@@ -251,6 +436,54 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 onChanged: _smsToggling || _smsEnabled == null ? null : _onSmsToggle,
                 activeThumbColor: cs.primary,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+
+          _sectionLabel(context, 'DATA'),
+          const SizedBox(height: 8),
+          _SettingsCard(
+            children: [
+              ListTile(
+                leading: _exporting
+                    ? SizedBox(
+                        width: 20, height: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: cs.primary))
+                    : Icon(Icons.download_outlined,
+                        color: cs.primary, size: 20),
+                title: Text('Export backup',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w600, color: cs.onSurface)),
+                subtitle: Text('Save all data as JSON',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, color: cs.onSurfaceVariant)),
+                onTap: _exporting ? null : _exportBackup,
+                shape: const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.vertical(
+                        top: Radius.circular(16))),
+              ),
+              Divider(height: 1, indent: 52,
+                  color: cs.outlineVariant.withValues(alpha: 0.4)),
+              ListTile(
+                leading: _resetting
+                    ? SizedBox(
+                        width: 20, height: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: cs.error))
+                    : Icon(Icons.restart_alt, color: cs.error, size: 20),
+                title: Text('Reset budget',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w600, color: cs.error)),
+                subtitle: Text(
+                    'Delete all transactions, categories & budgets',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, color: cs.onSurfaceVariant)),
+                onTap: _resetting ? null : _resetBudget,
+                shape: const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.vertical(
+                        bottom: Radius.circular(16))),
               ),
             ],
           ),
