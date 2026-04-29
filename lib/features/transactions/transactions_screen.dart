@@ -1,0 +1,1396 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
+import '../../shared/models/account.dart';
+import '../../shared/models/category.dart';
+import '../../shared/models/transaction.dart';
+import '../../shared/providers/categories_provider.dart';
+import '../../shared/providers/payees_provider.dart';
+import '../accounts/accounts_provider.dart';
+import 'transactions_provider.dart';
+import '../../core/sms/sms_parser.dart';
+import '../../core/sms/sms_service.dart';
+
+// ---------------------------------------------------------------------------
+
+class TransactionsScreen extends ConsumerStatefulWidget {
+  const TransactionsScreen({super.key});
+
+  @override
+  ConsumerState<TransactionsScreen> createState() => _TransactionsScreenState();
+}
+
+class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
+  final _searchCtrl = TextEditingController();
+  String _search = '';
+
+  @override
+  void initState() {
+    super.initState();
+    pendingSmsNotifier.addListener(_onPendingSms);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // Handle SMS parsed before this screen mounted (notification tap race)
+      final notified = pendingSmsNotifier.value;
+      if (notified != null && mounted) {
+        pendingSmsNotifier.value = null;
+        _showAddTransactionSheet(context, ref, smsData: notified);
+        return;
+      }
+      // Handle cold-start pending SMS from SharedPreferences
+      final pending = await SmsService.takePending();
+      if (pending.isNotEmpty && mounted) {
+        _showAddTransactionSheet(context, ref, smsData: pending.first);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    pendingSmsNotifier.removeListener(_onPendingSms);
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onPendingSms() {
+    final parsed = pendingSmsNotifier.value;
+    if (parsed != null && mounted) {
+      pendingSmsNotifier.value = null;
+      _showAddTransactionSheet(context, ref, smsData: parsed);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs           = Theme.of(context).colorScheme;
+    final txAsync      = ref.watch(transactionsProvider);
+
+    return Scaffold(
+      backgroundColor: cs.surface,
+      body: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: TextField(
+                controller: _searchCtrl,
+                onChanged: (v) => setState(() => _search = v),
+                decoration: InputDecoration(
+                  hintText: 'Search transactions...',
+                  prefixIcon: const Icon(Icons.search, size: 20),
+                  suffixIcon: _search.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 18),
+                          onPressed: () => setState(() {
+                            _search = '';
+                            _searchCtrl.clear();
+                          }),
+                        )
+                      : null,
+                ),
+              ),
+            ),
+            Expanded(
+              child: txAsync.when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (e, _) => Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.error_outline, size: 48, color: cs.error),
+                      const SizedBox(height: 12),
+                      Text('Could not load transactions',
+                          style: GoogleFonts.plusJakartaSans(color: cs.onSurfaceVariant)),
+                      TextButton(
+                        onPressed: () => ref.invalidate(transactionsProvider),
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                ),
+                data: (all) => _TransactionsList(
+                  all:    all,
+                  search: _search,
+                  ref:    ref,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          FloatingActionButton.small(
+            heroTag: 'transfer',
+            onPressed: () => _showTransferSheet(context, ref),
+            backgroundColor: cs.secondaryContainer,
+            foregroundColor: cs.onSecondaryContainer,
+            child: const Icon(Icons.swap_horiz),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.extended(
+            heroTag: 'add',
+            onPressed: () => _showAddTransactionSheet(context, ref),
+            icon: const Icon(Icons.add),
+            label: Text('Add', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+            backgroundColor: cs.primary,
+            foregroundColor: cs.onPrimary,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Transaction list body
+// ---------------------------------------------------------------------------
+
+class _TransactionsList extends StatelessWidget {
+  final List<Transaction> all;
+  final String search;
+  final WidgetRef ref;
+
+  const _TransactionsList({
+    required this.all,
+    required this.search,
+    required this.ref,
+  });
+
+  List<Transaction> get _pending =>
+      all.where((t) => t.isPendingReview).toList();
+
+  List<Transaction> get _confirmed => all
+      .where((t) =>
+          !t.isPendingReview &&
+          (search.isEmpty ||
+              t.displayPayee.toLowerCase().contains(search.toLowerCase()) ||
+              (t.categoryName ?? '').toLowerCase().contains(search.toLowerCase())))
+      .toList();
+
+  Map<String, List<Transaction>> get _grouped {
+    final map = <String, List<Transaction>>{};
+    for (final tx in _confirmed) {
+      (map[_dateLabel(tx.date)] ??= []).add(tx);
+    }
+    return map;
+  }
+
+  String _dateLabel(DateTime d) {
+    final now = DateTime.now();
+    if (d.year == now.year && d.month == now.month && d.day == now.day) return 'Today';
+    final yesterday = now.subtract(const Duration(days: 1));
+    if (d.year == yesterday.year && d.month == yesterday.month && d.day == yesterday.day) {
+      return 'Yesterday';
+    }
+    return DateFormat('EEEE, MMM d').format(d);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = _pending;
+    final grouped = _grouped;
+
+    if (pending.isEmpty && grouped.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.receipt_long_outlined,
+                size: 56, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            const SizedBox(height: 16),
+            Text(search.isNotEmpty ? 'No results for "$search"' : 'No transactions yet',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 15,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          ],
+        ),
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
+      children: [
+        if (pending.isNotEmpty) ...[
+          _PendingReviewSection(transactions: pending, ref: ref),
+          const SizedBox(height: 16),
+        ],
+        for (final entry in grouped.entries) ...[
+          _DateHeader(label: entry.key, transactions: entry.value),
+          const SizedBox(height: 6),
+          _TransactionGroup(transactions: entry.value, ref: ref),
+          const SizedBox(height: 12),
+        ],
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pending review section
+// ---------------------------------------------------------------------------
+
+class _PendingReviewSection extends StatelessWidget {
+  final List<Transaction> transactions;
+  final WidgetRef ref;
+
+  const _PendingReviewSection({required this.transactions, required this.ref});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.tertiaryContainer.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: cs.tertiary.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+            child: Row(
+              children: [
+                Icon(Icons.sms_outlined, size: 16, color: cs.tertiary),
+                const SizedBox(width: 8),
+                Text('SMS Inbox',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13, fontWeight: FontWeight.w700, color: cs.tertiary)),
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: cs.tertiary,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text('${transactions.length}',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11, fontWeight: FontWeight.w700, color: cs.onTertiary)),
+                ),
+                const Spacer(),
+                Text('Review all',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, color: cs.tertiary, fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ),
+          Divider(height: 1, color: cs.tertiary.withValues(alpha: 0.2)),
+          ...transactions.map((tx) => _PendingTile(tx: tx, ref: ref)),
+        ],
+      ),
+    );
+  }
+}
+
+class _PendingTile extends StatelessWidget {
+  final Transaction tx;
+  final WidgetRef ref;
+
+  const _PendingTile({required this.tx, required this.ref});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+
+    return InkWell(
+      onTap: () => _showAddTransactionSheet(context, ref, prefill: tx),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            _PayeeAvatar(payee: tx.displayPayee, color: cs.tertiary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(tx.displayPayee.isNotEmpty ? tx.displayPayee : 'Unknown',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
+                  Text(tx.account?.displayName ?? '',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12, color: cs.onSurfaceVariant)),
+                ],
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(fmt.format(tx.amount),
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14, fontWeight: FontWeight.w700,
+                        color: tx.amount < 0 ? cs.onSurface : cs.tertiary)),
+                const SizedBox(height: 4),
+                FilledButton.tonal(
+                  onPressed: () =>
+                      ref.read(transactionsProvider.notifier).confirmTransaction(tx.id),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(70, 28),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    textStyle: GoogleFonts.plusJakartaSans(
+                        fontSize: 11, fontWeight: FontWeight.w700),
+                  ),
+                  child: const Text('Approve'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Date header
+// ---------------------------------------------------------------------------
+
+class _DateHeader extends StatelessWidget {
+  final String label;
+  final List<Transaction> transactions;
+
+  const _DateHeader({required this.label, required this.transactions});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final dayTotal = transactions.fold(0.0, (s, t) => s + t.amount);
+
+    return Row(
+      children: [
+        Text(label,
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 12, fontWeight: FontWeight.w700,
+                color: cs.onSurfaceVariant, letterSpacing: 0.5)),
+        const Spacer(),
+        Text(fmt.format(dayTotal),
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 12, fontWeight: FontWeight.w600,
+                color: dayTotal >= 0 ? cs.tertiary : cs.onSurfaceVariant)),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Transaction group + tile
+// ---------------------------------------------------------------------------
+
+class _TransactionGroup extends StatelessWidget {
+  final List<Transaction> transactions;
+  final WidgetRef ref;
+
+  const _TransactionGroup({required this.transactions, required this.ref});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: transactions.asMap().entries.map((e) {
+          return _TransactionTile(
+            tx:     e.value,
+            isLast: e.key == transactions.length - 1,
+            ref:    ref,
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+class _TransactionTile extends StatelessWidget {
+  final Transaction tx;
+  final bool isLast;
+  final WidgetRef ref;
+
+  const _TransactionTile({required this.tx, required this.isLast, required this.ref});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+
+    return InkWell(
+      onTap: () => _showAddTransactionSheet(context, ref, prefill: tx),
+      borderRadius: isLast
+          ? const BorderRadius.vertical(bottom: Radius.circular(16))
+          : BorderRadius.zero,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            _PayeeAvatar(payee: tx.isTransfer ? 'Transfer' : tx.displayPayee, color: cs.primary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(tx.isTransfer ? 'Transfer' : (tx.displayPayee.isNotEmpty ? tx.displayPayee : 'Unknown'),
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
+                  Row(
+                    children: [
+                      if (tx.categoryName != null) ...[
+                        Text(tx.categoryName!,
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 12, color: cs.onSurfaceVariant)),
+                        const SizedBox(width: 6),
+                      ],
+                      if (tx.account != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: cs.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(tx.account!.displayName,
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 10, fontWeight: FontWeight.w600,
+                                  color: cs.onSurfaceVariant)),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Text(fmt.format(tx.amount),
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 14, fontWeight: FontWeight.w700,
+                    color: tx.isIncome ? cs.tertiary : cs.onSurface)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Payee avatar
+// ---------------------------------------------------------------------------
+
+class _PayeeAvatar extends StatelessWidget {
+  final String payee;
+  final Color color;
+  const _PayeeAvatar({required this.payee, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 40, height: 40,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        payee.isNotEmpty ? payee[0].toUpperCase() : '?',
+        style: GoogleFonts.plusJakartaSans(
+            fontSize: 16, fontWeight: FontWeight.w800, color: color),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Add / Edit Transaction sheet
+// ---------------------------------------------------------------------------
+
+void _showAddTransactionSheet(
+  BuildContext context,
+  WidgetRef ref, {
+  Transaction? prefill,
+  ParsedSms? smsData,
+}) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (_) => _AddTransactionSheet(
+      prefill:   prefill,
+      smsData:   smsData,
+      widgetRef: ref,
+    ),
+  );
+}
+
+class _AddTransactionSheet extends ConsumerStatefulWidget {
+  final Transaction? prefill;
+  final ParsedSms?   smsData;
+  final WidgetRef    widgetRef;
+  const _AddTransactionSheet({this.prefill, this.smsData, required this.widgetRef});
+
+  @override
+  ConsumerState<_AddTransactionSheet> createState() => _AddTransactionSheetState();
+}
+
+class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
+  final _payeeCtrl = TextEditingController();
+  final _memoCtrl  = TextEditingController();
+
+  String  _amountDisplay = '0';
+  String? _selectedCategoryId;
+  String? _selectedCategoryName;
+  Account? _selectedAccount;
+  DateTime _date = DateTime.now();
+  bool    _isIncome = false;
+  bool    _showSuggestions = false;
+  bool    _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final p   = widget.prefill;
+    final sms = widget.smsData;
+
+    if (p != null) {
+      _amountDisplay        = p.amount.abs().toStringAsFixed(2);
+      _payeeCtrl.text       = p.displayPayee;
+      _selectedCategoryId   = p.categoryId;
+      _selectedCategoryName = p.categoryName;
+      _selectedAccount      = p.account;
+      _date                 = p.date;
+      _isIncome             = p.isIncome;
+    } else {
+      // Default to first budget account
+      final accounts = widget.widgetRef.read(accountsProvider).valueOrNull ?? [];
+      final budgetAccounts = accounts.where((a) => !a.isTracking && !a.isCreditCard);
+      _selectedAccount = budgetAccounts.isNotEmpty
+          ? budgetAccounts.first
+          : accounts.isNotEmpty ? accounts.first : null;
+      // Override with SMS-parsed values if present
+      if (sms != null) {
+        _amountDisplay = sms.amount.toStringAsFixed(2);
+        if (sms.payee?.isNotEmpty == true) _payeeCtrl.text = sms.payee!;
+        _isIncome = !sms.isDebit;
+        if (sms.accountLastFour != null) {
+          final matched = accounts
+              .where((a) => a.lastFour == sms.accountLastFour)
+              .firstOrNull;
+          if (matched != null) _selectedAccount = matched;
+        }
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _payeeCtrl.dispose();
+    _memoCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onNumpad(String key) {
+    setState(() {
+      if (key == '⌫') {
+        _amountDisplay = _amountDisplay.length > 1
+            ? _amountDisplay.substring(0, _amountDisplay.length - 1)
+            : '0';
+      } else if (key == '.') {
+        if (!_amountDisplay.contains('.')) _amountDisplay += '.';
+      } else {
+        if (_amountDisplay == '0') {
+          _amountDisplay = key;
+        } else if (_amountDisplay.contains('.')) {
+          final parts = _amountDisplay.split('.');
+          if (parts[1].length < 2) _amountDisplay += key;
+        } else {
+          _amountDisplay += key;
+        }
+      }
+    });
+  }
+
+  List<_PayeeSuggestion> _suggestions(List payees) {
+    final q = _payeeCtrl.text.toLowerCase();
+    if (q.isEmpty) return [];
+    return payees
+        .where((p) => p.name.toLowerCase().contains(q))
+        .take(5)
+        .map((p) => _PayeeSuggestion(name: p.name,
+            categoryId: p.defaultCategoryId,
+            categoryName: p.defaultCategoryName))
+        .toList();
+  }
+
+  bool get _canSave {
+    final amt = double.tryParse(_amountDisplay);
+    return amt != null && amt > 0 && _selectedAccount != null && !_saving;
+  }
+
+  Future<void> _save() async {
+    if (!_canSave) return;
+    setState(() => _saving = true);
+    try {
+      final amt    = double.parse(_amountDisplay);
+      final signed = _isIncome ? amt : -amt;
+
+      final p = widget.prefill;
+      if (p != null && p.isPendingReview) {
+        await ref.read(transactionsProvider.notifier).confirmTransaction(
+          p.id,
+          categoryId: _selectedCategoryId,
+          memo: _memoCtrl.text.trim(),
+        );
+      } else if (p != null) {
+        await ref.read(transactionsProvider.notifier).updateTransaction(
+          p.id,
+          accountId:  _selectedAccount!.id,
+          amount:     signed,
+          date:       _date,
+          payeeName:  _payeeCtrl.text.trim(),
+          categoryId: _selectedCategoryId,
+          memo:       _memoCtrl.text.trim(),
+        );
+      } else {
+        await ref.read(transactionsProvider.notifier).addTransaction(
+          accountId:  _selectedAccount!.id,
+          amount:     signed,
+          date:       _date,
+          payeeName:  _payeeCtrl.text.trim(),
+          categoryId: _selectedCategoryId,
+          memo:       _memoCtrl.text.trim(),
+        );
+      }
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+          behavior: SnackBarBehavior.floating,
+        ));
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  String _dateLabel(DateTime d) {
+    final now = DateTime.now();
+    if (d.year == now.year && d.month == now.month && d.day == now.day) return 'Today';
+    final yesterday = now.subtract(const Duration(days: 1));
+    if (d.year == yesterday.year && d.month == yesterday.month && d.day == yesterday.day) {
+      return 'Yesterday';
+    }
+    return DateFormat('MMM d').format(d);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs       = Theme.of(context).colorScheme;
+    final fmt      = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final isPrefill = widget.prefill != null;
+    final payees   = ref.watch(payeesProvider).valueOrNull ?? [];
+    final categoryGroups = ref.watch(categoriesProvider).valueOrNull ?? [];
+    final suggestions = _suggestions(payees);
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.92,
+      minChildSize: 0.6,
+      maxChildSize: 1.0,
+      expand: false,
+      builder: (context, scrollController) => Container(
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHigh,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+              child: Column(
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40, height: 4,
+                      decoration: BoxDecoration(
+                        color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Text(
+                        widget.prefill == null
+                            ? 'New Transaction'
+                            : widget.prefill!.isPendingReview
+                                ? 'Review Transaction'
+                                : 'Edit Transaction',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 20, fontWeight: FontWeight.w800, color: cs.onSurface),
+                      ),
+                      const Spacer(),
+                      InkWell(
+                        onTap: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: _date,
+                            firstDate: DateTime(2020),
+                            lastDate: DateTime.now().add(const Duration(days: 30)),
+                          );
+                          if (picked != null) setState(() => _date = picked);
+                        },
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: cs.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.calendar_today_outlined,
+                                  size: 13, color: cs.onSurfaceVariant),
+                              const SizedBox(width: 5),
+                              Text(_dateLabel(_date),
+                                  style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 12, fontWeight: FontWeight.w600,
+                                      color: cs.onSurfaceVariant)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                controller: scrollController,
+                padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+                children: [
+                  // Amount display
+                  Center(
+                    child: Text(
+                      '${_isIncome ? '+' : '-'}${fmt.format(double.tryParse(_amountDisplay) ?? 0)}',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 48, fontWeight: FontWeight.w800,
+                          color: _amountDisplay == '0'
+                              ? cs.onSurfaceVariant
+                              : _isIncome ? cs.tertiary : cs.onSurface),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Income / expense toggle
+                  Center(
+                    child: GestureDetector(
+                      onTap: () => setState(() => _isIncome = !_isIncome),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: _isIncome
+                              ? cs.tertiaryContainer
+                              : cs.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(20),
+                          border: _isIncome
+                              ? Border.all(color: cs.tertiary.withValues(alpha: 0.4))
+                              : null,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _isIncome ? Icons.arrow_downward : Icons.arrow_upward,
+                              size: 13,
+                              color: _isIncome ? cs.tertiary : cs.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              _isIncome ? 'Income' : 'Expense',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 12, fontWeight: FontWeight.w700,
+                                color: _isIncome ? cs.tertiary : cs.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  _Numpad(onKey: _onNumpad),
+                  const SizedBox(height: 24),
+
+                  // Payee
+                  TextField(
+                    controller: _payeeCtrl,
+                    textCapitalization: TextCapitalization.words,
+                    onChanged: (v) => setState(() => _showSuggestions = v.isNotEmpty),
+                    decoration: const InputDecoration(
+                      labelText: 'Payee',
+                      prefixIcon: Icon(Icons.storefront_outlined, size: 18),
+                    ),
+                  ),
+
+                  // Payee autocomplete
+                  if (_showSuggestions && suggestions.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: cs.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        children: suggestions.map((s) => InkWell(
+                          onTap: () {
+                            _payeeCtrl.text = s.name;
+                            setState(() {
+                              _showSuggestions       = false;
+                              _selectedCategoryId    = s.categoryId;
+                              _selectedCategoryName  = s.categoryName;
+                            });
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 10),
+                            child: Row(
+                              children: [
+                                Icon(Icons.history, size: 14,
+                                    color: cs.onSurfaceVariant),
+                                const SizedBox(width: 10),
+                                Text(s.name,
+                                    style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 14, color: cs.onSurface)),
+                                const Spacer(),
+                                if (s.categoryName != null)
+                                  Text(s.categoryName!,
+                                      style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 11,
+                                          color: cs.onSurfaceVariant)),
+                              ],
+                            ),
+                          ),
+                        )).toList(),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+
+                  // Category + Account pickers
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _PickerChip(
+                          icon:    Icons.label_outline,
+                          label:   _selectedCategoryName ?? 'Category',
+                          isEmpty: _selectedCategoryId == null,
+                          onTap:   () => _pickCategory(context, categoryGroups),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _PickerChip(
+                          icon: _selectedAccount?.isCreditCard == true
+                              ? Icons.credit_card
+                              : Icons.account_balance_outlined,
+                          label:   _selectedAccount?.displayName ?? 'Account',
+                          isEmpty: _selectedAccount == null,
+                          onTap:   () => _pickAccount(context),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Memo
+                  TextField(
+                    controller: _memoCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Memo (optional)',
+                      prefixIcon: Icon(Icons.notes_outlined, size: 18),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  FilledButton(
+                    onPressed: _canSave ? _save : null,
+                    style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52)),
+                    child: _saving
+                        ? SizedBox(
+                            height: 20, width: 20,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: cs.onPrimary))
+                        : Text(
+                            isPrefill
+                                ? 'Confirm Transaction'
+                                : 'Save Transaction',
+                            style: GoogleFonts.plusJakartaSans(
+                                fontWeight: FontWeight.w700)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _pickCategory(BuildContext context, List<CategoryGroup> groups) {
+    final cs = Theme.of(context).colorScheme;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (context, scroll) => Container(
+          color: cs.surfaceContainerHigh,
+          child: ListView(
+            controller: scroll,
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+            children: [
+              Text('Category',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 18, fontWeight: FontWeight.w800, color: cs.onSurface)),
+              const SizedBox(height: 16),
+              if (groups.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text('No categories yet — add some in the Budget tab.',
+                      style: GoogleFonts.plusJakartaSans(color: cs.onSurfaceVariant)),
+                )
+              else
+                for (final group in groups) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12, bottom: 6),
+                    child: Text(group.name.toUpperCase(),
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11, fontWeight: FontWeight.w700,
+                            color: cs.onSurfaceVariant, letterSpacing: 0.8)),
+                  ),
+                  ...group.categories.map((c) => InkWell(
+                    onTap: () {
+                      setState(() {
+                        _selectedCategoryId   = c.id;
+                        _selectedCategoryName = c.name;
+                      });
+                      Navigator.pop(context);
+                    },
+                    borderRadius: BorderRadius.circular(10),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 4, vertical: 12),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(c.name,
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 14, fontWeight: FontWeight.w500,
+                                    color: c.id == _selectedCategoryId
+                                        ? cs.primary
+                                        : cs.onSurface)),
+                          ),
+                          if (c.id == _selectedCategoryId)
+                            Icon(Icons.check_circle, size: 18, color: cs.primary),
+                        ],
+                      ),
+                    ),
+                  )),
+                ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _pickAccount(BuildContext context) {
+    final cs       = Theme.of(context).colorScheme;
+    final accounts = ref.read(accountsProvider).valueOrNull ?? [];
+    final budget   = accounts.where((a) => !a.isTracking).toList();
+
+    showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      builder: (_) => Container(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+        color: cs.surfaceContainerHigh,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Account',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 18, fontWeight: FontWeight.w800, color: cs.onSurface)),
+            const SizedBox(height: 16),
+            ...budget.map((a) => InkWell(
+              onTap: () {
+                setState(() => _selectedAccount = a);
+                Navigator.pop(context);
+              },
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+                child: Row(
+                  children: [
+                    Icon(a.type.icon, size: 18,
+                        color: a == _selectedAccount
+                            ? cs.primary
+                            : cs.onSurfaceVariant),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(a.displayName,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 14, fontWeight: FontWeight.w600,
+                              color: a == _selectedAccount
+                                  ? cs.primary
+                                  : cs.onSurface)),
+                    ),
+                    if (a == _selectedAccount)
+                      Icon(Icons.check_circle, size: 18, color: cs.primary),
+                  ],
+                ),
+              ),
+            )),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Numpad
+// ---------------------------------------------------------------------------
+
+class _Numpad extends StatelessWidget {
+  final ValueChanged<String> onKey;
+  const _Numpad({required this.onKey});
+
+  static const _keys = [
+    ['7', '8', '9'],
+    ['4', '5', '6'],
+    ['1', '2', '3'],
+    ['.', '0', '⌫'],
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      children: _keys.map((row) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Row(
+          children: row.map((key) => Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: TextButton(
+                onPressed: () => onKey(key),
+                style: TextButton.styleFrom(
+                  backgroundColor: key == '⌫'
+                      ? cs.errorContainer.withValues(alpha: 0.4)
+                      : cs.surfaceContainerHighest,
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+                child: key == '⌫'
+                    ? Icon(Icons.backspace_outlined, size: 20, color: cs.error)
+                    : Text(key,
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 22, fontWeight: FontWeight.w600,
+                            color: cs.onSurface)),
+              ),
+            ),
+          )).toList(),
+        ),
+      )).toList(),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Picker chip
+// ---------------------------------------------------------------------------
+
+class _PickerChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool isEmpty;
+  final VoidCallback onTap;
+
+  const _PickerChip({
+    required this.icon,
+    required this.label,
+    required this.isEmpty,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+          border: isEmpty ? null : Border.all(color: cs.primary.withValues(alpha: 0.4)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 16,
+                color: isEmpty ? cs.onSurfaceVariant : cs.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(label,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: isEmpty ? FontWeight.w400 : FontWeight.w600,
+                      color: isEmpty ? cs.onSurfaceVariant : cs.onSurface)),
+            ),
+            Icon(Icons.expand_more, size: 16, color: cs.onSurfaceVariant),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helper
+// ---------------------------------------------------------------------------
+
+class _PayeeSuggestion {
+  final String name;
+  final String? categoryId;
+  final String? categoryName;
+  const _PayeeSuggestion({required this.name, this.categoryId, this.categoryName});
+}
+
+// ---------------------------------------------------------------------------
+// Transfer sheet
+// ---------------------------------------------------------------------------
+
+void _showTransferSheet(BuildContext context, WidgetRef ref) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (_) => _TransferSheet(widgetRef: ref),
+  );
+}
+
+class _TransferSheet extends StatefulWidget {
+  final WidgetRef widgetRef;
+  const _TransferSheet({required this.widgetRef});
+
+  @override
+  State<_TransferSheet> createState() => _TransferSheetState();
+}
+
+class _TransferSheetState extends State<_TransferSheet> {
+  final _amountCtrl = TextEditingController();
+  final _memoCtrl   = TextEditingController();
+  Account? _fromAccount;
+  Account? _toAccount;
+  DateTime _date = DateTime.now();
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _amountCtrl.dispose();
+    _memoCtrl.dispose();
+    super.dispose();
+  }
+
+  bool get _canSave {
+    final amt = double.tryParse(_amountCtrl.text.trim());
+    return amt != null && amt > 0 &&
+        _fromAccount != null &&
+        _toAccount != null &&
+        _fromAccount!.id != _toAccount!.id &&
+        !_saving;
+  }
+
+  Future<void> _save() async {
+    if (!_canSave) return;
+    setState(() => _saving = true);
+    try {
+      await widget.widgetRef.read(transactionsProvider.notifier).transferTransaction(
+        fromAccountId: _fromAccount!.id,
+        toAccountId:   _toAccount!.id,
+        amount:        double.parse(_amountCtrl.text.trim()),
+        date:          _date,
+        memo:          _memoCtrl.text.trim(),
+      );
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+          behavior: SnackBarBehavior.floating,
+        ));
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs       = Theme.of(context).colorScheme;
+    final accounts = widget.widgetRef.read(accountsProvider).valueOrNull ?? [];
+    final budgetAccounts = accounts.where((a) => !a.isTracking && a.isActive).toList();
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: Container(
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHigh,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Icon(Icons.swap_horiz, size: 22, color: cs.secondary),
+                const SizedBox(width: 8),
+                Text('Transfer',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 22, fontWeight: FontWeight.w800, color: cs.onSurface)),
+              ],
+            ),
+            const SizedBox(height: 24),
+
+            // From account
+            DropdownButtonFormField<Account>(
+              initialValue: _fromAccount,
+              decoration: const InputDecoration(
+                labelText: 'From account',
+                prefixIcon: Icon(Icons.arrow_upward, size: 18),
+              ),
+              items: budgetAccounts.map((a) => DropdownMenuItem(
+                value: a,
+                child: Text(a.displayName,
+                    style: GoogleFonts.plusJakartaSans(fontSize: 14)),
+              )).toList(),
+              onChanged: (v) => setState(() => _fromAccount = v),
+            ),
+            const SizedBox(height: 16),
+
+            // To account
+            DropdownButtonFormField<Account>(
+              initialValue: _toAccount,
+              decoration: const InputDecoration(
+                labelText: 'To account',
+                prefixIcon: Icon(Icons.arrow_downward, size: 18),
+              ),
+              items: budgetAccounts.map((a) => DropdownMenuItem(
+                value: a,
+                child: Text(a.displayName,
+                    style: GoogleFonts.plusJakartaSans(fontSize: 14)),
+              )).toList(),
+              onChanged: (v) => setState(() => _toAccount = v),
+            ),
+            const SizedBox(height: 16),
+
+            // Amount
+            TextField(
+              controller: _amountCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              textInputAction: TextInputAction.next,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Amount',
+                prefixText: '\$ ',
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Date
+            InkWell(
+              onTap: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: _date,
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime.now().add(const Duration(days: 30)),
+                );
+                if (picked != null) setState(() => _date = picked);
+              },
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  color: cs.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.calendar_today_outlined, size: 16, color: cs.onSurfaceVariant),
+                    const SizedBox(width: 12),
+                    Text(DateFormat('MMM d, yyyy').format(_date),
+                        style: GoogleFonts.plusJakartaSans(fontSize: 14, color: cs.onSurface)),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Memo (optional)
+            TextField(
+              controller: _memoCtrl,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                labelText: 'Memo (optional)',
+                prefixIcon: Icon(Icons.notes_outlined, size: 18),
+              ),
+            ),
+            const SizedBox(height: 28),
+
+            FilledButton(
+              onPressed: _canSave ? _save : null,
+              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+              child: _saving
+                  ? const SizedBox(width: 20, height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : Text('Transfer',
+                      style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
