@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/supabase/supabase_provider.dart';
 import '../../shared/models/budget_entry.dart';
+import '../../shared/providers/categories_provider.dart';
 import '../../shared/providers/household_provider.dart';
 
 // ---------------------------------------------------------------------------
@@ -105,6 +106,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       'name':               name,
     }).select('id').single();
 
+    ref.invalidate(categoriesProvider);
     ref.invalidateSelf();
     return res['id'] as String;
   }
@@ -124,6 +126,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       'sort_order':   maxOrder,
     }).select('id').single();
 
+    ref.invalidate(categoriesProvider);
     ref.invalidateSelf();
     return res['id'] as String;
   }
