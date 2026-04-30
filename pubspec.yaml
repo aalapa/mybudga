@@ -2,7 +2,7 @@ name: mybudga
 description: "Personal finance budgeting app — YNAB4-style envelope budgeting"
 publish_to: 'none'
 
-version: 1.19.0+20
+version: 1.20.0+21
 
 environment:
   sdk: ^3.11.5
@@ -37,6 +37,9 @@ dependencies:
   # Backup / share
   share_plus: ^10.0.0
   path_provider: ^2.1.0
+
+  # File picking (YNAB import)
+  file_picker: ^8.1.0
 
   # Splash
   flutter_native_splash: ^2.4.3

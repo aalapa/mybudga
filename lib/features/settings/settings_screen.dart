@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
@@ -17,6 +18,7 @@ import '../accounts/accounts_provider.dart';
 import '../budget/budget_provider.dart';
 import '../cashflow/cashflow_provider.dart';
 import '../transactions/transactions_provider.dart';
+import 'ynab_import_service.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -34,6 +36,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _smsToggling = false;
   bool _resetting   = false;
   bool _exporting   = false;
+  bool _importing   = false;
 
   @override
   void initState() {
@@ -123,6 +126,33 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _inviteCtrl.clear();
       setState(() => _inviteSent = false);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Import from YNAB
+  // ---------------------------------------------------------------------------
+
+  Future<void> _importFromYnab() async {
+    if (!mounted) return;
+    final householdId = await ref.read(householdIdProvider.future);
+    if (!mounted) return;
+    await showModalBottomSheet(
+      context:            context,
+      isScrollControlled: true,
+      useSafeArea:        true,
+      backgroundColor:    Colors.transparent,
+      builder: (_) => _YnabImportSheet(
+        householdId: householdId,
+        onImported:  () {
+          ref.invalidate(accountsProvider);
+          ref.invalidate(budgetProvider);
+          ref.invalidate(categoriesProvider);
+          ref.invalidate(payeesProvider);
+          ref.invalidate(transactionsProvider);
+          ref.invalidate(cashflowProvider);
+        },
+      ),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -451,6 +481,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               Divider(height: 1, indent: 52,
                   color: cs.outlineVariant.withValues(alpha: 0.4)),
               ListTile(
+                leading: _importing
+                    ? SizedBox(
+                        width: 20, height: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: cs.tertiary))
+                    : Icon(Icons.upload_file_outlined,
+                        color: cs.tertiary, size: 20),
+                title: Text('Import from YNAB',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w600, color: cs.onSurface)),
+                subtitle: Text('Import accounts & transactions from YNAB CSV export',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, color: cs.onSurfaceVariant)),
+                onTap: _importing ? null : _importFromYnab,
+              ),
+              Divider(height: 1, indent: 52,
+                  color: cs.outlineVariant.withValues(alpha: 0.4)),
+              ListTile(
                 leading: _resetting
                     ? SizedBox(
                         width: 20, height: 20,
@@ -540,6 +588,563 @@ class _SettingsTile extends StatelessWidget {
           style: GoogleFonts.plusJakartaSans(
               fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    );
+  }
+}
+
+// =============================================================================
+// YNAB Import Sheet
+// =============================================================================
+
+class _YnabImportSheet extends StatefulWidget {
+  final String householdId;
+  final VoidCallback onImported;
+
+  const _YnabImportSheet({
+    required this.householdId,
+    required this.onImported,
+  });
+
+  @override
+  State<_YnabImportSheet> createState() => _YnabImportSheetState();
+}
+
+class _YnabImportSheetState extends State<_YnabImportSheet> {
+  String? _registerPath;
+  String? _registerContent;
+  String? _budgetPath;
+  String? _budgetContent;
+
+  // Import from the last 12 months by default
+  DateTime _fromDate = DateTime(
+    DateTime.now().year - 1,
+    DateTime.now().month,
+    1,
+  );
+
+  YnabImportPreview? _preview;
+  bool _importing  = false;
+  String _stage    = '';
+  double _progress = 0;
+  YnabImportResult? _result;
+  String? _error;
+
+  // ---- file picking ----------------------------------------------------------
+
+  Future<void> _pickRegister() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+      withData: true,
+    );
+    if (result == null) return;
+    final file = result.files.single;
+    final content = String.fromCharCodes(file.bytes ?? []);
+    setState(() {
+      _registerPath    = file.name;
+      _registerContent = content;
+      _preview         = null;
+      _result          = null;
+      _error           = null;
+    });
+    _updatePreview();
+  }
+
+  Future<void> _pickBudget() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+      withData: true,
+    );
+    if (result == null) return;
+    final file = result.files.single;
+    setState(() {
+      _budgetPath    = file.name;
+      _budgetContent = String.fromCharCodes(file.bytes ?? []);
+      _result        = null;
+      _error         = null;
+    });
+  }
+
+  void _updatePreview() {
+    if (_registerContent == null) return;
+    try {
+      final p = YnabImportService.preview(
+        registerCsv: _registerContent!,
+        fromDate:    _fromDate,
+      );
+      setState(() => _preview = p);
+    } catch (e) {
+      setState(() => _error = 'Could not parse CSV: $e');
+    }
+  }
+
+  // ---- date picker -----------------------------------------------------------
+
+  Future<void> _pickFromDate() async {
+    final picked = await showDatePicker(
+      context:     context,
+      initialDate: _fromDate,
+      firstDate:   DateTime(2015),
+      lastDate:    DateTime.now(),
+    );
+    if (picked == null) return;
+    setState(() {
+      _fromDate = DateTime(picked.year, picked.month, 1);
+      _preview  = null;
+    });
+    _updatePreview();
+  }
+
+  // ---- import ----------------------------------------------------------------
+
+  Future<void> _runImport() async {
+    if (_registerContent == null) return;
+    setState(() {
+      _importing = true;
+      _stage     = 'Starting…';
+      _progress  = 0;
+      _error     = null;
+      _result    = null;
+    });
+
+    try {
+      final service = YnabImportService(
+        client:      Supabase.instance.client,
+        householdId: widget.householdId,
+      );
+
+      final result = await service.import(
+        registerCsv: _registerContent!,
+        budgetCsv:   _budgetContent,
+        fromDate:    _fromDate,
+        onProgress:  (stage, p) {
+          if (mounted) setState(() { _stage = stage; _progress = p; });
+        },
+      );
+
+      setState(() {
+        _result    = result;
+        _importing = false;
+      });
+      widget.onImported();
+    } catch (e) {
+      setState(() {
+        _error     = e.toString();
+        _importing = false;
+      });
+    }
+  }
+
+  // ---- UI --------------------------------------------------------------------
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = DateFormat('MMM d, yyyy');
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.75,
+      minChildSize:     0.4,
+      maxChildSize:     0.95,
+      builder: (_, scrollCtrl) => Container(
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerLow,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          children: [
+            // Handle
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(
+                children: [
+                  Icon(Icons.upload_file_outlined, color: cs.primary, size: 22),
+                  const SizedBox(width: 10),
+                  Text('Import from YNAB',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 18, fontWeight: FontWeight.w800,
+                          color: cs.onSurface)),
+                ],
+              ),
+            ),
+
+            Expanded(
+              child: ListView(
+                controller: scrollCtrl,
+                padding: EdgeInsets.fromLTRB(
+                    20, 4, 20,
+                    MediaQuery.of(context).viewInsets.bottom + 24),
+                children: [
+
+                  // Info banner
+                  if (_result == null && !_importing) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: cs.primaryContainer.withValues(alpha: 0.5),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        'In YNAB → Export Data → choose "All Data" to get the Register and Budget CSV files.',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12, color: cs.onSurface),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+
+                  // SUCCESS
+                  if (_result != null) ...[
+                    _ResultBanner(result: _result!),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: Text('Done',
+                            style: GoogleFonts.plusJakartaSans(
+                                fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                  ]
+
+                  // IMPORTING
+                  else if (_importing) ...[
+                    const SizedBox(height: 24),
+                    LinearProgressIndicator(value: _progress,
+                        borderRadius: BorderRadius.circular(4)),
+                    const SizedBox(height: 12),
+                    Text(_stage,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 13, color: cs.onSurfaceVariant)),
+                  ]
+
+                  // CONFIGURE
+                  else ...[
+
+                    // ── Register CSV ──────────────────────────────────
+                    _SectionLabel('Register CSV (required)'),
+                    const SizedBox(height: 6),
+                    _FileTile(
+                      label:    _registerPath ?? 'No file selected',
+                      picked:   _registerPath != null,
+                      onTap:    _pickRegister,
+                      buttonLabel: _registerPath != null ? 'Change' : 'Pick file',
+                    ),
+                    const SizedBox(height: 16),
+
+                    // ── Budget CSV ────────────────────────────────────
+                    _SectionLabel('Budget CSV (optional — imports current month allocations)'),
+                    const SizedBox(height: 6),
+                    _FileTile(
+                      label:    _budgetPath ?? 'No file selected',
+                      picked:   _budgetPath != null,
+                      onTap:    _pickBudget,
+                      buttonLabel: _budgetPath != null ? 'Change' : 'Pick file',
+                    ),
+                    const SizedBox(height: 16),
+
+                    // ── Date filter ───────────────────────────────────
+                    _SectionLabel('Import transactions from'),
+                    const SizedBox(height: 6),
+                    InkWell(
+                      onTap:         _pickFromDate,
+                      borderRadius:  BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 14),
+                        decoration: BoxDecoration(
+                          color: cs.surfaceContainerHigh,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.calendar_today_outlined,
+                                size: 16, color: cs.primary),
+                            const SizedBox(width: 10),
+                            Text(fmt.format(_fromDate),
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 14, fontWeight: FontWeight.w600,
+                                    color: cs.onSurface)),
+                            const Spacer(),
+                            Icon(Icons.chevron_right,
+                                size: 18, color: cs.onSurfaceVariant),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // ── Preview ───────────────────────────────────────
+                    if (_preview != null) ...[
+                      _PreviewCard(preview: _preview!),
+                      const SizedBox(height: 20),
+                    ],
+
+                    if (_error != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: cs.errorContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(_error!,
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 12, color: cs.onErrorContainer)),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+
+                    // ── Import button ─────────────────────────────────
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: _registerContent == null ? null : _runImport,
+                        icon:  const Icon(Icons.upload_rounded, size: 18),
+                        label: Text('Import',
+                            style: GoogleFonts.plusJakartaSans(
+                                fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                    if (_registerContent == null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text('Pick the Register CSV to continue',
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 11, color: cs.onSurfaceVariant)),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Small helper widgets
+// ---------------------------------------------------------------------------
+
+class _SectionLabel extends StatelessWidget {
+  final String text;
+  const _SectionLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) => Text(
+        text,
+        style: GoogleFonts.plusJakartaSans(
+            fontSize: 11, fontWeight: FontWeight.w700,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+            letterSpacing: 0.6),
+      );
+}
+
+class _FileTile extends StatelessWidget {
+  final String label;
+  final bool picked;
+  final VoidCallback onTap;
+  final String buttonLabel;
+
+  const _FileTile({
+    required this.label,
+    required this.picked,
+    required this.onTap,
+    required this.buttonLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(12),
+        border: picked
+            ? Border.all(color: cs.primary.withValues(alpha: 0.5))
+            : null,
+      ),
+      child: Row(
+        children: [
+          Icon(
+            picked ? Icons.check_circle_outline : Icons.insert_drive_file_outlined,
+            size: 18,
+            color: picked ? cs.primary : cs.onSurfaceVariant,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13,
+                  color: picked ? cs.onSurface : cs.onSurfaceVariant),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          FilledButton.tonal(
+            onPressed: onTap,
+            style: FilledButton.styleFrom(
+                minimumSize: const Size(72, 34),
+                padding: const EdgeInsets.symmetric(horizontal: 12)),
+            child: Text(buttonLabel,
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PreviewCard extends StatelessWidget {
+  final YnabImportPreview preview;
+  const _PreviewCard({required this.preview});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cs.secondaryContainer.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+            color: cs.secondary.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Preview',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11, fontWeight: FontWeight.w700,
+                  color: cs.onSurfaceVariant, letterSpacing: 0.6)),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              _PreviewStat(icon: Icons.account_balance_outlined,
+                  value: '${preview.accounts}', label: 'Accounts'),
+              const SizedBox(width: 12),
+              _PreviewStat(icon: Icons.category_outlined,
+                  value: '${preview.categories}', label: 'Categories'),
+              const SizedBox(width: 12),
+              _PreviewStat(icon: Icons.receipt_long_outlined,
+                  value: '${preview.transactions}', label: 'Transactions'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PreviewStat extends StatelessWidget {
+  final IconData icon;
+  final String value;
+  final String label;
+  const _PreviewStat({required this.icon, required this.value, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Expanded(
+      child: Column(
+        children: [
+          Icon(icon, size: 16, color: cs.primary),
+          const SizedBox(height: 4),
+          Text(value,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 16, fontWeight: FontWeight.w800,
+                  color: cs.onSurface)),
+          Text(label,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 10, color: cs.onSurfaceVariant)),
+        ],
+      ),
+    );
+  }
+}
+
+class _ResultBanner extends StatelessWidget {
+  final YnabImportResult result;
+  const _ResultBanner({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: cs.tertiaryContainer.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: cs.tertiary.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.check_circle_outline,
+                  color: cs.tertiary, size: 20),
+              const SizedBox(width: 8),
+              Text('Import complete!',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 15, fontWeight: FontWeight.w800,
+                      color: cs.onSurface)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _ResultRow('Accounts',      '${result.accounts}'),
+          _ResultRow('Categories',    '${result.categories}'),
+          _ResultRow('Payees',        '${result.payees}'),
+          _ResultRow('Transactions',  '${result.transactions}'),
+          if (result.budgetEntries > 0)
+            _ResultRow('Budget entries', '${result.budgetEntries}'),
+          if (result.warnings.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text('${result.warnings.length} warning(s)',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11, color: cs.onSurfaceVariant)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ResultRow extends StatelessWidget {
+  final String label;
+  final String value;
+  const _ResultRow(this.label, this.value);
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: GoogleFonts.plusJakartaSans(
+              fontSize: 13, color: cs.onSurfaceVariant)),
+          Text(value, style: GoogleFonts.plusJakartaSans(
+              fontSize: 13, fontWeight: FontWeight.w700, color: cs.onSurface)),
+        ],
+      ),
     );
   }
 }
