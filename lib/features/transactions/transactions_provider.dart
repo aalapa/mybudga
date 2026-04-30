@@ -6,6 +6,7 @@ import '../../shared/providers/household_provider.dart';
 import '../../shared/providers/payees_provider.dart';
 import '../accounts/accounts_provider.dart';
 import '../budget/budget_provider.dart';
+import '../cashflow/cashflow_provider.dart';
 
 class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
   static const _joinClause =
@@ -97,6 +98,7 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
     ref.invalidate(payeesProvider);
     ref.invalidate(accountsProvider);
     ref.invalidate(budgetProvider);
+    ref.invalidate(cashflowProvider);
   }
 
   Future<void> transferTransaction({
@@ -141,6 +143,7 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
 
     ref.invalidateSelf();
     ref.invalidate(accountsProvider);
+    ref.invalidate(cashflowProvider);
   }
 
   Future<void> updateTransaction(
@@ -178,6 +181,7 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
     ref.invalidate(payeesProvider);
     ref.invalidate(accountsProvider);
     ref.invalidate(budgetProvider);
+    ref.invalidate(cashflowProvider);
   }
 
   Future<void> confirmTransaction(String id, {
@@ -203,6 +207,7 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
     ref.invalidateSelf();
     ref.invalidate(accountsProvider);
     ref.invalidate(budgetProvider);
+    ref.invalidate(cashflowProvider);
   }
 
   static Future<String> _upsertPayee({

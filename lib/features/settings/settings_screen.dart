@@ -15,6 +15,7 @@ import '../../shared/providers/household_provider.dart';
 import '../../shared/providers/payees_provider.dart';
 import '../accounts/accounts_provider.dart';
 import '../budget/budget_provider.dart';
+import '../cashflow/cashflow_provider.dart';
 import '../transactions/transactions_provider.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -188,6 +189,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ref.invalidate(budgetProvider);
       ref.invalidate(categoriesProvider);
       ref.invalidate(payeesProvider);
+      ref.invalidate(cashflowProvider);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(

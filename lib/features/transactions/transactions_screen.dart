@@ -64,6 +64,8 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   Widget build(BuildContext context) {
     final cs           = Theme.of(context).colorScheme;
     final txAsync      = ref.watch(transactionsProvider);
+    // Pre-warm categories so the add-transaction sheet never sees a loading state
+    ref.watch(categoriesProvider);
 
     return Scaffold(
       backgroundColor: cs.surface,
