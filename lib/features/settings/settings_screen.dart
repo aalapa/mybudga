@@ -633,13 +633,22 @@ class _YnabImportSheetState extends State<_YnabImportSheet> {
 
   Future<void> _pickRegister() async {
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['csv'],
+      // FileType.any allows Google Drive / cloud files to be selected.
+      // Extension filtering greys them out when they aren't cached locally.
+      type:     FileType.any,
       withData: true,
     );
     if (result == null) return;
-    final file = result.files.single;
-    final content = String.fromCharCodes(file.bytes ?? []);
+    final file    = result.files.single;
+    final content = await _readFileContent(file);
+    if (content == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Could not read file — try downloading it to your device first.'),
+        ));
+      }
+      return;
+    }
     setState(() {
       _registerPath    = file.name;
       _registerContent = content;
@@ -652,18 +661,41 @@ class _YnabImportSheetState extends State<_YnabImportSheet> {
 
   Future<void> _pickBudget() async {
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['csv'],
+      type:     FileType.any,
       withData: true,
     );
     if (result == null) return;
-    final file = result.files.single;
+    final file    = result.files.single;
+    final content = await _readFileContent(file);
+    if (content == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Could not read file — try downloading it to your device first.'),
+        ));
+      }
+      return;
+    }
     setState(() {
       _budgetPath    = file.name;
-      _budgetContent = String.fromCharCodes(file.bytes ?? []);
+      _budgetContent = content;
       _result        = null;
       _error         = null;
     });
+  }
+
+  /// Read content from a picked file — prefers in-memory bytes, falls back to path.
+  Future<String?> _readFileContent(PlatformFile file) async {
+    // bytes are set when withData: true and the file is locally available
+    if (file.bytes != null && file.bytes!.isNotEmpty) {
+      return String.fromCharCodes(file.bytes!);
+    }
+    // path fallback for local files on Android / iOS
+    if (file.path != null) {
+      try {
+        return await File(file.path!).readAsString();
+      } catch (_) {}
+    }
+    return null;
   }
 
   void _updatePreview() {
