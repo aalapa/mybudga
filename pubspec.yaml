@@ -44,6 +44,10 @@ dependencies:
   # Charts
   fl_chart: ^0.68.0
 
+  # Local notifications (Path B — shopping reminders)
+  flutter_local_notifications: ^18.0.1
+  timezone: ^0.9.4
+
   # Splash
   flutter_native_splash: ^2.4.3
 

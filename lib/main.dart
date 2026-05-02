@@ -6,6 +6,7 @@ import 'core/supabase/supabase_config.dart';
 import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
 import 'core/sms/sms_service.dart';
+import 'features/insights/notification_service.dart';
 
 void main() async {
   final binding = WidgetsFlutterBinding.ensureInitialized();
@@ -24,6 +25,7 @@ void main() async {
 
   // MethodChannel calls require a running platform loop — init after first frame.
   WidgetsBinding.instance.addPostFrameCallback((_) async {
+    await NotificationService.instance.initialize();
     await SmsService.init();
     // Cold-start from notification tap: navigate to transactions now that the
     // router is running and the platform channel has responded.

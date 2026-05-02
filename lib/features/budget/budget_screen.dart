@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../shared/models/budget_entry.dart';
+import '../insights/insights_provider.dart';
+import '../insights/payee_pattern.dart';
 import 'budget_provider.dart';
 
 // ---------------------------------------------------------------------------
@@ -533,8 +535,11 @@ class _CategoryTxPanel extends ConsumerWidget {
                   style: GoogleFonts.plusJakartaSans(
                       fontSize: 12, color: cs.error)),
             ),
-            data: (txs) => txs.isEmpty
-                ? Padding(
+            data: (txs) => Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (txs.isEmpty)
+                  Padding(
                     padding: const EdgeInsets.fromLTRB(20, 10, 16, 10),
                     child: Text(
                       'No transactions this month',
@@ -542,10 +547,12 @@ class _CategoryTxPanel extends ConsumerWidget {
                           fontSize: 12, color: cs.onSurfaceVariant),
                     ),
                   )
-                : Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: txs.map((tx) => _CategoryTxRow(tx: tx)).toList(),
-                  ),
+                else
+                  ...txs.map((tx) => _CategoryTxRow(tx: tx)),
+                // ── Insight card (Path C) ──────────────────────────────────
+                _PatternInsightCard(entry: entry, txs: txs),
+              ],
+            ),
           ),
           // ── Edit budget button ──
           Padding(
@@ -619,6 +626,200 @@ class _CategoryTxRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Payee pattern insight card — Path C
+// ---------------------------------------------------------------------------
+
+class _PatternInsightCard extends ConsumerWidget {
+  final BudgetEntry entry;
+  final List<CategoryTransaction> txs;
+
+  const _PatternInsightCard({required this.entry, required this.txs});
+
+  /// Most-visited payee this month (by visit count).
+  String? _dominantPayee() {
+    if (txs.isEmpty) return null;
+    final counts = <String, int>{};
+    for (final t in txs) {
+      if (t.payee.isNotEmpty) counts[t.payee] = (counts[t.payee] ?? 0) + 1;
+    }
+    if (counts.isEmpty) return null;
+    return counts.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final payee = _dominantPayee();
+    if (payee == null) return const SizedBox.shrink();
+
+    final patternAsync = ref.watch(payeePatternProvider(payee));
+
+    return patternAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error:   (e, _) => const SizedBox.shrink(),
+      data:    (p) => p.confidence == PatternConfidence.none
+          ? const SizedBox.shrink()
+          : _InsightCardContent(pattern: p, entry: entry),
+    );
+  }
+}
+
+class _InsightCardContent extends StatelessWidget {
+  final PayeePattern pattern;
+  final BudgetEntry entry;
+
+  const _InsightCardContent({required this.pattern, required this.entry});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+
+    // Budget maths — based on this category's envelope
+    final budgetRemaining = (entry.budgeted - entry.activity.abs())
+        .clamp(0.0, double.infinity);
+    final recommended = pattern.recommendedSpend(budgetRemaining);
+
+    // Icon + headline based on confidence
+    final (icon, headline) = switch (pattern.confidence) {
+      PatternConfidence.established => (
+          '🛒',
+          pattern.typicalDayName != null
+              ? '${pattern.payeeName} every ${pattern.typicalDayName}'
+              : '${pattern.payeeName} · ${pattern.frequency?.shortLabel ?? 'regular'}',
+        ),
+      PatternConfidence.tentative => (
+          '📊',
+          'Early pattern · ${pattern.payeeName}',
+        ),
+      _ => ('📊', pattern.payeeName),
+    };
+
+    return Container(
+      margin:  const EdgeInsets.fromLTRB(12, 6, 12, 4),
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      decoration: BoxDecoration(
+        color:        cs.primaryContainer.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: cs.primary.withValues(alpha: 0.18),
+          width: 0.8,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Headline ──
+          Row(
+            children: [
+              Text(icon, style: const TextStyle(fontSize: 13)),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  headline,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: cs.onSurface,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+
+          // ── Stats row ──
+          Wrap(
+            spacing: 12,
+            runSpacing: 2,
+            children: [
+              _Stat('Visit ${pattern.visitsThisMonth} this month',
+                  cs.onSurfaceVariant),
+              _Stat('avg ${fmt.format(pattern.avgSpend)}/visit',
+                  cs.onSurfaceVariant),
+              if (pattern.projectedVisitsLeft != null)
+                _Stat(
+                  '~${pattern.projectedVisitsLeft} left this month',
+                  cs.onSurfaceVariant,
+                ),
+              if (pattern.confidence == PatternConfidence.tentative)
+                _Stat('(still learning)', cs.onSurfaceVariant,
+                    italic: true),
+            ],
+          ),
+
+          // ── Recommendation ──
+          if (recommended != null) ...[
+            const SizedBox(height: 8),
+            Divider(
+              height: 1,
+              color: cs.primary.withValues(alpha: 0.15),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Text(
+                  'Keep next visit under',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    color: cs.onSurface,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                    color:        cs.primary,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    fmt.format(recommended),
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: cs.onPrimary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ] else if (budgetRemaining > 0) ...[
+            const SizedBox(height: 6),
+            Text(
+              '${fmt.format(budgetRemaining)} remaining in ${entry.categoryName}',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                color: cs.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _Stat extends StatelessWidget {
+  final String text;
+  final Color color;
+  final bool italic;
+
+  const _Stat(this.text, this.color, {this.italic = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: GoogleFonts.plusJakartaSans(
+        fontSize: 11,
+        color: color,
+        fontStyle: italic ? FontStyle.italic : FontStyle.normal,
       ),
     );
   }
