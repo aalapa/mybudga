@@ -561,6 +561,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
     if (p != null) {
       _cents                = (p.amount.abs() * 100).round();
       _payeeCtrl.text       = p.displayPayee;
+      _memoCtrl.text        = p.memo ?? '';
       _selectedCategoryId   = p.categoryId;
       _selectedCategoryName = p.categoryName;
       _selectedAccount      = p.account;
@@ -672,6 +673,50 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
     }
   }
 
+  Future<void> _confirmDelete() async {
+    final cs        = Theme.of(context).colorScheme;
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete transaction?',
+            style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+        content: Text('This will permanently remove the transaction.',
+            style: GoogleFonts.plusJakartaSans()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Delete',
+                style: TextStyle(
+                    color: cs.error, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      setState(() => _saving = true);
+      try {
+        await ref
+            .read(transactionsProvider.notifier)
+            .deleteTransaction(widget.prefill!.id);
+        navigator.pop();
+      } catch (e) {
+        messenger.showSnackBar(SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: cs.error,
+          behavior: SnackBarBehavior.floating,
+        ));
+        if (mounted) setState(() => _saving = false);
+      }
+    }
+  }
+
   String _dateLabel(DateTime d) {
     final now = DateTime.now();
     if (d.year == now.year && d.month == now.month && d.day == now.day) return 'Today';
@@ -686,7 +731,6 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
   Widget build(BuildContext context) {
     final cs       = Theme.of(context).colorScheme;
     final fmt      = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
-    final isPrefill = widget.prefill != null;
     final payees   = ref.watch(payeesProvider).valueOrNull ?? [];
     final categoryGroups = ref.watch(categoriesProvider).valueOrNull ?? [];
     final suggestions = _suggestions(payees);
@@ -927,12 +971,28 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                             child: CircularProgressIndicator(
                                 strokeWidth: 2, color: cs.onPrimary))
                         : Text(
-                            isPrefill
+                            widget.prefill?.isPendingReview == true
                                 ? 'Confirm Transaction'
-                                : 'Save Transaction',
+                                : widget.prefill != null
+                                    ? 'Save Changes'
+                                    : 'Save Transaction',
                             style: GoogleFonts.plusJakartaSans(
                                 fontWeight: FontWeight.w700)),
                   ),
+
+                  // Delete — only visible when editing a confirmed transaction
+                  if (widget.prefill != null &&
+                      !widget.prefill!.isPendingReview) ...[
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: _saving ? null : _confirmDelete,
+                      icon: Icon(Icons.delete_outline,
+                          size: 18, color: cs.error),
+                      label: Text('Delete transaction',
+                          style: GoogleFonts.plusJakartaSans(
+                              color: cs.error, fontWeight: FontWeight.w600)),
+                    ),
+                  ],
                 ],
               ),
             ),
