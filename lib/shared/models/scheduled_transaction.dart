@@ -1,3 +1,5 @@
+import 'account.dart';
+
 enum ScheduledFrequency {
   once,
   weekly,
@@ -38,6 +40,7 @@ class ScheduledTransaction {
   final String householdId;
   final String accountId;
   final String accountName;
+  final AccountType accountType;
   final String? payeeId;
   final String? payeeName;
   final String? categoryId;
@@ -55,6 +58,7 @@ class ScheduledTransaction {
     required this.householdId,
     required this.accountId,
     required this.accountName,
+    required this.accountType,
     this.payeeId,
     this.payeeName,
     this.categoryId,
@@ -83,6 +87,7 @@ class ScheduledTransaction {
       householdId:  j['household_id'] as String,
       accountId:    j['account_id'] as String,
       accountName:  accountName,
+      accountType:  AccountType.fromString(acct['account_type'] as String? ?? 'checking'),
       payeeId:      payee?['id'] as String?,
       payeeName:    payee?['name'] as String?,
       categoryId:   cat?['id'] as String?,
@@ -100,6 +105,12 @@ class ScheduledTransaction {
   }
 
   bool get isIncome => amount > 0;
+
+  /// True when this scheduled transaction affects liquid cash (checking/savings/cash).
+  bool get isCashAccount =>
+      accountType == AccountType.checking ||
+      accountType == AccountType.savings ||
+      accountType == AccountType.cash;
 
   /// All occurrences of this transaction within [today, cutoff] inclusive.
   List<DateTime> occurrencesUntil(DateTime today, DateTime cutoff) {

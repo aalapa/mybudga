@@ -319,3 +319,45 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
 
 final budgetProvider =
     AsyncNotifierProvider<BudgetNotifier, BudgetState>(BudgetNotifier.new);
+
+/// Fetches actual transactions for a single category + month.
+/// Key: (categoryId, monthKey) where monthKey = "2026-05"
+final categoryTransactionsProvider = FutureProvider.autoDispose
+    .family<List<CategoryTransaction>, (String, String)>(
+  (ref, args) async {
+    final (categoryId, monthKey) = args;
+    final householdId = await ref.watch(householdIdProvider.future);
+    final client      = ref.watch(supabaseProvider);
+
+    final parts = monthKey.split('-');
+    final year  = int.parse(parts[0]);
+    final month = int.parse(parts[1]);
+    final lastDay = DateTime(year, month + 1, 0).day;
+    final dateFrom = '$year-${month.toString().padLeft(2, '0')}-01';
+    final dateTo   = '$year-${month.toString().padLeft(2, '0')}-${lastDay.toString().padLeft(2, '0')}';
+
+    final res = await client
+        .from('transactions')
+        .select('id, date, amount, payees(name), accounts(name, nickname, last_four)')
+        .eq('household_id', householdId)
+        .eq('category_id', categoryId)
+        .gte('date', dateFrom)
+        .lte('date', dateTo)
+        .isFilter('deleted_at', null)
+        .order('date', ascending: false);
+
+    return (res as List).map((r) {
+      final payee   = r['payees']   as Map<String, dynamic>?;
+      final acct    = r['accounts'] as Map<String, dynamic>?;
+      final base    = acct?['nickname'] as String? ?? acct?['name'] as String? ?? '';
+      final last4   = acct?['last_four'] as String?;
+      return CategoryTransaction(
+        id:          r['id'] as String,
+        date:        DateTime.parse(r['date'] as String),
+        payee:       payee?['name'] as String? ?? '',
+        amount:      (r['amount'] as num).toDouble(),
+        accountName: last4 != null ? '$base · $last4' : base,
+      );
+    }).toList();
+  },
+);

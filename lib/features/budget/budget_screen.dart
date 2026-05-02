@@ -160,9 +160,10 @@ class _BudgetBody extends StatelessWidget {
                     ref:    ref,
                   ),
                 _EntryRow(:final entry) => _CategoryTableRow(
-                    entry:  entry,
-                    isWide: isWide,
-                    onTap:  () => onCategoryTap(entry, state.month),
+                    entry:       entry,
+                    isWide:      isWide,
+                    month:       state.month,
+                    onDetailTap: (e, m) => onCategoryTap(e, m),
                   ),
               },
             ),
@@ -389,51 +390,64 @@ class _GroupHeaderRow extends StatelessWidget {
 // Category table row
 // ---------------------------------------------------------------------------
 
-class _CategoryTableRow extends StatelessWidget {
+class _CategoryTableRow extends ConsumerStatefulWidget {
   final BudgetEntry entry;
   final bool isWide;
-  final VoidCallback onTap;
+  final DateTime month;
+  final void Function(BudgetEntry, DateTime) onDetailTap;
 
   const _CategoryTableRow({
     required this.entry,
     required this.isWide,
-    required this.onTap,
+    required this.month,
+    required this.onDetailTap,
   });
+
+  @override
+  ConsumerState<_CategoryTableRow> createState() => _CategoryTableRowState();
+}
+
+class _CategoryTableRowState extends ConsumerState<_CategoryTableRow> {
+  bool _expanded = false;
+
+  String get _monthKey {
+    final m = widget.month;
+    return '${m.year}-${m.month.toString().padLeft(2, '0')}';
+  }
 
   @override
   Widget build(BuildContext context) {
     final cs          = Theme.of(context).colorScheme;
-    final isOverspent = entry.balance < 0;
-    final isFullyUsed = entry.balance == 0 && entry.spent > 0;
-    final availColor  = isOverspent ? cs.error
+    final isOverspent = widget.entry.balance < 0;
+    final isFullyUsed = widget.entry.balance == 0 && widget.entry.spent > 0;
+    final availColor  = isOverspent  ? cs.error
         : isFullyUsed               ? cs.onSurfaceVariant
-        : entry.balance > 0         ? cs.tertiary
+        : widget.entry.balance > 0  ? cs.tertiary
         :                             cs.onSurfaceVariant;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        // ── Main row ──────────────────────────────────────────
         InkWell(
-          onTap: onTap,
+          onTap: () => setState(() => _expanded = !_expanded),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 12, 16, 12),
             child: Row(
               children: [
-                // Leading icons
-                if (entry.isCcPayment)
+                if (widget.entry.isCcPayment)
                   Padding(
                     padding: const EdgeInsets.only(right: 6),
                     child: Icon(Icons.credit_card, size: 13, color: cs.primary),
                   ),
-                if (entry.goal != null)
+                if (widget.entry.goal != null)
                   Padding(
                     padding: const EdgeInsets.only(right: 5),
                     child: Icon(Icons.flag_outlined, size: 12, color: cs.tertiary),
                   ),
-                // Category name
                 Expanded(
                   child: Text(
-                    entry.categoryName,
+                    widget.entry.categoryName,
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
@@ -441,23 +455,171 @@ class _CategoryTableRow extends StatelessWidget {
                     ),
                   ),
                 ),
-                // Budgeted + Activity (wide only)
-                if (isWide) ...[
-                  _NumCell(entry.budgeted, cs.onSurface),
-                  _NumCell(entry.activity, cs.onSurfaceVariant),
+                if (widget.isWide) ...[
+                  _NumCell(widget.entry.budgeted, cs.onSurface),
+                  _NumCell(widget.entry.activity, cs.onSurfaceVariant),
                 ],
-                // Available
-                _NumCell(entry.balance, availColor, bold: true),
+                _NumCell(widget.entry.balance, availColor, bold: true),
+                const SizedBox(width: 4),
+                Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 16,
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                ),
               ],
             ),
           ),
         ),
+        // ── Expanded transactions panel ───────────────────────
+        if (_expanded)
+          _CategoryTxPanel(
+            entry:    widget.entry,
+            month:    widget.month,
+            monthKey: _monthKey,
+            onEditTap: () => widget.onDetailTap(widget.entry, widget.month),
+          ),
         Divider(
           height: 1,
           indent: 20,
           color: cs.outlineVariant.withValues(alpha: 0.35),
         ),
       ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Expanded transactions panel
+// ---------------------------------------------------------------------------
+
+class _CategoryTxPanel extends ConsumerWidget {
+  final BudgetEntry entry;
+  final DateTime month;
+  final String monthKey;
+  final VoidCallback onEditTap;
+
+  const _CategoryTxPanel({
+    required this.entry,
+    required this.month,
+    required this.monthKey,
+    required this.onEditTap,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs     = Theme.of(context).colorScheme;
+    final txAsync = ref.watch(
+        categoryTransactionsProvider((entry.categoryId, monthKey)));
+
+    return Container(
+      color: cs.surfaceContainerHigh,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Transaction list ──
+          txAsync.when(
+            loading: () => const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Center(
+                child: SizedBox(
+                  width: 16, height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            ),
+            error: (e, _) => Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text('Error loading transactions',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, color: cs.error)),
+            ),
+            data: (txs) => txs.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 10, 16, 10),
+                    child: Text(
+                      'No transactions this month',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12, color: cs.onSurfaceVariant),
+                    ),
+                  )
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: txs.map((tx) => _CategoryTxRow(tx: tx)).toList(),
+                  ),
+          ),
+          // ── Edit budget button ──
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton.icon(
+                  onPressed: onEditTap,
+                  icon: const Icon(Icons.edit_outlined, size: 14),
+                  label: Text('Edit Budget',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12, fontWeight: FontWeight.w600)),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Single transaction row inside the expanded panel
+// ---------------------------------------------------------------------------
+
+class _CategoryTxRow extends StatelessWidget {
+  final CategoryTransaction tx;
+  const _CategoryTxRow({required this.tx});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs       = Theme.of(context).colorScheme;
+    final isIncome = tx.amount > 0;
+    final fmt      = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 7, 16, 7),
+      child: Row(
+        children: [
+          Text(
+            DateFormat('MMM d').format(tx.date),
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 11,
+              color: cs.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              tx.payee.isNotEmpty ? tx.payee : tx.accountName,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13, color: cs.onSurface),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Text(
+            isIncome
+                ? '+${fmt.format(tx.amount)}'
+                : fmt.format(tx.amount.abs()),
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: isIncome ? cs.tertiary : cs.onSurface,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

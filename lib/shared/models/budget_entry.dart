@@ -127,3 +127,19 @@ class BudgetGroupData {
   double get balance => entries.fold(0.0, (s, e) => s + e.balance);
   bool get hasOverspend => entries.any((e) => e.balance < 0);
 }
+
+class CategoryTransaction {
+  final String id;
+  final DateTime date;
+  final String payee;
+  final double amount;
+  final String accountName;
+
+  const CategoryTransaction({
+    required this.id,
+    required this.date,
+    required this.payee,
+    required this.amount,
+    required this.accountName,
+  });
+}

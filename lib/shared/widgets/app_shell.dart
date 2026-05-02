@@ -21,10 +21,9 @@ class AppShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs           = Theme.of(context).colorScheme;
+    final cs            = Theme.of(context).colorScheme;
     final selectedIndex = _selectedIndex(context);
-    final statusBarH   = MediaQuery.of(context).viewPadding.top;
-    final isWide       = MediaQuery.sizeOf(context).width >= 600;
+    final isWide        = MediaQuery.sizeOf(context).width >= 600;
 
     Widget profileButton = IconButton(
       icon: Icon(Icons.account_circle_outlined, size: 26, color: cs.onSurfaceVariant),
@@ -57,17 +56,19 @@ class AppShell extends StatelessWidget {
     }
 
     return Scaffold(
-      body: Stack(
-        children: [
-          child,
-          // Floating profile icon — top-right, just below status bar
-          Positioned(
-            top: statusBarH + 2,
-            right: 4,
-            child: profileButton,
-          ),
+      appBar: AppBar(
+        toolbarHeight: 40,
+        backgroundColor: cs.surface,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        automaticallyImplyLeading: false,
+        actions: [
+          profileButton,
+          const SizedBox(width: 4),
         ],
       ),
+      body: child,
       bottomNavigationBar: NavigationBar(
         selectedIndex: selectedIndex,
         onDestinationSelected: (i) => context.go(_tabs[i].path),

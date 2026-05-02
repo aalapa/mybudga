@@ -64,15 +64,24 @@ class _CashflowBody extends StatelessWidget {
     final cs      = Theme.of(context).colorScheme;
     final fmt     = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
     final today   = DateTime.now();
-    final cutoff  = today.add(Duration(days: days));
 
     // Build projected entries
-    final entries = _buildProjected(state, today, cutoff);
+    final dayRows = _buildDayRows(state, today, days);
 
-    final lowest = entries.isEmpty
+    final isDoomsday = days == _CashflowBody._ddSentinel;
+
+    final lowest = dayRows.isEmpty
         ? state.startingBalance
-        : entries.map((e) => e.runningBalance).reduce((a, b) => a < b ? a : b);
+        : dayRows.map((d) => d.endBalance).reduce((a, b) => a < b ? a : b);
     final isDanger = lowest < 500;
+
+    // DD mode: find how many days until balance goes negative
+    final negIdx = isDoomsday
+        ? dayRows.indexWhere((d) => d.endBalance < 0)
+        : -1;
+    final runwayLabel = negIdx >= 0
+        ? 'Day $negIdx · ${DateFormat('MMM d').format(dayRows[negIdx].date)}'
+        : '365+ days safe';
 
     return SafeArea(
       child: Column(
@@ -117,42 +126,70 @@ class _CashflowBody extends StatelessWidget {
                       icon: Icons.account_balance_outlined,
                     ),
                     const SizedBox(width: 10),
-                    _BalanceCard(
-                      label: 'Lowest in ${days}d',
-                      value: fmt.format(lowest),
-                      color: isDanger ? cs.error : cs.tertiary,
-                      icon: isDanger ? Icons.warning_amber_rounded : Icons.trending_down,
-                      isWarning: isDanger,
-                    ),
+                    isDoomsday
+                        ? _BalanceCard(
+                            label: 'Goes negative',
+                            value: runwayLabel,
+                            color: negIdx >= 0 ? cs.error : cs.tertiary,
+                            icon:  negIdx >= 0
+                                ? Icons.warning_amber_rounded
+                                : Icons.check_circle_outline,
+                            isWarning: negIdx >= 0,
+                          )
+                        : _BalanceCard(
+                            label: 'Lowest in ${days}d',
+                            value: fmt.format(lowest),
+                            color: isDanger ? cs.error : cs.tertiary,
+                            icon:  isDanger
+                                ? Icons.warning_amber_rounded
+                                : Icons.trending_down,
+                            isWarning: isDanger,
+                          ),
                   ],
                 ),
                 const SizedBox(height: 14),
 
                 // Day range toggle
                 Row(
-                  children: [30, 60, 90].map((d) {
-                    final selected = days == d;
+                  children: [
+                    (30,  '30d'),
+                    (60,  '60d'),
+                    (90,  '90d'),
+                    (_CashflowBody._ddSentinel, 'DD'),
+                  ].map(((int, String) opt) {
+                    final (value, label) = opt;
+                    final selected  = days == value;
+                    final isDdChip  = value == _CashflowBody._ddSentinel;
+                    final chipColor = isDdChip && selected ? cs.error : cs.primary;
                     return Expanded(
                       child: GestureDetector(
-                        onTap: () => onDaysChanged(d),
+                        onTap: () => onDaysChanged(value),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 150),
                           margin: const EdgeInsets.symmetric(horizontal: 3),
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           decoration: BoxDecoration(
-                            color: selected ? cs.primaryContainer : cs.surfaceContainerHigh,
+                            color: selected
+                                ? (isDdChip
+                                    ? cs.errorContainer
+                                    : cs.primaryContainer)
+                                : cs.surfaceContainerHigh,
                             borderRadius: BorderRadius.circular(10),
                             border: selected
-                                ? Border.all(color: cs.primary.withValues(alpha: 0.4))
+                                ? Border.all(color: chipColor.withValues(alpha: 0.4))
                                 : null,
                           ),
                           child: Text(
-                            '$d days',
+                            label,
                             textAlign: TextAlign.center,
                             style: GoogleFonts.plusJakartaSans(
                               fontSize: 13,
                               fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                              color: selected ? cs.onPrimaryContainer : cs.onSurfaceVariant,
+                              color: selected
+                                  ? (isDdChip
+                                      ? cs.onErrorContainer
+                                      : cs.onPrimaryContainer)
+                                  : cs.onSurfaceVariant,
                             ),
                           ),
                         ),
@@ -167,89 +204,83 @@ class _CashflowBody extends StatelessWidget {
 
           // Timeline
           Expanded(
-            child: entries.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.event_repeat, size: 48, color: cs.onSurfaceVariant.withValues(alpha: 0.4)),
-                        const SizedBox(height: 12),
-                        Text(
-                          'No scheduled transactions\nin this window',
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 14, color: cs.onSurfaceVariant,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Tap + to add one',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 12, color: cs.onSurfaceVariant.withValues(alpha: 0.6),
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
-                    itemCount: entries.length,
-                    itemBuilder: (context, i) {
-                      final entry   = entries[i];
-                      final prev    = i > 0 ? entries[i - 1] : null;
-                      final showDiv = prev == null || !_sameDay(prev.date, entry.date);
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (showDiv) _DateDivider(date: entry.date),
-                          _CashflowTile(
-                            entry:    entry,
-                            isDanger: entry.runningBalance < 500,
-                            ref:      ref,
-                          ),
-                        ],
-                      );
-                    },
-                  ),
+            child: ListView.builder(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
+              itemCount: dayRows.length,
+              itemBuilder: (context, i) {
+                final day = dayRows[i];
+                return day.hasEvents
+                    ? _EventDayRow(day: day, ref: ref)
+                    : _EmptyDayRow(day: day);
+              },
+            ),
           ),
         ],
       ),
     );
   }
 
-  static List<_ProjectedEntry> _buildProjected(
+  // days == -1 signals "Doomsday" mode: project up to 365 days,
+  // stop at the first day the balance goes negative.
+  static const int _ddSentinel = -1;
+
+  static List<_DayData> _buildDayRows(
     CashflowState state,
     DateTime today,
-    DateTime cutoff,
+    int days,
   ) {
-    final all = <_ProjectedEntry>[];
+    final isDoomsday = days == _ddSentinel;
+    final maxDays    = isDoomsday ? 365 : days;
 
-    for (final st in state.scheduled) {
+    // Only scheduled transactions from liquid accounts affect cash
+    final cashScheduled =
+        state.scheduled.where((st) => st.isCashAccount).toList();
+
+    final cutoff = today.add(Duration(days: maxDays));
+    final entries = <_ProjectedEntry>[];
+
+    for (final st in cashScheduled) {
       for (final date in st.occurrencesUntil(today, cutoff)) {
-        all.add(_ProjectedEntry(
-          scheduledTx:  st,
-          date:         date,
-          payee:        st.payeeName ?? st.memo ?? 'Scheduled',
-          accountName:  st.accountName,
-          amount:       st.amount,
-          isIncome:     st.amount > 0,
-          category:     st.categoryName,
+        entries.add(_ProjectedEntry(
+          scheduledTx: st,
+          date:        date,
+          payee:       st.payeeName ?? st.memo ?? 'Scheduled',
+          accountName: st.accountName,
+          amount:      st.amount,
+          isIncome:    st.amount > 0,
+          category:    st.categoryName,
         ));
       }
     }
 
-    all.sort((a, b) => a.date.compareTo(b.date));
+    entries.sort((a, b) => a.date.compareTo(b.date));
 
     double running = state.startingBalance;
-    for (final e in all) {
+    for (final e in entries) {
       running += e.amount;
       e.runningBalance = running;
     }
 
-    return all;
+    final todayNorm = DateTime(today.year, today.month, today.day);
+    double dayBalance = state.startingBalance;
+
+    final allRows = List.generate(maxDays, (i) {
+      final day      = todayNorm.add(Duration(days: i));
+      final dayEvts  = entries.where((e) => _sameDay(e.date, day)).toList();
+      if (dayEvts.isNotEmpty) dayBalance = dayEvts.last.runningBalance;
+      return _DayData(date: day, events: dayEvts, endBalance: dayBalance);
+    });
+
+    if (isDoomsday) {
+      // Trim to include up to (and including) the first negative-balance day
+      final negIdx = allRows.indexWhere((d) => d.endBalance < 0);
+      return negIdx >= 0 ? allRows.sublist(0, negIdx + 1) : allRows;
+    }
+
+    return allRows;
   }
 
-  bool _sameDay(DateTime a, DateTime b) =>
+  static bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 }
 
@@ -311,43 +342,6 @@ class _BalanceCard extends StatelessWidget {
       ),
     );
   }
-}
-
-// ---------------------------------------------------------------------------
-// Date divider
-// ---------------------------------------------------------------------------
-
-class _DateDivider extends StatelessWidget {
-  final DateTime date;
-  const _DateDivider({required this.date});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs  = Theme.of(context).colorScheme;
-    final now = DateTime.now();
-    final isToday    = _sameDay(date, now);
-    final isTomorrow = _sameDay(date, now.add(const Duration(days: 1)));
-
-    final label = isToday
-        ? 'Today · ${DateFormat('MMM d').format(date)}'
-        : isTomorrow
-            ? 'Tomorrow · ${DateFormat('MMM d').format(date)}'
-            : DateFormat('EEEE · MMM d').format(date);
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(0, 16, 0, 6),
-      child: Text(
-        label,
-        style: GoogleFonts.plusJakartaSans(
-          fontSize: 11, fontWeight: FontWeight.w700,
-          color: cs.onSurfaceVariant, letterSpacing: 0.6,
-        ),
-      ),
-    );
-  }
-
-  static bool _sameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
 }
 
 // ---------------------------------------------------------------------------
@@ -456,6 +450,150 @@ class _CashflowTile extends StatelessWidget {
       ),
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Day data model
+// ---------------------------------------------------------------------------
+
+class _DayData {
+  final DateTime date;
+  final List<_ProjectedEntry> events;
+  final double endBalance;
+  const _DayData({required this.date, required this.events, required this.endBalance});
+  bool get hasEvents => events.isNotEmpty;
+}
+
+// ---------------------------------------------------------------------------
+// Day row — no events
+// ---------------------------------------------------------------------------
+
+class _EmptyDayRow extends StatelessWidget {
+  final _DayData day;
+  const _EmptyDayRow({required this.day});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final now = DateTime.now();
+    final isToday = _sameDay(day.date, now);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 56,
+            child: Text(
+              isToday ? 'Today' : DateFormat('MMM d').format(day.date),
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                fontWeight: isToday ? FontWeight.w700 : FontWeight.w400,
+                color: isToday
+                    ? cs.primary
+                    : cs.onSurfaceVariant.withValues(alpha: 0.55),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Container(
+              height: 1,
+              color: cs.outlineVariant.withValues(alpha: 0.2),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            fmt.format(day.endBalance),
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: day.endBalance < 500
+                  ? cs.error.withValues(alpha: 0.7)
+                  : cs.onSurfaceVariant.withValues(alpha: 0.55),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+// ---------------------------------------------------------------------------
+// Day row — has events
+// ---------------------------------------------------------------------------
+
+class _EventDayRow extends StatelessWidget {
+  final _DayData day;
+  final WidgetRef ref;
+  const _EventDayRow({required this.day, required this.ref});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final now = DateTime.now();
+    final isToday = _sameDay(day.date, now);
+    final isTomorrow = _sameDay(day.date, now.add(const Duration(days: 1)));
+
+    final label = isToday
+        ? 'Today · ${DateFormat('MMM d').format(day.date)}'
+        : isTomorrow
+            ? 'Tomorrow · ${DateFormat('MMM d').format(day.date)}'
+            : DateFormat('EEE · MMM d').format(day.date);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(0, 14, 0, 6),
+          child: Text(
+            label,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: isToday ? cs.primary : cs.onSurfaceVariant,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+        ...day.events.map((e) => _CashflowTile(
+              entry:    e,
+              isDanger: e.runningBalance < 500,
+              ref:      ref,
+            )),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(0, 4, 0, 2),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Text(
+                'Balance  ',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11,
+                  color: cs.onSurfaceVariant,
+                ),
+              ),
+              Text(
+                fmt.format(day.endBalance),
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: day.endBalance < 500 ? cs.error : cs.onSurface,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
 }
 
 // ---------------------------------------------------------------------------

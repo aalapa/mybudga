@@ -24,7 +24,7 @@ class CashflowState {
 
 class CashflowNotifier extends AsyncNotifier<CashflowState> {
   static const _joinClause =
-      '*, accounts(id, name, nickname, last_four), '
+      '*, accounts(id, name, nickname, last_four, account_type), '
       'payees(id, name), categories(id, name)';
 
   @override
