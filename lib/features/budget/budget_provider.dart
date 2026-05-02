@@ -208,6 +208,43 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
   }
 
   // ---------------------------------------------------------------------------
+  // Reordering
+  // ---------------------------------------------------------------------------
+
+  /// Persists a new category order within a single group.
+  /// [orderedIds] is the full list of category IDs in the desired order.
+  Future<void> reorderCategoriesInGroup(
+      String groupId, List<String> orderedIds) async {
+    final client = ref.read(supabaseProvider);
+    await Future.wait([
+      for (int i = 0; i < orderedIds.length; i++)
+        client
+            .from('categories')
+            .update({'sort_order': (i + 1) * 10})
+            .eq('id', orderedIds[i]),
+    ]);
+    ref.invalidateSelf();
+  }
+
+  /// Moves a group from [fromIndex] to [toIndex] in the current group list,
+  /// then re-stamps all sort_order values so they stay contiguous.
+  Future<void> moveGroup(
+      List<BudgetGroupData> groups, int fromIndex, int toIndex) async {
+    final client   = ref.read(supabaseProvider);
+    final reordered = List<BudgetGroupData>.of(groups);
+    reordered.insert(toIndex, reordered.removeAt(fromIndex));
+    await Future.wait([
+      for (int i = 0; i < reordered.length; i++)
+        client
+            .from('category_groups')
+            .update({'sort_order': (i + 1) * 10})
+            .eq('id', reordered[i].id),
+    ]);
+    ref.invalidate(categoriesProvider);
+    ref.invalidateSelf();
+  }
+
+  // ---------------------------------------------------------------------------
   // Update overspending behavior
   // ---------------------------------------------------------------------------
 
