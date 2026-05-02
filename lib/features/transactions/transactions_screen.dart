@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
@@ -538,8 +539,10 @@ class _AddTransactionSheet extends ConsumerStatefulWidget {
 }
 
 class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
-  final _payeeCtrl = TextEditingController();
-  final _memoCtrl  = TextEditingController();
+  final _payeeCtrl    = TextEditingController();
+  final _categoryCtrl = TextEditingController();
+  final _memoCtrl     = TextEditingController();
+  late final FocusNode _numpadFocus;
 
   // Amount stored as integer cents so digits always land in the cents place.
   // e.g. press 2,3,4,5  →  2 → 23 → 234 → 2345 cents = $23.45
@@ -548,13 +551,22 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
   String? _selectedCategoryName;
   Account? _selectedAccount;
   DateTime _date = DateTime.now();
-  bool    _isIncome = false;
-  bool    _showSuggestions = false;
-  bool    _saving = false;
+  bool _isIncome = false;
+  bool _incomeNextMonth = false;
+  bool _showSuggestions = false;
+  bool _showCategorySuggestions = false;
+  bool _saving = false;
 
   @override
   void initState() {
     super.initState();
+    _numpadFocus = FocusNode();
+    // Auto-focus the numpad so keyboard digits work immediately on desktop,
+    // and no software keyboard pops up on mobile.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _numpadFocus.requestFocus();
+    });
+
     final p   = widget.prefill;
     final sms = widget.smsData;
 
@@ -562,6 +574,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
       _cents                = (p.amount.abs() * 100).round();
       _payeeCtrl.text       = p.displayPayee;
       _memoCtrl.text        = p.memo ?? '';
+      _categoryCtrl.text    = p.categoryName ?? '';
       _selectedCategoryId   = p.categoryId;
       _selectedCategoryName = p.categoryName;
       _selectedAccount      = p.account;
@@ -591,7 +604,9 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
 
   @override
   void dispose() {
+    _numpadFocus.dispose();
     _payeeCtrl.dispose();
+    _categoryCtrl.dispose();
     _memoCtrl.dispose();
     super.dispose();
   }
@@ -624,6 +639,16 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
         .toList();
   }
 
+  List<Category> _categoryMatches(List<CategoryGroup> groups) {
+    final q = _categoryCtrl.text.toLowerCase().trim();
+    if (q.isEmpty) return [];
+    return groups
+        .expand((g) => g.categories)
+        .where((c) => c.name.toLowerCase().contains(q))
+        .take(6)
+        .toList();
+  }
+
   bool get _canSave => _cents > 0 && _selectedAccount != null && !_saving;
 
   Future<void> _save() async {
@@ -632,6 +657,13 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
     try {
       final amt    = _cents / 100.0;
       final signed = _isIncome ? amt : -amt;
+
+      // "Next month" income: shift date to 1st of next month so
+      // v_to_be_budgeted places this income in the correct budget month.
+      // Dart's DateTime normalises month 13 → January of next year automatically.
+      final saveDate = (_isIncome && _incomeNextMonth)
+          ? DateTime(_date.year, _date.month + 1, 1)
+          : _date;
 
       final p = widget.prefill;
       if (p != null && p.isPendingReview) {
@@ -645,7 +677,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
           p.id,
           accountId:  _selectedAccount!.id,
           amount:     signed,
-          date:       _date,
+          date:       saveDate,
           payeeName:  _payeeCtrl.text.trim(),
           categoryId: _selectedCategoryId,
           memo:       _memoCtrl.text.trim(),
@@ -654,7 +686,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
         await ref.read(transactionsProvider.notifier).addTransaction(
           accountId:  _selectedAccount!.id,
           amount:     signed,
-          date:       _date,
+          date:       saveDate,
           payeeName:  _payeeCtrl.text.trim(),
           categoryId: _selectedCategoryId,
           memo:       _memoCtrl.text.trim(),
@@ -731,9 +763,10 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
   Widget build(BuildContext context) {
     final cs       = Theme.of(context).colorScheme;
     final fmt      = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
-    final payees   = ref.watch(payeesProvider).valueOrNull ?? [];
-    final categoryGroups = ref.watch(categoriesProvider).valueOrNull ?? [];
-    final suggestions = _suggestions(payees);
+    final payees          = ref.watch(payeesProvider).valueOrNull ?? [];
+    final categoryGroups  = ref.watch(categoriesProvider).valueOrNull ?? [];
+    final suggestions     = _suggestions(payees);
+    final categoryMatches = _categoryMatches(categoryGroups);
 
     return DraggableScrollableSheet(
       initialChildSize: 0.92,
@@ -830,7 +863,10 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                   // Income / expense toggle
                   Center(
                     child: GestureDetector(
-                      onTap: () => setState(() => _isIncome = !_isIncome),
+                      onTap: () => setState(() {
+                        _isIncome = !_isIncome;
+                        if (!_isIncome) _incomeNextMonth = false;
+                      }),
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 150),
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -864,9 +900,63 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                       ),
                     ),
                   ),
+                  // Income availability — only shown when income is toggled on
+                  if (_isIncome) ...[
+                    const SizedBox(height: 10),
+                    Center(
+                      child: SegmentedButton<bool>(
+                        style: SegmentedButton.styleFrom(
+                          textStyle: GoogleFonts.plusJakartaSans(
+                              fontSize: 12, fontWeight: FontWeight.w600),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        segments: const [
+                          ButtonSegment(
+                            value: false,
+                            icon: Icon(Icons.calendar_today, size: 13),
+                            label: Text('This month'),
+                          ),
+                          ButtonSegment(
+                            value: true,
+                            icon: Icon(Icons.calendar_month, size: 13),
+                            label: Text('Next month'),
+                          ),
+                        ],
+                        selected: {_incomeNextMonth},
+                        onSelectionChanged: (s) =>
+                            setState(() => _incomeNextMonth = s.first),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
 
-                  _Numpad(onKey: _onNumpad),
+                  Focus(
+                    focusNode: _numpadFocus,
+                    onKeyEvent: (_, event) {
+                      if (event is! KeyDownEvent &&
+                          event is! KeyRepeatEvent) {
+                        return KeyEventResult.ignored;
+                      }
+                      // Digit characters from main keyboard and numpad
+                      final char = event.character;
+                      if (char != null && char.length == 1) {
+                        final code = char.codeUnitAt(0);
+                        if (code >= 0x30 && code <= 0x39) { // '0'–'9'
+                          _onNumpad(char);
+                          return KeyEventResult.handled;
+                        }
+                      }
+                      // Backspace / Delete
+                      final key = event.logicalKey;
+                      if (key == LogicalKeyboardKey.backspace ||
+                          key == LogicalKeyboardKey.delete) {
+                        _onNumpad('⌫');
+                        return KeyEventResult.handled;
+                      }
+                      return KeyEventResult.ignored;
+                    },
+                    child: _Numpad(onKey: _onNumpad),
+                  ),
                   const SizedBox(height: 24),
 
                   // Payee
@@ -891,11 +981,13 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                       child: Column(
                         children: suggestions.map((s) => InkWell(
                           onTap: () {
-                            _payeeCtrl.text = s.name;
+                            _payeeCtrl.text    = s.name;
+                            _categoryCtrl.text = s.categoryName ?? '';
                             setState(() {
-                              _showSuggestions       = false;
-                              _selectedCategoryId    = s.categoryId;
-                              _selectedCategoryName  = s.categoryName;
+                              _showSuggestions         = false;
+                              _showCategorySuggestions = false;
+                              _selectedCategoryId      = s.categoryId;
+                              _selectedCategoryName    = s.categoryName;
                             });
                           },
                           borderRadius: BorderRadius.circular(12),
@@ -925,29 +1017,88 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                   ],
                   const SizedBox(height: 12),
 
-                  // Category + Account pickers
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _PickerChip(
-                          icon:    Icons.label_outline,
-                          label:   _selectedCategoryName ?? 'Category',
-                          isEmpty: _selectedCategoryId == null,
-                          onTap:   () => _pickCategory(context, categoryGroups),
-                        ),
+                  // Category search field
+                  TextField(
+                    controller: _categoryCtrl,
+                    textCapitalization: TextCapitalization.words,
+                    onChanged: (v) => setState(() {
+                      _showCategorySuggestions = v.isNotEmpty;
+                      // Clear confirmed selection if text was manually edited
+                      if (v != _selectedCategoryName) {
+                        _selectedCategoryId   = null;
+                        _selectedCategoryName = null;
+                      }
+                    }),
+                    decoration: InputDecoration(
+                      labelText: 'Category',
+                      prefixIcon: const Icon(Icons.label_outline, size: 18),
+                      suffixIcon: _categoryCtrl.text.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.close, size: 16),
+                              onPressed: () => setState(() {
+                                _categoryCtrl.clear();
+                                _selectedCategoryId      = null;
+                                _selectedCategoryName    = null;
+                                _showCategorySuggestions = false;
+                              }),
+                            )
+                          : null,
+                    ),
+                  ),
+
+                  // Category suggestions dropdown
+                  if (_showCategorySuggestions && categoryMatches.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: cs.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _PickerChip(
-                          icon: _selectedAccount?.isCreditCard == true
-                              ? Icons.credit_card
-                              : Icons.account_balance_outlined,
-                          label:   _selectedAccount?.displayName ?? 'Account',
-                          isEmpty: _selectedAccount == null,
-                          onTap:   () => _pickAccount(context),
-                        ),
+                      child: Column(
+                        children: categoryMatches.map((c) => InkWell(
+                          onTap: () {
+                            _categoryCtrl.text = c.name;
+                            setState(() {
+                              _selectedCategoryId      = c.id;
+                              _selectedCategoryName    = c.name;
+                              _showCategorySuggestions = false;
+                            });
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 10),
+                            child: Row(
+                              children: [
+                                Icon(Icons.label_outline,
+                                    size: 14, color: cs.onSurfaceVariant),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(c.name,
+                                      style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 14, color: cs.onSurface)),
+                                ),
+                                Text(c.groupName,
+                                    style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 11,
+                                        color: cs.onSurfaceVariant)),
+                              ],
+                            ),
+                          ),
+                        )).toList(),
                       ),
-                    ],
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+
+                  // Account picker
+                  _PickerChip(
+                    icon: _selectedAccount?.isCreditCard == true
+                        ? Icons.credit_card
+                        : Icons.account_balance_outlined,
+                    label:   _selectedAccount?.displayName ?? 'Account',
+                    isEmpty: _selectedAccount == null,
+                    onTap:   () => _pickAccount(context),
                   ),
                   const SizedBox(height: 12),
 
@@ -997,78 +1148,6 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  void _pickCategory(BuildContext context, List<CategoryGroup> groups) {
-    final cs = Theme.of(context).colorScheme;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (_) => DraggableScrollableSheet(
-        initialChildSize: 0.7,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (context, scroll) => Container(
-          color: cs.surfaceContainerHigh,
-          child: ListView(
-            controller: scroll,
-            padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
-            children: [
-              Text('Category',
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 18, fontWeight: FontWeight.w800, color: cs.onSurface)),
-              const SizedBox(height: 16),
-              if (groups.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text('No categories yet — add some in the Budget tab.',
-                      style: GoogleFonts.plusJakartaSans(color: cs.onSurfaceVariant)),
-                )
-              else
-                for (final group in groups) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12, bottom: 6),
-                    child: Text(group.name.toUpperCase(),
-                        style: GoogleFonts.plusJakartaSans(
-                            fontSize: 11, fontWeight: FontWeight.w700,
-                            color: cs.onSurfaceVariant, letterSpacing: 0.8)),
-                  ),
-                  ...group.categories.map((c) => InkWell(
-                    onTap: () {
-                      setState(() {
-                        _selectedCategoryId   = c.id;
-                        _selectedCategoryName = c.name;
-                      });
-                      Navigator.pop(context);
-                    },
-                    borderRadius: BorderRadius.circular(10),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 4, vertical: 12),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(c.name,
-                                style: GoogleFonts.plusJakartaSans(
-                                    fontSize: 14, fontWeight: FontWeight.w500,
-                                    color: c.id == _selectedCategoryId
-                                        ? cs.primary
-                                        : cs.onSurface)),
-                          ),
-                          if (c.id == _selectedCategoryId)
-                            Icon(Icons.check_circle, size: 18, color: cs.primary),
-                        ],
-                      ),
-                    ),
-                  )),
-                ],
-            ],
-          ),
         ),
       ),
     );
