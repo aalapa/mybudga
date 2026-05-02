@@ -541,7 +541,9 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
   final _payeeCtrl = TextEditingController();
   final _memoCtrl  = TextEditingController();
 
-  String  _amountDisplay = '0';
+  // Amount stored as integer cents so digits always land in the cents place.
+  // e.g. press 2,3,4,5  →  2 → 23 → 234 → 2345 cents = $23.45
+  int _cents = 0;
   String? _selectedCategoryId;
   String? _selectedCategoryName;
   Account? _selectedAccount;
@@ -557,7 +559,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
     final sms = widget.smsData;
 
     if (p != null) {
-      _amountDisplay        = p.amount.abs().toStringAsFixed(2);
+      _cents                = (p.amount.abs() * 100).round();
       _payeeCtrl.text       = p.displayPayee;
       _selectedCategoryId   = p.categoryId;
       _selectedCategoryName = p.categoryName;
@@ -573,7 +575,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
           : accounts.isNotEmpty ? accounts.first : null;
       // Override with SMS-parsed values if present
       if (sms != null) {
-        _amountDisplay = sms.amount.toStringAsFixed(2);
+        _cents = (sms.amount.abs() * 100).round();
         if (sms.payee?.isNotEmpty == true) _payeeCtrl.text = sms.payee!;
         _isIncome = !sms.isDebit;
         if (sms.accountLastFour != null) {
@@ -596,20 +598,15 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
   void _onNumpad(String key) {
     setState(() {
       if (key == '⌫') {
-        _amountDisplay = _amountDisplay.length > 1
-            ? _amountDisplay.substring(0, _amountDisplay.length - 1)
-            : '0';
-      } else if (key == '.') {
-        if (!_amountDisplay.contains('.')) _amountDisplay += '.';
+        _cents = _cents ~/ 10;
+      } else if (key == '00') {
+        // Double-zero: shift two decimal places (e.g. $1 → $100)
+        final next = _cents * 100;
+        if (next <= 9999999) _cents = next;
       } else {
-        if (_amountDisplay == '0') {
-          _amountDisplay = key;
-        } else if (_amountDisplay.contains('.')) {
-          final parts = _amountDisplay.split('.');
-          if (parts[1].length < 2) _amountDisplay += key;
-        } else {
-          _amountDisplay += key;
-        }
+        final digit = int.parse(key);
+        final next  = _cents * 10 + digit;
+        if (next <= 9999999) _cents = next; // cap at $99,999.99
       }
     });
   }
@@ -626,16 +623,13 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
         .toList();
   }
 
-  bool get _canSave {
-    final amt = double.tryParse(_amountDisplay);
-    return amt != null && amt > 0 && _selectedAccount != null && !_saving;
-  }
+  bool get _canSave => _cents > 0 && _selectedAccount != null && !_saving;
 
   Future<void> _save() async {
     if (!_canSave) return;
     setState(() => _saving = true);
     try {
-      final amt    = double.parse(_amountDisplay);
+      final amt    = _cents / 100.0;
       final signed = _isIncome ? amt : -amt;
 
       final p = widget.prefill;
@@ -779,10 +773,10 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                   // Amount display
                   Center(
                     child: Text(
-                      '${_isIncome ? '+' : '-'}${fmt.format(double.tryParse(_amountDisplay) ?? 0)}',
+                      '${_isIncome ? '+' : '-'}${fmt.format(_cents / 100.0)}',
                       style: GoogleFonts.plusJakartaSans(
                           fontSize: 48, fontWeight: FontWeight.w800,
-                          color: _amountDisplay == '0'
+                          color: _cents == 0
                               ? cs.onSurfaceVariant
                               : _isIncome ? cs.tertiary : cs.onSurface),
                     ),
@@ -1087,7 +1081,7 @@ class _Numpad extends StatelessWidget {
     ['7', '8', '9'],
     ['4', '5', '6'],
     ['1', '2', '3'],
-    ['.', '0', '⌫'],
+    ['00', '0', '⌫'],
   ];
 
   @override

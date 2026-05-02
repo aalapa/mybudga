@@ -226,19 +226,16 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     ref.invalidateSelf();
   }
 
-  /// Moves a group from [fromIndex] to [toIndex] in the current group list,
-  /// then re-stamps all sort_order values so they stay contiguous.
-  Future<void> moveGroup(
-      List<BudgetGroupData> groups, int fromIndex, int toIndex) async {
-    final client   = ref.read(supabaseProvider);
-    final reordered = List<BudgetGroupData>.of(groups);
-    reordered.insert(toIndex, reordered.removeAt(fromIndex));
+  /// Persists a new group order.
+  /// [orderedGroups] is the full list in the desired order.
+  Future<void> reorderGroups(List<BudgetGroupData> orderedGroups) async {
+    final client = ref.read(supabaseProvider);
     await Future.wait([
-      for (int i = 0; i < reordered.length; i++)
+      for (int i = 0; i < orderedGroups.length; i++)
         client
             .from('category_groups')
             .update({'sort_order': (i + 1) * 10})
-            .eq('id', reordered[i].id),
+            .eq('id', orderedGroups[i].id),
     ]);
     ref.invalidate(categoriesProvider);
     ref.invalidateSelf();

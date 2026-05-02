@@ -54,7 +54,8 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
     final householdId = await ref.read(householdIdProvider.future);
     final client      = ref.read(supabaseProvider);
 
-    await client.from('accounts').insert({
+    // Insert the account and get its new ID back.
+    final res = await client.from('accounts').insert({
       'household_id':     householdId,
       'name':             name,
       'nickname':         nickname?.isNotEmpty == true ? nickname : null,
@@ -67,8 +68,29 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
         'start_date': '${startDate.year}-'
             '${startDate.month.toString().padLeft(2, '0')}-'
             '${startDate.day.toString().padLeft(2, '0')}',
-    });
-    // Realtime will trigger rebuild, but invalidate immediately for snappy UI
+    }).select('id').single();
+
+    // For budget (non-tracking) accounts with a non-zero opening balance,
+    // create a "Starting balance" transaction so the money flows into TBB.
+    // Tracking accounts are net-worth only and don't touch the budget.
+    if (!isTracking && startingBalance != 0) {
+      final txDate  = startDate ?? DateTime.now();
+      final dateStr = '${txDate.year}-'
+          '${txDate.month.toString().padLeft(2, '0')}-'
+          '${txDate.day.toString().padLeft(2, '0')}';
+
+      await client.from('transactions').insert({
+        'household_id': householdId,
+        'account_id':   res['id'] as String,
+        'amount':       startingBalance,
+        'date':         dateStr,
+        'status':       'confirmed',
+        'memo':         'Starting balance',
+        // No category_id → uncategorised inflow goes straight to TBB.
+        // No payee_id   → shows as "Starting balance" via memo.
+      });
+    }
+
     ref.invalidateSelf();
   }
 
@@ -81,12 +103,93 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
     ref.invalidateSelf();
   }
 
+  /// Updates the user-facing nickname for an account.
+  /// Pass an empty string to clear the nickname (falls back to bank name).
+  Future<void> renameAccount(String id, String nickname) async {
+    final client = ref.read(supabaseProvider);
+    await client
+        .from('accounts')
+        .update({'nickname': nickname.trim().isEmpty ? null : nickname.trim()})
+        .eq('id', id);
+    ref.invalidateSelf();
+  }
+
+  /// Marks an account as inactive — keeps all history, just hides it from
+  /// the active accounts list.
   Future<void> closeAccount(String id) async {
     final client = ref.read(supabaseProvider);
     await client
         .from('accounts')
         .update({'is_active': false})
         .eq('id', id);
+    ref.invalidateSelf();
+  }
+
+  /// Permanently removes an account and all its transactions.
+  /// Use only for test accounts or mistakes — this cannot be undone.
+  Future<void> deleteAccount(String id) async {
+    final client = ref.read(supabaseProvider);
+
+    // ── Step 1: Collect this account's transaction IDs and their paired
+    //           transfer_ids (legs that live on OTHER accounts).
+    final txRows = await client
+        .from('transactions')
+        .select('id, transfer_id')
+        .eq('account_id', id);
+
+    final ownTxIds = (txRows as List)
+        .map((r) => r['id'] as String)
+        .toList();
+
+    final pairedTxIds = (txRows)
+        .map((r) => r['transfer_id'] as String?)
+        .whereType<String>()
+        .toList();
+
+    // ── Step 2: Clean up transfer legs on OTHER accounts.
+    //   Those transactions now have a dangling transfer_id. Left alone they
+    //   become uncategorised credits/debits that inflate TBB.
+    if (pairedTxIds.isNotEmpty) {
+      // Null-out the back-reference so the delete below won't FK-violate.
+      await client
+          .from('transactions')
+          .update({'transfer_id': null})
+          .in_('id', pairedTxIds);
+      // Delete the orphaned other-leg transactions.
+      await client
+          .from('split_transactions')
+          .delete()
+          .in_('transaction_id', pairedTxIds);
+      await client
+          .from('transactions')
+          .delete()
+          .in_('id', pairedTxIds);
+    }
+
+    // ── Step 3: Delete split_transactions for this account's transactions.
+    //   Without this, the transaction delete below will FK-violate and silently
+    //   leave orphaned rows behind.
+    if (ownTxIds.isNotEmpty) {
+      await client
+          .from('split_transactions')
+          .delete()
+          .in_('transaction_id', ownTxIds);
+    }
+
+    // ── Step 4: Null-out any remaining self-referential transfer_id on own txs.
+    await client
+        .from('transactions')
+        .update({'transfer_id': null})
+        .eq('account_id', id);
+
+    // ── Step 5: Delete scheduled transactions — otherwise the
+    //   process_due_scheduled_transactions RPC will re-create phantom rows.
+    await client.from('scheduled_transactions').delete().eq('account_id', id);
+
+    // ── Step 6: Delete this account's transactions, then the account itself.
+    await client.from('transactions').delete().eq('account_id', id);
+    await client.from('accounts').delete().eq('id', id);
+
     ref.invalidateSelf();
   }
 }

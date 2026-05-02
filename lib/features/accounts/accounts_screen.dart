@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
@@ -573,8 +574,9 @@ class _AccountDetailSheetState extends ConsumerState<_AccountDetailSheet> {
                       children: [
                         Expanded(
                           child: FilledButton.tonal(
-                            onPressed: () {},
-                            child: Text('Edit',
+                            onPressed: () =>
+                                _showRenameAccountDialog(context, ref, account),
+                            child: Text('Rename',
                                 style: GoogleFonts.plusJakartaSans(
                                     fontWeight: FontWeight.w700)),
                           ),
@@ -587,6 +589,18 @@ class _AccountDetailSheetState extends ConsumerState<_AccountDetailSheet> {
                             child: Text('Reconcile',
                                 style: GoogleFonts.plusJakartaSans(
                                     fontWeight: FontWeight.w700)),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        // Close / delete
+                        IconButton(
+                          tooltip: 'More options',
+                          icon: const Icon(Icons.more_horiz),
+                          onPressed: () => _showAccountActionsSheet(
+                              context, ref, account),
+                          style: IconButton.styleFrom(
+                            backgroundColor:
+                                Theme.of(context).colorScheme.surfaceContainerHighest,
                           ),
                         ),
                       ],
@@ -905,6 +919,318 @@ class _TxGroup extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // Reconcile sheet
 // ---------------------------------------------------------------------------
+// Account actions sheet (close / delete)
+// ---------------------------------------------------------------------------
+
+void _showAccountActionsSheet(
+    BuildContext context, WidgetRef ref, Account account) {
+  showModalBottomSheet<void>(
+    context:     context,
+    useSafeArea: true,
+    builder: (ctx) {
+      final cs = Theme.of(ctx).colorScheme;
+      return SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Center(
+              child: Container(
+                width: 36, height: 4,
+                decoration: BoxDecoration(
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            // ── Close ─────────────────────────────────────────────────────
+            ListTile(
+              leading: const Icon(Icons.archive_outlined),
+              title: Text('Close account',
+                  style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
+              subtitle: Text('Hides the account but keeps all history.',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, color: cs.onSurfaceVariant)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showCloseAccountDialog(context, ref, account);
+              },
+            ),
+            // ── Delete ────────────────────────────────────────────────────
+            ListTile(
+              leading: Icon(Icons.delete_forever_outlined, color: cs.error),
+              title: Text('Delete account',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w600, color: cs.error)),
+              subtitle: Text('Permanently removes this account and all its transactions.',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, color: cs.onSurfaceVariant)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showDeleteAccountDialog(context, ref, account);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+void _showCloseAccountDialog(
+    BuildContext context, WidgetRef ref, Account account) {
+  showDialog<void>(
+    context: context,
+    builder: (ctx) {
+      bool saving = false;
+      return StatefulBuilder(builder: (ctx, setState) {
+        return AlertDialog(
+          title: Text('Close account?',
+              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+          content: Text(
+            '${account.displayName} will be hidden from your accounts list. '
+            'All transactions and budget history are kept — you can still see them in reports.',
+            style: GoogleFonts.plusJakartaSans(fontSize: 14),
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      setState(() => saving = true);
+                      try {
+                        await ref
+                            .read(accountsProvider.notifier)
+                            .closeAccount(account.id);
+                        if (ctx.mounted) {
+                          Navigator.pop(ctx);           // dialog
+                          Navigator.pop(context);       // detail sheet
+                        }
+                      } catch (e) {
+                        if (ctx.mounted) {
+                          setState(() => saving = false);
+                          ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                            content: Text('Could not close account: $e'),
+                            behavior: SnackBarBehavior.floating,
+                          ));
+                        }
+                      }
+                    },
+              child: saving
+                  ? const SizedBox(
+                      width: 16, height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Text('Close account'),
+            ),
+          ],
+        );
+      });
+    },
+  );
+}
+
+void _showDeleteAccountDialog(
+    BuildContext context, WidgetRef ref, Account account) {
+  final confirmCtrl = TextEditingController();
+  showDialog<void>(
+    context: context,
+    builder: (ctx) {
+      final cs = Theme.of(ctx).colorScheme;
+      bool saving  = false;
+      bool canDelete = false;
+
+      return StatefulBuilder(builder: (ctx, setState) {
+        return AlertDialog(
+          title: Text('Delete account?',
+              style: GoogleFonts.plusJakartaSans(
+                  fontWeight: FontWeight.w700, color: cs.error)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'This permanently deletes ${account.displayName} and every '
+                'transaction on it. Your budget history will change. '
+                'This cannot be undone.',
+                style: GoogleFonts.plusJakartaSans(fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              Text('Type DELETE to confirm:',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              TextField(
+                controller:  confirmCtrl,
+                autofocus:   true,
+                onChanged:   (v) => setState(() => canDelete = v == 'DELETE'),
+                decoration: InputDecoration(
+                  hintText:       'DELETE',
+                  errorText:      confirmCtrl.text.isNotEmpty && !canDelete
+                      ? 'Type DELETE in capitals'
+                      : null,
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: cs.error, width: 1.5),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: cs.error),
+              onPressed: (canDelete && !saving)
+                  ? () async {
+                      setState(() => saving = true);
+                      try {
+                        await ref
+                            .read(accountsProvider.notifier)
+                            .deleteAccount(account.id);
+                        if (ctx.mounted) {
+                          Navigator.pop(ctx);           // dialog
+                          Navigator.pop(context);       // detail sheet
+                        }
+                      } catch (e) {
+                        if (ctx.mounted) {
+                          setState(() => saving = false);
+                          ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                            content: Text('Could not delete account: $e'),
+                            behavior: SnackBarBehavior.floating,
+                          ));
+                        }
+                      }
+                    }
+                  : null,
+              child: saving
+                  ? const SizedBox(
+                      width: 16, height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Text('Delete permanently'),
+            ),
+          ],
+        );
+      });
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Rename account dialog
+// ---------------------------------------------------------------------------
+
+void _showRenameAccountDialog(
+    BuildContext context, WidgetRef ref, Account account) {
+  final ctrl = TextEditingController(
+      text: account.nickname?.isNotEmpty == true
+          ? account.nickname
+          : account.name);
+
+  showDialog<void>(
+    context: context,
+    builder: (ctx) {
+      final cs = Theme.of(ctx).colorScheme;
+      bool saving = false;
+
+      return StatefulBuilder(builder: (ctx, setDlgState) {
+        Future<void> save() async {
+          final name = ctrl.text.trim();
+          if (name.isEmpty) return;
+          setDlgState(() => saving = true);
+          try {
+            await ref.read(accountsProvider.notifier)
+                .renameAccount(account.id, name);
+            if (ctx.mounted) Navigator.pop(ctx);
+          } catch (e) {
+            if (ctx.mounted) {
+              setDlgState(() => saving = false);
+              ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                content: Text('Could not rename: $e'),
+                behavior: SnackBarBehavior.floating,
+              ));
+            }
+          }
+        }
+
+        return AlertDialog(
+          title: Text('Rename account',
+              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller:      ctrl,
+                autofocus:       true,
+                textCapitalization: TextCapitalization.words,
+                onSubmitted:     (_) => save(),
+                decoration: InputDecoration(
+                  labelText: 'Display name',
+                  hintText:  account.name,
+                ),
+              ),
+              if (account.nickname?.isNotEmpty == true) ...[
+                const SizedBox(height: 8),
+                Text('Bank name: ${account.name}',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, color: cs.onSurfaceVariant)),
+              ],
+              const SizedBox(height: 4),
+              Text('Leave blank to use the original bank name.',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, color: cs.onSurfaceVariant)),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            // Clear nickname → revert to bank name
+            if (account.nickname?.isNotEmpty == true)
+              TextButton(
+                onPressed: saving
+                    ? null
+                    : () async {
+                        setDlgState(() => saving = true);
+                        await ref
+                            .read(accountsProvider.notifier)
+                            .renameAccount(account.id, '');
+                        if (ctx.mounted) Navigator.pop(ctx);
+                      },
+                child: Text('Reset',
+                    style: TextStyle(color: cs.onSurfaceVariant)),
+              ),
+            FilledButton(
+              onPressed: saving ? null : save,
+              child: saving
+                  ? const SizedBox(
+                      width: 16, height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Text('Save'),
+            ),
+          ],
+        );
+      });
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 void _showReconcileSheet(BuildContext context, Account account, WidgetRef ref) {
   showModalBottomSheet(
@@ -1121,6 +1447,7 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
   final _nicknameCtrl = TextEditingController();
   final _lastFourCtrl = TextEditingController();
   final _balanceCtrl  = TextEditingController();
+  final _balanceFocus = FocusNode();
 
   AccountType _type       = AccountType.checking;
   bool        _isTracking = false;
@@ -1128,9 +1455,24 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
   bool        _saving     = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Auto-format to 2 decimal places when the balance field loses focus.
+    _balanceFocus.addListener(() {
+      if (!_balanceFocus.hasFocus && _balanceCtrl.text.isNotEmpty) {
+        final val = double.tryParse(
+                _balanceCtrl.text.replaceAll(',', '')) ??
+            0.0;
+        _balanceCtrl.text = val.toStringAsFixed(2);
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _nameCtrl.dispose(); _nicknameCtrl.dispose();
     _lastFourCtrl.dispose(); _balanceCtrl.dispose();
+    _balanceFocus.dispose();
     super.dispose();
   }
 
@@ -1150,9 +1492,12 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
     if (!_canSave) return;
     setState(() => _saving = true);
     try {
-      final balance = double.tryParse(
-        _balanceCtrl.text.replaceAll(',', ''),
-      ) ?? 0.0;
+      // Round to exactly 2 decimal places to avoid floating-point drift.
+      final balance = ((double.tryParse(
+                  _balanceCtrl.text.replaceAll(',', '')) ??
+              0.0) *
+          100).round() /
+          100.0;
       final isCc = _type == AccountType.creditCard ||
                    _type == AccountType.lineOfCredit;
 
@@ -1216,7 +1561,7 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
 
               // Type dropdown
               DropdownButtonFormField<AccountType>(
-                value: _type,
+                initialValue: _type,
                 decoration: InputDecoration(
                   labelText: 'Account type',
                   prefixIcon: Icon(_type.icon, size: 18),
@@ -1283,13 +1628,19 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
               ],
 
               TextField(
-                controller: _balanceCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                controller:      _balanceCtrl,
+                focusNode:       _balanceFocus,
+                keyboardType:    const TextInputType.numberWithOptions(decimal: true),
                 textInputAction: TextInputAction.done,
-                onSubmitted: (_) => _save(),
+                onSubmitted:     (_) => _save(),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+                  _TwoDecimalInputFormatter(),
+                ],
                 decoration: InputDecoration(
                   labelText: isCc ? 'Current balance owed' : 'Starting balance',
                   prefixText: '\$ ',
+                  hintText: '0.00',
                 ),
               ),
               const SizedBox(height: 12),
@@ -1387,5 +1738,21 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
         ),
       ),
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Input formatter — allows digits + at most one decimal point with ≤2 places.
+// ---------------------------------------------------------------------------
+
+class _TwoDecimalInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+      TextEditingValue oldValue, TextEditingValue newValue) {
+    final text = newValue.text;
+    if (text.isEmpty) return newValue;
+    // Reject anything that isn't: optional digits, optional dot, up to 2 digits
+    if (RegExp(r'^\d*\.?\d{0,2}$').hasMatch(text)) return newValue;
+    return oldValue; // revert to previous valid value
   }
 }

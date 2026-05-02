@@ -34,9 +34,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _inviteSent  = false;
   bool? _smsEnabled;
   bool _smsToggling = false;
-  bool _resetting   = false;
-  bool _exporting   = false;
-  bool _importing   = false;
+  bool _resetting         = false;
+  bool _resettingAccounts = false;
+  bool _exporting         = false;
 
   @override
   void initState() {
@@ -156,6 +156,140 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   // ---------------------------------------------------------------------------
+  // Reset accounts & transactions (preserve budget plan)
+  // ---------------------------------------------------------------------------
+
+  Future<void> _resetAccountsAndTransactions() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          title: Text('Reset accounts & transactions?',
+              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('This will permanently delete:',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              for (final item in [
+                'All accounts',
+                'All transactions',
+                'Scheduled transactions',
+                'Payees',
+              ])
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 3),
+                  child: Row(children: [
+                    Icon(Icons.remove_circle_outline,
+                        size: 14, color: cs.error),
+                    const SizedBox(width: 6),
+                    Text(item,
+                        style: GoogleFonts.plusJakartaSans(fontSize: 13)),
+                  ]),
+                ),
+              const SizedBox(height: 12),
+              Text('These will be kept:',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              for (final item in [
+                'Category groups & categories',
+                'Budget allocations (monthly plan)',
+                'Goals',
+              ])
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 3),
+                  child: Row(children: [
+                    Icon(Icons.check_circle_outline,
+                        size: 14, color: cs.tertiary),
+                    const SizedBox(width: 6),
+                    Text(item,
+                        style: GoogleFonts.plusJakartaSans(fontSize: 13)),
+                  ]),
+                ),
+              const SizedBox(height: 10),
+              Text('This cannot be undone.',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      color: cs.onSurfaceVariant,
+                      fontStyle: FontStyle.italic)),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style:
+                  FilledButton.styleFrom(backgroundColor: cs.error),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Clear accounts & transactions'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _resettingAccounts = true);
+    try {
+      final householdId = await ref.read(householdIdProvider.future);
+      final client      = Supabase.instance.client;
+
+      // 1. Clear self-referential transfer_id to avoid FK violation
+      await client
+          .from('transactions')
+          .update({'transfer_id': null})
+          .eq('household_id', householdId);
+
+      // 2. Split transactions
+      await client
+          .from('split_transactions')
+          .delete()
+          .eq('household_id', householdId);
+
+      // 3. Transactions, scheduled transactions, payees, accounts
+      await client.from('transactions').delete().eq('household_id', householdId);
+      await client.from('scheduled_transactions').delete().eq('household_id', householdId);
+      await client.from('payees').delete().eq('household_id', householdId);
+      await client.from('accounts').delete().eq('household_id', householdId);
+
+      // Refresh affected providers — categories/budget plan untouched
+      ref.invalidate(transactionsProvider);
+      ref.invalidate(accountsProvider);
+      ref.invalidate(budgetProvider);
+      ref.invalidate(cashflowProvider);
+      ref.invalidate(payeesProvider);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Accounts and transactions cleared. '
+              'Your budget plan is intact.',
+              style: GoogleFonts.plusJakartaSans()),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Reset failed: $e',
+              style: GoogleFonts.plusJakartaSans()),
+          backgroundColor: Theme.of(context).colorScheme.error,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _resettingAccounts = false);
+    }
+  }
+
   // Reset budget
   // ---------------------------------------------------------------------------
 
@@ -481,20 +615,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               Divider(height: 1, indent: 52,
                   color: cs.outlineVariant.withValues(alpha: 0.4)),
               ListTile(
-                leading: _importing
-                    ? SizedBox(
-                        width: 20, height: 20,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: cs.tertiary))
-                    : Icon(Icons.upload_file_outlined,
-                        color: cs.tertiary, size: 20),
+                leading: Icon(Icons.upload_file_outlined,
+                    color: cs.tertiary, size: 20),
                 title: Text('Import from YNAB',
                     style: GoogleFonts.plusJakartaSans(
                         fontWeight: FontWeight.w600, color: cs.onSurface)),
                 subtitle: Text('Import accounts & transactions from YNAB CSV export',
                     style: GoogleFonts.plusJakartaSans(
                         fontSize: 12, color: cs.onSurfaceVariant)),
-                onTap: _importing ? null : _importFromYnab,
+                onTap: _importFromYnab,
+              ),
+              Divider(height: 1, indent: 52,
+                  color: cs.outlineVariant.withValues(alpha: 0.4)),
+              ListTile(
+                leading: _resettingAccounts
+                    ? SizedBox(
+                        width: 20, height: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: cs.error))
+                    : Icon(Icons.account_balance_wallet_outlined,
+                        color: cs.error, size: 20),
+                title: Text('Reset accounts & transactions',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w600, color: cs.error)),
+                subtitle: Text(
+                    'Clears accounts and transactions — keeps categories and budget plan',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, color: cs.onSurfaceVariant)),
+                onTap: _resettingAccounts ? null : _resetAccountsAndTransactions,
               ),
               Divider(height: 1, indent: 52,
                   color: cs.outlineVariant.withValues(alpha: 0.4)),
@@ -505,11 +653,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: cs.error))
                     : Icon(Icons.restart_alt, color: cs.error, size: 20),
-                title: Text('Reset budget',
+                title: Text('Reset everything',
                     style: GoogleFonts.plusJakartaSans(
                         fontWeight: FontWeight.w600, color: cs.error)),
                 subtitle: Text(
-                    'Delete all transactions, categories & budgets',
+                    'Delete all accounts, transactions, categories & budgets',
                     style: GoogleFonts.plusJakartaSans(
                         fontSize: 12, color: cs.onSurfaceVariant)),
                 onTap: _resetting ? null : _resetBudget,

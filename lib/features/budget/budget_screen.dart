@@ -529,8 +529,17 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
   /// Non-null while the user is typing a new category name inline.
   String? _inlineGroupId;
 
+  /// The category whose detail panel is currently open (accordion: at most one).
+  String? _expandedCategoryId;
+
   /// Clears the active inline-add row.
   void _closeInline() => setState(() => _inlineGroupId = null);
+
+  /// Toggles a category's expansion, closing any previously open one.
+  void _toggleCategory(String categoryId) => setState(() {
+        _expandedCategoryId =
+            _expandedCategoryId == categoryId ? null : categoryId;
+      });
 
   @override
   Widget build(BuildContext context) {
@@ -588,15 +597,12 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
 
       groupSlivers.add(SliverToBoxAdapter(
         child: _GroupHeaderRow(
-          group:       group,
-          isWide:      isWide,
-          ref:         ref,
-          canMoveUp:   gi > 0,
-          canMoveDown: gi < state.groups.length - 1,
-          onMoveUp:    () => notifier.moveGroup(state.groups, gi, gi - 1),
-          onMoveDown:  () => notifier.moveGroup(state.groups, gi, gi + 1),
-          // Inline add: open field right below this group's categories.
-          onAddInline: () => setState(() => _inlineGroupId = group.id),
+          group:          group,
+          isWide:         isWide,
+          ref:            ref,
+          onAddInline:    () => setState(() => _inlineGroupId = group.id),
+          onReorderGroups: () =>
+              _showReorderGroupsSheet(context, ref, state.groups),
         ),
       ));
 
@@ -620,7 +626,9 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
             child: _CategoryTableRow(
               entry:       entry,
               isWide:      isWide,
+              isExpanded:  _expandedCategoryId == entry.categoryId,
               month:       state.month,
+              onToggle:    () => _toggleCategory(entry.categoryId),
               onDetailTap: (e, m) => widget.onCategoryTap(e, m),
             ),
           );
@@ -809,22 +817,17 @@ class _GroupHeaderRow extends StatelessWidget {
   final BudgetGroupData group;
   final bool isWide;
   final WidgetRef ref;
-  final bool canMoveUp;
-  final bool canMoveDown;
-  final VoidCallback? onMoveUp;
-  final VoidCallback? onMoveDown;
-  /// Called when the user taps the [+] button — opens an inline add field.
+  /// Opens the inline category-add field below this group.
   final VoidCallback? onAddInline;
+  /// Opens the "Reorder Groups" sheet.
+  final VoidCallback? onReorderGroups;
 
   const _GroupHeaderRow({
     required this.group,
     required this.isWide,
     required this.ref,
-    this.canMoveUp   = false,
-    this.canMoveDown = false,
-    this.onMoveUp,
-    this.onMoveDown,
     this.onAddInline,
+    this.onReorderGroups,
   });
 
   @override
@@ -844,33 +847,21 @@ class _GroupHeaderRow extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 9, 16, 9),
       child: Row(
         children: [
-          // Up / down arrows for group reordering
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              GestureDetector(
-                onTap: canMoveUp ? onMoveUp : null,
+          // Drag handle — tapping opens the "Reorder Groups" sheet.
+          GestureDetector(
+            onTap: onReorderGroups,
+            child: Tooltip(
+              message: 'Reorder groups',
+              child: Padding(
+                padding: const EdgeInsets.only(right: 6),
                 child: Icon(
-                  Icons.arrow_drop_up,
+                  Icons.drag_handle,
                   size: 18,
-                  color: canMoveUp
-                      ? cs.onSurfaceVariant.withValues(alpha: 0.6)
-                      : cs.onSurfaceVariant.withValues(alpha: 0.15),
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.38),
                 ),
               ),
-              GestureDetector(
-                onTap: canMoveDown ? onMoveDown : null,
-                child: Icon(
-                  Icons.arrow_drop_down,
-                  size: 18,
-                  color: canMoveDown
-                      ? cs.onSurfaceVariant.withValues(alpha: 0.6)
-                      : cs.onSurfaceVariant.withValues(alpha: 0.15),
-                ),
-              ),
-            ],
+            ),
           ),
-          const SizedBox(width: 4),
           // Group name + [+] button
           Expanded(
             child: Row(
@@ -927,39 +918,34 @@ class _GroupHeaderRow extends StatelessWidget {
 // Category table row
 // ---------------------------------------------------------------------------
 
-class _CategoryTableRow extends ConsumerStatefulWidget {
+class _CategoryTableRow extends ConsumerWidget {
   final BudgetEntry entry;
   final bool isWide;
+  final bool isExpanded;
   final DateTime month;
+  final VoidCallback onToggle;
   final void Function(BudgetEntry, DateTime) onDetailTap;
 
   const _CategoryTableRow({
     required this.entry,
     required this.isWide,
+    required this.isExpanded,
     required this.month,
+    required this.onToggle,
     required this.onDetailTap,
   });
 
-  @override
-  ConsumerState<_CategoryTableRow> createState() => _CategoryTableRowState();
-}
-
-class _CategoryTableRowState extends ConsumerState<_CategoryTableRow> {
-  bool _expanded = false;
-
-  String get _monthKey {
-    final m = widget.month;
-    return '${m.year}-${m.month.toString().padLeft(2, '0')}';
-  }
+  String get _monthKey =>
+      '${month.year}-${month.month.toString().padLeft(2, '0')}';
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final cs          = Theme.of(context).colorScheme;
-    final isOverspent = widget.entry.balance < 0;
-    final isFullyUsed = widget.entry.balance == 0 && widget.entry.spent > 0;
+    final isOverspent = entry.balance < 0;
+    final isFullyUsed = entry.balance == 0 && entry.spent > 0;
     final availColor  = isOverspent  ? cs.error
         : isFullyUsed               ? cs.onSurfaceVariant
-        : widget.entry.balance > 0  ? cs.tertiary
+        : entry.balance > 0         ? cs.tertiary
         :                             cs.onSurfaceVariant;
 
     return Column(
@@ -967,7 +953,7 @@ class _CategoryTableRowState extends ConsumerState<_CategoryTableRow> {
       children: [
         // ── Main row ──────────────────────────────────────────
         InkWell(
-          onTap: () => setState(() => _expanded = !_expanded),
+          onTap: onToggle,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(8, 12, 16, 12),
             child: Row(
@@ -981,19 +967,19 @@ class _CategoryTableRowState extends ConsumerState<_CategoryTableRow> {
                     color: cs.onSurfaceVariant.withValues(alpha: 0.28),
                   ),
                 ),
-                if (widget.entry.isCcPayment)
+                if (entry.isCcPayment)
                   Padding(
                     padding: const EdgeInsets.only(right: 6),
                     child: Icon(Icons.credit_card, size: 13, color: cs.primary),
                   ),
-                if (widget.entry.goal != null)
+                if (entry.goal != null)
                   Padding(
                     padding: const EdgeInsets.only(right: 5),
                     child: Icon(Icons.flag_outlined, size: 12, color: cs.tertiary),
                   ),
                 Expanded(
                   child: Text(
-                    widget.entry.categoryName,
+                    entry.categoryName,
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
@@ -1001,14 +987,15 @@ class _CategoryTableRowState extends ConsumerState<_CategoryTableRow> {
                     ),
                   ),
                 ),
-                if (widget.isWide) ...[
-                  _NumCell(widget.entry.budgeted, cs.onSurface),
-                  _NumCell(widget.entry.activity, cs.onSurfaceVariant),
+                if (isWide) ...[
+                  // Tapping the budgeted cell edits it inline.
+                  _InlineBudgetAmount(entry: entry),
+                  _NumCell(entry.activity, cs.onSurfaceVariant),
                 ],
-                _NumCell(widget.entry.balance, availColor, bold: true),
+                _NumCell(entry.balance, availColor, bold: true),
                 const SizedBox(width: 4),
                 Icon(
-                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  isExpanded ? Icons.expand_less : Icons.expand_more,
                   size: 16,
                   color: cs.onSurfaceVariant.withValues(alpha: 0.6),
                 ),
@@ -1017,12 +1004,12 @@ class _CategoryTableRowState extends ConsumerState<_CategoryTableRow> {
           ),
         ),
         // ── Expanded transactions panel ───────────────────────
-        if (_expanded)
+        if (isExpanded)
           _CategoryTxPanel(
-            entry:    widget.entry,
-            month:    widget.month,
-            monthKey: _monthKey,
-            onEditTap: () => widget.onDetailTap(widget.entry, widget.month),
+            entry:     entry,
+            month:     month,
+            monthKey:  _monthKey,
+            onEditTap: () => onDetailTap(entry, month),
           ),
         Divider(
           height: 1,
@@ -1032,6 +1019,255 @@ class _CategoryTableRowState extends ConsumerState<_CategoryTableRow> {
       ],
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Inline budget-amount editor
+// ---------------------------------------------------------------------------
+
+/// Shows the budgeted amount as a tappable number.
+/// Tapping it replaces the display with a text field for immediate editing.
+///
+/// [compact] = true → slim `_NumCell`-style (used in the main row on wide screens).
+/// [compact] = false → labelled row (used inside the expanded panel).
+class _InlineBudgetAmount extends ConsumerStatefulWidget {
+  final BudgetEntry entry;
+  final bool compact;
+
+  const _InlineBudgetAmount({required this.entry, this.compact = true});
+
+  @override
+  ConsumerState<_InlineBudgetAmount> createState() =>
+      _InlineBudgetAmountState();
+}
+
+class _InlineBudgetAmountState extends ConsumerState<_InlineBudgetAmount> {
+  bool _editing = false;
+  final _ctrl  = TextEditingController();
+  final _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.onKeyEvent = (_, event) {
+      if (event is KeyDownEvent &&
+          event.logicalKey == LogicalKeyboardKey.escape) {
+        _cancel();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    };
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _startEdit() {
+    final v = widget.entry.budgeted;
+    _ctrl.text = v == 0 ? '' : v.toStringAsFixed(2);
+    setState(() => _editing = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _focus.requestFocus();
+        _ctrl.selection =
+            TextSelection(baseOffset: 0, extentOffset: _ctrl.text.length);
+      }
+    });
+  }
+
+  void _cancel() => setState(() => _editing = false);
+
+  Future<void> _save() async {
+    final amount =
+        double.tryParse(_ctrl.text.trim().replaceAll(',', '')) ?? 0.0;
+    await ref
+        .read(budgetProvider.notifier)
+        .setBudgeted(widget.entry.categoryId, amount);
+    if (mounted) setState(() => _editing = false);
+  }
+
+  // ── Compact mode (row cell) ────────────────────────────────────────────────
+
+  Widget _buildCompact(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+
+    if (_editing) {
+      return SizedBox(
+        width: _kColW,
+        child: TextField(
+          controller:     _ctrl,
+          focusNode:      _focus,
+          textAlign:      TextAlign.right,
+          keyboardType:
+              const TextInputType.numberWithOptions(decimal: true),
+          textInputAction: TextInputAction.done,
+          onSubmitted:    (_) => _save(),
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 13, fontWeight: FontWeight.w500, color: cs.onSurface),
+          decoration: InputDecoration(
+            prefixText:  '\$',
+            prefixStyle: GoogleFonts.plusJakartaSans(
+                fontSize: 13, color: cs.primary),
+            isDense:        true,
+            contentPadding: const EdgeInsets.symmetric(
+                vertical: 5, horizontal: 4),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide:
+                  BorderSide(color: cs.primary.withValues(alpha: 0.5)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: BorderSide(color: cs.primary, width: 1.5),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: _startEdit,
+      child: Tooltip(
+        message: 'Tap to edit budgeted amount',
+        child: SizedBox(
+          width: _kColW,
+          child: Text(
+            fmt.format(widget.entry.budgeted),
+            textAlign: TextAlign.right,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: cs.onSurface,
+              decoration:      TextDecoration.underline,
+              decorationStyle: TextDecorationStyle.dotted,
+              decorationColor: cs.primary.withValues(alpha: 0.5),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Panel mode (labelled row inside expanded panel) ────────────────────────
+
+  Widget _buildPanel(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 10, 16, 2),
+      child: Row(
+        children: [
+          Text('Budgeted',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: cs.onSurfaceVariant)),
+          const Spacer(),
+          if (_editing) ...[
+            SizedBox(
+              width: 120,
+              child: TextField(
+                controller:     _ctrl,
+                focusNode:      _focus,
+                textAlign:      TextAlign.right,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                textInputAction: TextInputAction.done,
+                onSubmitted:    (_) => _save(),
+                autofocus:      true,
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurface),
+                decoration: InputDecoration(
+                  prefixText:  '\$',
+                  prefixStyle: GoogleFonts.plusJakartaSans(
+                      fontSize: 14, color: cs.primary),
+                  isDense:        true,
+                  contentPadding: const EdgeInsets.symmetric(
+                      vertical: 6, horizontal: 6),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(
+                        color: cs.primary.withValues(alpha: 0.5)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide:
+                        BorderSide(color: cs.primary, width: 1.5),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            // Confirm
+            InkWell(
+              onTap: _save,
+              borderRadius: BorderRadius.circular(6),
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: Icon(Icons.check, size: 18, color: cs.primary),
+              ),
+            ),
+            // Cancel
+            InkWell(
+              onTap: _cancel,
+              borderRadius: BorderRadius.circular(6),
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: Icon(Icons.close,
+                    size: 16,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.6)),
+              ),
+            ),
+          ] else
+            GestureDetector(
+              onTap: _startEdit,
+              child: Tooltip(
+                message: 'Tap to edit',
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: cs.primaryContainer.withValues(alpha: 0.35),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                        color: cs.primary.withValues(alpha: 0.25)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        fmt.format(widget.entry.budgeted),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: cs.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(Icons.edit,
+                          size: 12,
+                          color: cs.primary.withValues(alpha: 0.7)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      widget.compact ? _buildCompact(context) : _buildPanel(context);
 }
 
 // ---------------------------------------------------------------------------
@@ -1199,6 +1435,8 @@ class _CategoryTxPanel extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── Inline budget editor (primary on narrow, secondary on wide) ──
+          _InlineBudgetAmount(entry: entry, compact: false),
           // ── Transaction list ──
           txAsync.when(
             loading: () => const Padding(
@@ -1254,8 +1492,8 @@ class _CategoryTxPanel extends ConsumerWidget {
                 ),
                 const Spacer(),
                 _PanelAction(
-                  icon: Icons.edit_outlined,
-                  label: 'Edit Budget',
+                  icon: Icons.tune_outlined,
+                  label: 'More',
                   onTap: onEditTap,
                 ),
               ],
@@ -2494,6 +2732,155 @@ class _PanelAction extends StatelessWidget {
         minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reorder Groups sheet
+// ---------------------------------------------------------------------------
+
+void _showReorderGroupsSheet(
+    BuildContext context, WidgetRef ref, List<BudgetGroupData> groups) {
+  showModalBottomSheet(
+    context:            context,
+    isScrollControlled: true,
+    useSafeArea:        true,
+    builder:            (_) => _ReorderGroupsSheet(groups: groups, ref: ref),
+  );
+}
+
+class _ReorderGroupsSheet extends StatefulWidget {
+  final List<BudgetGroupData> groups;
+  final WidgetRef ref;
+  const _ReorderGroupsSheet({required this.groups, required this.ref});
+
+  @override
+  State<_ReorderGroupsSheet> createState() => _ReorderGroupsSheetState();
+}
+
+class _ReorderGroupsSheetState extends State<_ReorderGroupsSheet> {
+  late List<BudgetGroupData> _groups;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _groups = List.of(widget.groups);
+  }
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    try {
+      await widget.ref.read(budgetProvider.notifier).reorderGroups(_groups);
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Could not save order: $e'),
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // ── Sheet handle ───────────────────────────────────────────────────
+        const SizedBox(height: 12),
+        Center(
+          child: Container(
+            width: 36, height: 4,
+            decoration: BoxDecoration(
+              color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Row(
+            children: [
+              Text('Reorder Groups',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: cs.onSurface)),
+              const Spacer(),
+              TextButton(
+                onPressed: _saving ? null : () => Navigator.pop(context),
+                child: Text('Cancel',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w600,
+                        color: cs.onSurfaceVariant)),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        // ── Draggable group list ───────────────────────────────────────────
+        SizedBox(
+          // Cap height so it doesn't overflow on phones with many groups.
+          height: (_groups.length * 56.0).clamp(56.0, 360.0),
+          child: ReorderableListView.builder(
+            itemCount: _groups.length,
+            buildDefaultDragHandles: false,
+            onReorder: (oldIdx, newIdx) {
+              setState(() {
+                if (newIdx > oldIdx) newIdx -= 1;
+                _groups.insert(newIdx, _groups.removeAt(oldIdx));
+              });
+            },
+            itemBuilder: (ctx, i) {
+              final group = _groups[i];
+              return ListTile(
+                key: ValueKey(group.id),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
+                leading: ReorderableDragStartListener(
+                  index: i,
+                  child: Icon(Icons.drag_handle,
+                      color: cs.onSurfaceVariant.withValues(alpha: 0.55)),
+                ),
+                title: Text(group.name,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 15, fontWeight: FontWeight.w600)),
+                subtitle: Text(
+                  '${group.entries.length} '
+                  '${group.entries.length == 1 ? 'category' : 'categories'}',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, color: cs.onSurfaceVariant),
+                ),
+              );
+            },
+          ),
+        ),
+        // ── Save button ────────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+          child: SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: _saving ? null : _save,
+              child: _saving
+                  ? const SizedBox(
+                      width: 18, height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : Text('Save Order',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
