@@ -8,12 +8,14 @@ import 'budget_provider.dart';
 
 // ---------------------------------------------------------------------------
 
+const _kColW = 82.0; // fixed width per numeric column
+
 class BudgetScreen extends ConsumerWidget {
   const BudgetScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cs         = Theme.of(context).colorScheme;
+    final cs          = Theme.of(context).colorScheme;
     final budgetAsync = ref.watch(budgetProvider);
 
     void onCategoryTap(BudgetEntry entry, DateTime month) {
@@ -45,14 +47,14 @@ class BudgetScreen extends ConsumerWidget {
           ),
         ),
         data: (state) => _BudgetBody(
-          state:          state,
-          ref:            ref,
-          onCategoryTap:  onCategoryTap,
+          state:         state,
+          ref:           ref,
+          onCategoryTap: onCategoryTap,
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showAddCategorySheet(context, ref),
-        icon: const Icon(Icons.add),
+        icon:  const Icon(Icons.add),
         label: Text('Add Category',
             style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
         backgroundColor: cs.primary,
@@ -63,10 +65,22 @@ class BudgetScreen extends ConsumerWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Body
+// Flat-list body — no collapse, inline numbers
 // ---------------------------------------------------------------------------
 
-class _BudgetBody extends StatefulWidget {
+sealed class _BudgetRow {}
+
+class _GroupRow extends _BudgetRow {
+  final BudgetGroupData group;
+  _GroupRow(this.group);
+}
+
+class _EntryRow extends _BudgetRow {
+  final BudgetEntry entry;
+  _EntryRow(this.entry);
+}
+
+class _BudgetBody extends StatelessWidget {
   final BudgetState state;
   final WidgetRef ref;
   final void Function(BudgetEntry, DateTime) onCategoryTap;
@@ -74,67 +88,85 @@ class _BudgetBody extends StatefulWidget {
   const _BudgetBody({required this.state, required this.ref, required this.onCategoryTap});
 
   @override
-  State<_BudgetBody> createState() => _BudgetBodyState();
-}
-
-class _BudgetBodyState extends State<_BudgetBody> {
-  int? _expandedIndex;
-
-  @override
   Widget build(BuildContext context) {
+    final isWide = MediaQuery.sizeOf(context).width >= 600;
+
+    final header = SliverToBoxAdapter(
+      child: _BudgetHeader(
+        month:  state.month,
+        tbb:    state.tbb,
+        onPrev: () => ref.read(budgetProvider.notifier)
+            .goToMonth(DateTime(state.month.year, state.month.month - 1)),
+        onNext: () => ref.read(budgetProvider.notifier)
+            .goToMonth(DateTime(state.month.year, state.month.month + 1)),
+        ref: ref,
+      ),
+    );
+
+    if (state.groups.isEmpty) {
+      return SafeArea(
+        child: CustomScrollView(
+          slivers: [
+            header,
+            SliverFillRemaining(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.category_outlined, size: 56,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    const SizedBox(height: 16),
+                    Text('No categories yet',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 15,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                    const SizedBox(height: 8),
+                    Text('Tap + Add Category to get started',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 13,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Flatten groups → entries into a single linear list
+    final rows = <_BudgetRow>[];
+    for (final group in state.groups) {
+      rows.add(_GroupRow(group));
+      for (final entry in group.entries) {
+        rows.add(_EntryRow(entry));
+      }
+    }
+
     return SafeArea(
       child: CustomScrollView(
         slivers: [
-          SliverToBoxAdapter(
-            child: _BudgetHeader(
-              month: widget.state.month,
-              tbb:   widget.state.tbb,
-              onPrev: () => widget.ref.read(budgetProvider.notifier)
-                  .goToMonth(DateTime(widget.state.month.year, widget.state.month.month - 1)),
-              onNext: () => widget.ref.read(budgetProvider.notifier)
-                  .goToMonth(DateTime(widget.state.month.year, widget.state.month.month + 1)),
-              ref: widget.ref,
+          header,
+          if (isWide)
+            SliverToBoxAdapter(child: _ColumnHeaders()),
+          SliverPadding(
+            padding: const EdgeInsets.only(bottom: 100),
+            sliver: SliverList.builder(
+              itemCount: rows.length,
+              itemBuilder: (context, i) => switch (rows[i]) {
+                _GroupRow(:final group) => _GroupHeaderRow(
+                    group:  group,
+                    isWide: isWide,
+                    ref:    ref,
+                  ),
+                _EntryRow(:final entry) => _CategoryTableRow(
+                    entry:  entry,
+                    isWide: isWide,
+                    onTap:  () => onCategoryTap(entry, state.month),
+                  ),
+              },
             ),
           ),
-          widget.state.groups.isEmpty
-              ? SliverFillRemaining(
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.category_outlined, size: 56,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant),
-                        const SizedBox(height: 16),
-                        Text('No categories yet',
-                            style: GoogleFonts.plusJakartaSans(
-                                fontSize: 15,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant)),
-                        const SizedBox(height: 8),
-                        Text('Tap + Add Category to get started',
-                            style: GoogleFonts.plusJakartaSans(
-                                fontSize: 13,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant)),
-                      ],
-                    ),
-                  ),
-                )
-              : SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
-                  sliver: SliverList.separated(
-                    itemCount: widget.state.groups.length,
-                    separatorBuilder: (context, index) => const SizedBox(height: 12),
-                    itemBuilder: (context, i) => _CategoryGroupCard(
-                      group:          widget.state.groups[i],
-                      month:          widget.state.month,
-                      ref:            widget.ref,
-                      onCategoryTap:  widget.onCategoryTap,
-                      isExpanded:     _expandedIndex == i,
-                      onToggle:       () => setState(() =>
-                          _expandedIndex = _expandedIndex == i ? null : i,
-                      ),
-                    ),
-                  ),
-                ),
         ],
       ),
     );
@@ -142,7 +174,7 @@ class _BudgetBodyState extends State<_BudgetBody> {
 }
 
 // ---------------------------------------------------------------------------
-// Header
+// Budget header
 // ---------------------------------------------------------------------------
 
 class _BudgetHeader extends StatelessWidget {
@@ -162,10 +194,10 @@ class _BudgetHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs        = Theme.of(context).colorScheme;
-    final isNeg     = tbb < 0;
-    final tbbColor  = isNeg ? cs.error : cs.primary;
-    final fmt       = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final cs       = Theme.of(context).colorScheme;
+    final isNeg    = tbb < 0;
+    final tbbColor = isNeg ? cs.error : cs.primary;
+    final fmt      = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
@@ -191,7 +223,7 @@ class _BudgetHeader extends StatelessWidget {
           ),
           TextButton.icon(
             onPressed: () => _showQuickBudgetSheet(context, month, ref),
-            icon: Icon(Icons.auto_awesome, size: 15, color: cs.primary),
+            icon:  Icon(Icons.auto_awesome, size: 15, color: cs.primary),
             label: Text('Quick Budget',
                 style: GoogleFonts.plusJakartaSans(
                     fontSize: 12, fontWeight: FontWeight.w600, color: cs.primary)),
@@ -200,9 +232,9 @@ class _BudgetHeader extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
             decoration: BoxDecoration(
-              color: tbbColor.withValues(alpha: 0.12),
+              color:        tbbColor.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(32),
-              border: Border.all(color: tbbColor.withValues(alpha: 0.3)),
+              border:       Border.all(color: tbbColor.withValues(alpha: 0.3)),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -225,84 +257,128 @@ class _BudgetHeader extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Category group card
+// Column headers (wide screens only)
 // ---------------------------------------------------------------------------
 
-class _CategoryGroupCard extends StatelessWidget {
-  final BudgetGroupData group;
-  final DateTime month;
-  final WidgetRef ref;
-  final void Function(BudgetEntry, DateTime) onCategoryTap;
-  final bool isExpanded;
-  final VoidCallback onToggle;
-
-  const _CategoryGroupCard({
-    required this.group,
-    required this.month,
-    required this.ref,
-    required this.onCategoryTap,
-    required this.isExpanded,
-    required this.onToggle,
-  });
+class _ColumnHeaders extends StatelessWidget {
+  const _ColumnHeaders();
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 6, 16, 6),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.5)),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Expanded(child: SizedBox()),
+          _ColLabel('BUDGETED'),
+          _ColLabel('ACTIVITY'),
+          _ColLabel('AVAILABLE'),
+        ],
+      ),
+    );
+  }
+}
+
+class _ColLabel extends StatelessWidget {
+  final String text;
+  const _ColLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: _kColW,
+      child: Text(
+        text,
+        textAlign: TextAlign.right,
+        style: GoogleFonts.plusJakartaSans(
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+          letterSpacing: 0.6,
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Group header row
+// ---------------------------------------------------------------------------
+
+class _GroupHeaderRow extends StatelessWidget {
+  final BudgetGroupData group;
+  final bool isWide;
+  final WidgetRef ref;
+
+  const _GroupHeaderRow({
+    required this.group,
+    required this.isWide,
+    required this.ref,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs             = Theme.of(context).colorScheme;
+    final groupBudgeted  = group.entries.fold(0.0, (s, e) => s + e.budgeted);
+    final groupActivity  = group.entries.fold(0.0, (s, e) => s + e.activity);
+    final groupAvailable = group.balance;
 
     return Container(
       decoration: BoxDecoration(
         color: cs.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(16),
+        border: Border(
+          top: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.4)),
+        ),
       ),
-      child: Column(
+      padding: const EdgeInsets.fromLTRB(16, 9, 16, 9),
+      child: Row(
         children: [
-          InkWell(
-            onTap: onToggle,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(group.name,
-                        style: GoogleFonts.plusJakartaSans(
-                            fontSize: 12, fontWeight: FontWeight.w700,
-                            color: cs.onSurfaceVariant, letterSpacing: 0.8)),
+          // Group name + [+] button
+          Expanded(
+            child: Row(
+              children: [
+                Text(
+                  group.name.toUpperCase(),
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: cs.onSurfaceVariant,
+                    letterSpacing: 0.8,
                   ),
-                  if (group.hasOverspend)
-                    Icon(Icons.warning_amber_rounded, size: 14, color: cs.error),
+                ),
+                const SizedBox(width: 6),
+                InkWell(
+                  onTap: () =>
+                      _showAddCategorySheet(context, ref, initialGroupId: group.id),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.all(3),
+                    child: Icon(Icons.add, size: 13, color: cs.onSurfaceVariant),
+                  ),
+                ),
+                if (group.hasOverspend) ...[
                   const SizedBox(width: 4),
-                  _BalanceChip(balance: group.balance),
-                  const SizedBox(width: 2),
-                  InkWell(
-                    onTap: () => _showAddCategorySheet(context, ref, initialGroupId: group.id),
-                    borderRadius: BorderRadius.circular(12),
-                    child: Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: Icon(Icons.add, size: 16, color: cs.onSurfaceVariant),
-                    ),
-                  ),
-                  const SizedBox(width: 2),
-                  Icon(
-                    isExpanded ? Icons.expand_less : Icons.expand_more,
-                    size: 18, color: cs.onSurfaceVariant,
-                  ),
+                  Icon(Icons.warning_amber_rounded, size: 13, color: cs.error),
                 ],
-              ),
+              ],
             ),
           ),
-          if (isExpanded) ...[
-            Divider(height: 1, color: cs.surfaceContainerHighest),
-            ...group.entries.asMap().entries.map((e) {
-              return _CategoryTile(
-                entry:         e.value,
-                isLast:        e.key == group.entries.length - 1,
-                month:         month,
-                ref:           ref,
-                onTap:         () => onCategoryTap(e.value, month),
-              );
-            }),
+          // Numeric columns
+          if (isWide) ...[
+            _NumCell(groupBudgeted, cs.onSurfaceVariant, bold: true),
+            _NumCell(groupActivity, cs.onSurfaceVariant, bold: true),
           ],
+          _NumCell(
+            groupAvailable,
+            groupAvailable < 0 ? cs.error : cs.onSurfaceVariant,
+            bold: true,
+          ),
         ],
       ),
     );
@@ -310,21 +386,17 @@ class _CategoryGroupCard extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Category tile
+// Category table row
 // ---------------------------------------------------------------------------
 
-class _CategoryTile extends StatelessWidget {
+class _CategoryTableRow extends StatelessWidget {
   final BudgetEntry entry;
-  final bool isLast;
-  final DateTime month;
-  final WidgetRef ref;
+  final bool isWide;
   final VoidCallback onTap;
 
-  const _CategoryTile({
+  const _CategoryTableRow({
     required this.entry,
-    required this.isLast,
-    required this.month,
-    required this.ref,
+    required this.isWide,
     required this.onTap,
   });
 
@@ -332,156 +404,58 @@ class _CategoryTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs          = Theme.of(context).colorScheme;
     final isOverspent = entry.balance < 0;
-    final isFullySpent = entry.balance == 0 && entry.spent > 0;
-    final balanceColor = isOverspent
-        ? cs.error
-        : isFullySpent
-            ? cs.onSurfaceVariant
-            : cs.onSurface;
+    final isFullyUsed = entry.balance == 0 && entry.spent > 0;
+    final availColor  = isOverspent ? cs.error
+        : isFullyUsed               ? cs.onSurfaceVariant
+        : entry.balance > 0         ? cs.tertiary
+        :                             cs.onSurfaceVariant;
 
-    return InkWell(
-      onTap: onTap,
-      borderRadius: isLast
-          ? const BorderRadius.vertical(bottom: Radius.circular(16))
-          : BorderRadius.zero,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 16, 12),
+            child: Row(
               children: [
+                // Leading icons
                 if (entry.isCcPayment)
                   Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: Icon(Icons.credit_card, size: 14, color: cs.primary),
+                    padding: const EdgeInsets.only(right: 6),
+                    child: Icon(Icons.credit_card, size: 13, color: cs.primary),
                   ),
                 if (entry.goal != null)
                   Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: Icon(Icons.flag_outlined, size: 14, color: cs.tertiary),
+                    padding: const EdgeInsets.only(right: 5),
+                    child: Icon(Icons.flag_outlined, size: 12, color: cs.tertiary),
                   ),
+                // Category name
                 Expanded(
-                  child: Text(entry.categoryName,
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 15, fontWeight: FontWeight.w500, color: cs.onSurface)),
-                ),
-                SizedBox(
-                  width: 80,
-                  child: _SpendingBar(entry: entry),
-                ),
-                const SizedBox(width: 12),
-                SizedBox(
-                  width: 80,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      if (isOverspent)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 4),
-                          child: Icon(Icons.warning_amber_rounded,
-                              size: 13, color: cs.error),
-                        ),
-                      if (isFullySpent && !isOverspent)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 4),
-                          child: Icon(Icons.check_circle_outline,
-                              size: 13, color: cs.onSurfaceVariant),
-                        ),
-                      Text(_fmtBalance(entry.balance),
-                          style: GoogleFonts.plusJakartaSans(
-                              fontSize: 14, fontWeight: FontWeight.w700,
-                              color: balanceColor)),
-                    ],
+                  child: Text(
+                    entry.categoryName,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: cs.onSurface,
+                    ),
                   ),
                 ),
+                // Budgeted + Activity (wide only)
+                if (isWide) ...[
+                  _NumCell(entry.budgeted, cs.onSurface),
+                  _NumCell(entry.activity, cs.onSurfaceVariant),
+                ],
+                // Available
+                _NumCell(entry.balance, availColor, bold: true),
               ],
-            ),
-            if (entry.goal != null) ...[
-              const SizedBox(height: 8),
-              _GoalProgressStrip(goal: entry.goal!, entry: entry, month: month),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  static String _fmtBalance(double v) {
-    final abs = v.abs();
-    if (abs >= 1000) return '\$${(abs / 1000).toStringAsFixed(1)}k';
-    return '\$${abs.toStringAsFixed(0)}';
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Spending bar
-// ---------------------------------------------------------------------------
-
-class _SpendingBar extends StatelessWidget {
-  final BudgetEntry entry;
-  const _SpendingBar({required this.entry});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs       = Theme.of(context).colorScheme;
-    final progress = entry.budgeted > 0
-        ? (entry.spent / entry.budgeted).clamp(0.0, 1.0)
-        : 0.0;
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(4),
-      child: LinearProgressIndicator(
-        value: progress,
-        minHeight: 4,
-        backgroundColor: cs.surfaceContainerHighest,
-        valueColor: AlwaysStoppedAnimation(
-          entry.balance < 0 ? cs.error : cs.primary.withValues(alpha: 0.7),
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Goal progress strip
-// ---------------------------------------------------------------------------
-
-class _GoalProgressStrip extends StatelessWidget {
-  final BudgetGoal goal;
-  final BudgetEntry entry;
-  final DateTime month;
-  const _GoalProgressStrip({required this.goal, required this.entry, required this.month});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs        = Theme.of(context).colorScheme;
-    final fmt       = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
-    final savedSoFar = entry.balance.clamp(0.0, double.infinity);
-    final onTrack   = goal.isOnTrack(month, entry.budgeted, savedSoFar);
-
-    return Row(
-      children: [
-        Expanded(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: LinearProgressIndicator(
-              value: goal.progressPercent(savedSoFar),
-              minHeight: 3,
-              backgroundColor: cs.surfaceContainerHighest,
-              valueColor: AlwaysStoppedAnimation(onTrack ? cs.tertiary : cs.error),
             ),
           ),
         ),
-        const SizedBox(width: 8),
-        Text(
-          '${fmt.format(savedSoFar)} of ${fmt.format(goal.targetAmount)}',
-          style: GoogleFonts.plusJakartaSans(fontSize: 11, color: cs.onSurfaceVariant),
-        ),
-        const SizedBox(width: 6),
-        Icon(
-          onTrack ? Icons.check_circle_outline : Icons.schedule,
-          size: 12, color: onTrack ? cs.tertiary : cs.error,
+        Divider(
+          height: 1,
+          indent: 20,
+          color: cs.outlineVariant.withValues(alpha: 0.35),
         ),
       ],
     );
@@ -489,33 +463,46 @@ class _GoalProgressStrip extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Balance chip
+// Numeric cell — right-aligned, fixed width
 // ---------------------------------------------------------------------------
 
-class _BalanceChip extends StatelessWidget {
-  final double balance;
-  const _BalanceChip({required this.balance});
+class _NumCell extends StatelessWidget {
+  final double value;
+  final Color color;
+  final bool bold;
+
+  const _NumCell(this.value, this.color, {this.bold = false});
+
+  static String _fmt(double v) {
+    final abs = v.abs();
+    if (abs >= 1000) return '\$${(abs / 1000).toStringAsFixed(1)}k';
+    return '\$${abs.toStringAsFixed(0)}';
+  }
 
   @override
   Widget build(BuildContext context) {
-    final cs  = Theme.of(context).colorScheme;
-    final isNeg = balance < 0;
-    final abs = balance.abs();
-    final label = abs >= 1000
-        ? '\$${(abs / 1000).toStringAsFixed(1)}k'
-        : '\$${abs.toStringAsFixed(0)}';
+    final label    = (value < 0 ? '-' : '') + _fmt(value);
+    final dimmed   = value == 0;
+    final fgColor  = dimmed ? color.withValues(alpha: 0.35) : color;
 
-    return Text(label,
+    return SizedBox(
+      width: _kColW,
+      child: Text(
+        label,
+        textAlign: TextAlign.right,
         style: GoogleFonts.plusJakartaSans(
-            fontSize: 12, fontWeight: FontWeight.w600,
-            color: isNeg ? cs.error : cs.onSurfaceVariant));
+          fontSize: 13,
+          fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
+          color: fgColor,
+        ),
+      ),
+    );
   }
 }
 
 // ---------------------------------------------------------------------------
 // Category detail sheet
 // ---------------------------------------------------------------------------
-
 
 class _CategoryDetailSheet extends StatefulWidget {
   final BudgetEntry entry;
@@ -550,8 +537,7 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
 
   Future<void> _saveBudget() async {
     final text = _budgetCtrl.text.trim().replaceAll(',', '');
-    // Empty field means the user wants to set budget to 0
-    final val = text.isEmpty ? 0.0 : double.tryParse(text);
+    final val  = text.isEmpty ? 0.0 : double.tryParse(text);
     if (val == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Enter a valid amount')),
@@ -593,124 +579,129 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: Container(
         decoration: BoxDecoration(
-          color: cs.surfaceContainerHigh,
+          color:        cs.surfaceContainerHigh,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         ),
         padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
         child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Handle
-              Center(
-                child: Container(
-                  width: 40, height: 4,
-                  decoration: BoxDecoration(
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.3),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Handle
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color:        cs.onSurfaceVariant.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              const SizedBox(height: 20),
+            ),
+            const SizedBox(height: 20),
 
-              Text(widget.entry.categoryName,
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 22, fontWeight: FontWeight.w800, color: cs.onSurface)),
-              const SizedBox(height: 24),
+            Text(widget.entry.categoryName,
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 22, fontWeight: FontWeight.w800, color: cs.onSurface)),
+            const SizedBox(height: 24),
 
-              // Stats row
-              Row(
-                children: [
-                  _StatCell(label: 'Budgeted', value: fmt.format(widget.entry.budgeted), color: cs.primary),
-                  _StatCell(label: 'Spent',    value: fmt.format(widget.entry.spent),    color: cs.onSurface),
-                  _StatCell(
-                    label: isOverspent ? 'Overspent' : 'Remaining',
-                    value: fmt.format(widget.entry.balance.abs()),
-                    color: isOverspent ? cs.error : cs.tertiary,
-                  ),
-                ],
+            // Stats row
+            Row(
+              children: [
+                _StatCell(label: 'Budgeted', value: fmt.format(widget.entry.budgeted),       color: cs.primary),
+                _StatCell(label: 'Spent',    value: fmt.format(widget.entry.spent),           color: cs.onSurface),
+                _StatCell(
+                  label: isOverspent ? 'Overspent' : 'Remaining',
+                  value: fmt.format(widget.entry.balance.abs()),
+                  color: isOverspent ? cs.error : cs.tertiary,
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            SizedBox(
+              width: double.infinity,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: LinearProgressIndicator(
+                  value: widget.entry.budgeted > 0
+                      ? (widget.entry.spent / widget.entry.budgeted).clamp(0.0, 1.0)
+                      : 0.0,
+                  minHeight: 8,
+                  backgroundColor: cs.surfaceContainerHighest,
+                  valueColor: AlwaysStoppedAnimation(isOverspent ? cs.error : cs.primary),
+                ),
               ),
-              const SizedBox(height: 20),
+            ),
+            const SizedBox(height: 24),
 
+            // Budget amount input
+            TextField(
+              controller: _budgetCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              textInputAction: TextInputAction.done,
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+              ],
+              onSubmitted: (_) => _saveBudget(),
+              decoration: const InputDecoration(
+                labelText: 'Budget amount',
+                prefixText: '\$ ',
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: _saving ? null : _saveBudget,
+              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+              child: _saving
+                  ? const SizedBox(
+                      width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Save'),
+            ),
+            const SizedBox(height: 16),
+
+            // Goal section
+            if (widget.entry.goal != null)
+              _GoalDetailCard(
+                goal:   widget.entry.goal!,
+                entry:  widget.entry,
+                month:  widget.month,
+                onEdit: () => _showSetGoalSheet(
+                    context, widget.entry, widget.month, widget.ref),
+              )
+            else
+              OutlinedButton.icon(
+                onPressed: () => _showSetGoalSheet(
+                    context, widget.entry, widget.month, widget.ref),
+                icon:  const Icon(Icons.flag_outlined, size: 16),
+                label: Text('Set a Goal',
+                    style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
+            const SizedBox(height: 16),
+
+            // Carry overspend toggle
+            if (!widget.entry.isCcPayment)
               SizedBox(
                 width: double.infinity,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: LinearProgressIndicator(
-                    value: widget.entry.budgeted > 0
-                        ? (widget.entry.spent / widget.entry.budgeted).clamp(0.0, 1.0)
-                        : 0.0,
-                    minHeight: 8,
-                    backgroundColor: cs.surfaceContainerHighest,
-                    valueColor: AlwaysStoppedAnimation(
-                        isOverspent ? cs.error : cs.primary),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              // Budget amount
-              TextField(
-                controller: _budgetCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                textInputAction: TextInputAction.done,
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
-                ],
-                onSubmitted: (_) => _saveBudget(),
-                decoration: const InputDecoration(
-                  labelText: 'Budget amount',
-                  prefixText: '\$ ',
-                ),
-              ),
-              const SizedBox(height: 12),
-              FilledButton(
-                onPressed: _saving ? null : _saveBudget,
-                style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-                child: _saving
-                    ? const SizedBox(
-                        width: 16, height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Save'),
-              ),
-              const SizedBox(height: 16),
-
-              // Goal section
-              if (widget.entry.goal != null)
-                _GoalDetailCard(
-                  goal:  widget.entry.goal!,
-                  entry: widget.entry,
-                  month: widget.month,
-                  onEdit: () => _showSetGoalSheet(context, widget.entry, widget.month, widget.ref),
-                )
-              else
-                OutlinedButton.icon(
-                  onPressed: () => _showSetGoalSheet(context, widget.entry, widget.month, widget.ref),
-                  icon: const Icon(Icons.flag_outlined, size: 16),
-                  label: Text('Set a Goal',
-                      style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size.fromHeight(48),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  ),
-                ),
-              const SizedBox(height: 16),
-
-              // Carry overspend toggle
-              if (!widget.entry.isCcPayment)
-                SizedBox(
-                  width: double.infinity,
-                  child: Container(
+                child: Container(
                   decoration: BoxDecoration(
-                    color: cs.surfaceContainerHighest,
+                    color:        cs.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: SwitchListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                     title: Text('Carry overspending to next month',
                         style: GoogleFonts.plusJakartaSans(
-                            fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: cs.onSurface)),
                     subtitle: Text(
                       _carryOverspend
                           ? "Overspending reduces next month's category balance"
@@ -718,16 +709,17 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
                       style: GoogleFonts.plusJakartaSans(
                           fontSize: 12, color: cs.onSurfaceVariant),
                     ),
-                    value: _carryOverspend,
-                    onChanged: _toggleCarryOverspend,
+                    value:           _carryOverspend,
+                    onChanged:       _toggleCarryOverspend,
                     activeThumbColor: cs.primary,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
                   ),
                 ),
               ),
-            ],
-          ),
+          ],
         ),
+      ),
     );
   }
 }
@@ -762,9 +754,9 @@ class _GoalDetailCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: trackColor.withValues(alpha: 0.08),
+        color:        trackColor.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: trackColor.withValues(alpha: 0.25)),
+        border:       Border.all(color: trackColor.withValues(alpha: 0.25)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -779,18 +771,22 @@ class _GoalDetailCard extends StatelessWidget {
                       ? 'Goal · ${fmt.format(goal.targetAmount)} by ${goal.targetDateLabel()}'
                       : 'Goal · ${fmt.format(goal.targetAmount)}/month',
                   style: GoogleFonts.plusJakartaSans(
-                      fontSize: 13, fontWeight: FontWeight.w700, color: trackColor),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: trackColor),
                 ),
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: trackColor.withValues(alpha: 0.15),
+                  color:        trackColor.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(onTrack ? 'On Track' : 'Behind',
                     style: GoogleFonts.plusJakartaSans(
-                        fontSize: 11, fontWeight: FontWeight.w700, color: trackColor)),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: trackColor)),
               ),
             ],
           ),
@@ -800,7 +796,7 @@ class _GoalDetailCard extends StatelessWidget {
             child: LinearProgressIndicator(
               value: goal.progressPercent(savedSoFar),
               minHeight: 8,
-              backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+              backgroundColor: cs.surfaceContainerHighest,
               valueColor: AlwaysStoppedAnimation(trackColor),
             ),
           ),
@@ -808,9 +804,9 @@ class _GoalDetailCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _GoalStat(label: 'Saved',    value: fmt.format(savedSoFar)),
+              _GoalStat(label: 'Saved',     value: fmt.format(savedSoFar)),
               _GoalStat(label: 'Remaining', value: fmt.format(goal.targetAmount - savedSoFar)),
-              _GoalStat(label: 'Monthly',  value: fmtDec.format(goal.monthlyNeeded(month, savedSoFar))),
+              _GoalStat(label: 'Monthly',   value: fmtDec.format(goal.monthlyNeeded(month, savedSoFar))),
               if (monthsLeft > 0)
                 _GoalStat(label: 'Months left', value: '$monthsLeft'),
             ],
@@ -818,7 +814,7 @@ class _GoalDetailCard extends StatelessWidget {
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: onEdit,
-            icon: const Icon(Icons.edit_outlined, size: 14),
+            icon:  const Icon(Icons.edit_outlined, size: 14),
             label: Text('Edit Goal', style: GoogleFonts.plusJakartaSans(fontSize: 13)),
             style: OutlinedButton.styleFrom(
               minimumSize: const Size(double.infinity, 40),
@@ -863,10 +859,10 @@ void _showSetGoalSheet(
   WidgetRef ref,
 ) {
   showModalBottomSheet(
-    context: context,
+    context:            context,
     isScrollControlled: true,
-    useSafeArea: true,
-    builder: (_) => _SetGoalSheet(entry: entry, month: month, ref: ref),
+    useSafeArea:        true,
+    builder:            (_) => _SetGoalSheet(entry: entry, month: month, ref: ref),
   );
 }
 
@@ -890,11 +886,11 @@ class _SetGoalSheetState extends State<_SetGoalSheet> {
   void initState() {
     super.initState();
     final existing = widget.entry.goal;
-    _type        = existing?.type ?? GoalType.targetByDate;
-    _amountCtrl  = TextEditingController(
+    _type       = existing?.type ?? GoalType.targetByDate;
+    _amountCtrl = TextEditingController(
       text: existing != null ? existing.targetAmount.toStringAsFixed(2) : '',
     );
-    _targetDate  = existing?.targetDate ?? DateTime(DateTime.now().year, 12);
+    _targetDate = existing?.targetDate ?? DateTime(DateTime.now().year, 12);
   }
 
   @override
@@ -926,7 +922,7 @@ class _SetGoalSheetState extends State<_SetGoalSheet> {
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: Container(
         decoration: BoxDecoration(
-          color: cs.surfaceContainerHigh,
+          color:        cs.surfaceContainerHigh,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         ),
         padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
@@ -938,7 +934,7 @@ class _SetGoalSheetState extends State<_SetGoalSheet> {
               child: Container(
                 width: 40, height: 4,
                 decoration: BoxDecoration(
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                  color:        cs.onSurfaceVariant.withValues(alpha: 0.3),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -966,7 +962,7 @@ class _SetGoalSheetState extends State<_SetGoalSheet> {
                 (GoalType.monthlySavings,  'Monthly Savings',  Icons.repeat),
                 (GoalType.monthlySpending, 'Monthly Spending', Icons.shopping_bag_outlined),
               ],
-              selected: _type,
+              selected:  _type,
               onChanged: (v) => setState(() => _type = v),
             ),
             const SizedBox(height: 20),
@@ -976,9 +972,7 @@ class _SetGoalSheetState extends State<_SetGoalSheet> {
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
-                labelText: _type == GoalType.targetByDate
-                    ? 'Target amount'
-                    : 'Monthly amount',
+                labelText: _type == GoalType.targetByDate ? 'Target amount' : 'Monthly amount',
                 prefixText: '\$ ',
               ),
             ),
@@ -988,10 +982,10 @@ class _SetGoalSheetState extends State<_SetGoalSheet> {
               InkWell(
                 onTap: () async {
                   final picked = await showDatePicker(
-                    context: context,
-                    initialDate: _targetDate,
-                    firstDate: DateTime.now(),
-                    lastDate: DateTime(DateTime.now().year + 10),
+                    context:              context,
+                    initialDate:          _targetDate,
+                    firstDate:            DateTime.now(),
+                    lastDate:             DateTime(DateTime.now().year + 10),
                     initialDatePickerMode: DatePickerMode.year,
                   );
                   if (picked != null) setState(() => _targetDate = picked);
@@ -1000,19 +994,17 @@ class _SetGoalSheetState extends State<_SetGoalSheet> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                   decoration: BoxDecoration(
-                    color: cs.surfaceContainerHighest,
+                    color:        cs.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.calendar_today_outlined,
-                          size: 16, color: cs.onSurfaceVariant),
+                      Icon(Icons.calendar_today_outlined, size: 16, color: cs.onSurfaceVariant),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
                           'Target: ${DateFormat('MMMM yyyy').format(_targetDate)}',
-                          style: GoogleFonts.plusJakartaSans(
-                              fontSize: 14, color: cs.onSurface),
+                          style: GoogleFonts.plusJakartaSans(fontSize: 14, color: cs.onSurface),
                         ),
                       ),
                       Icon(Icons.chevron_right, size: 18, color: cs.onSurfaceVariant),
@@ -1034,7 +1026,8 @@ class _SetGoalSheetState extends State<_SetGoalSheet> {
               onPressed: (_amountCtrl.text.trim().isNotEmpty && !_saving) ? _save : null,
               style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
               child: _saving
-                  ? SizedBox(height: 20, width: 20,
+                  ? SizedBox(
+                      height: 20, width: 20,
                       child: CircularProgressIndicator(strokeWidth: 2, color: cs.onPrimary))
                   : Text('Save Goal',
                       style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
@@ -1063,7 +1056,7 @@ class _MonthlyNeededPreview extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: cs.primaryContainer.withValues(alpha: 0.4),
+        color:        cs.primaryContainer.withValues(alpha: 0.4),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
@@ -1085,10 +1078,10 @@ class _MonthlyNeededPreview extends StatelessWidget {
 
 void _showQuickBudgetSheet(BuildContext context, DateTime month, WidgetRef ref) {
   showModalBottomSheet(
-    context: context,
+    context:            context,
     isScrollControlled: true,
-    useSafeArea: true,
-    builder: (_) => _QuickBudgetSheet(month: month, ref: ref),
+    useSafeArea:        true,
+    builder:            (_) => _QuickBudgetSheet(month: month, ref: ref),
   );
 }
 
@@ -1129,7 +1122,7 @@ class _QuickBudgetSheetState extends State<_QuickBudgetSheet> {
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: Container(
         decoration: BoxDecoration(
-          color: cs.surfaceContainerHigh,
+          color:        cs.surfaceContainerHigh,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         ),
         padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
@@ -1141,7 +1134,7 @@ class _QuickBudgetSheetState extends State<_QuickBudgetSheet> {
               child: Container(
                 width: 40, height: 4,
                 decoration: BoxDecoration(
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                  color:        cs.onSurfaceVariant.withValues(alpha: 0.3),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -1169,7 +1162,7 @@ class _QuickBudgetSheetState extends State<_QuickBudgetSheet> {
                 (_QuickBudgetStrategy.averageSpending, '3-Mo Average', Icons.show_chart),
                 (_QuickBudgetStrategy.coverSpending,   'Cover Spent',  Icons.check_circle_outline),
               ],
-              selected: _strategy,
+              selected:  _strategy,
               onChanged: (v) => setState(() => _strategy = v),
             ),
             const SizedBox(height: 6),
@@ -1193,7 +1186,7 @@ class _QuickBudgetSheetState extends State<_QuickBudgetSheet> {
                 (_QuickBudgetScope.next6,     'Next 6',     null),
                 (_QuickBudgetScope.next12,    'Next 12',    null),
               ],
-              selected: _scope,
+              selected:  _scope,
               onChanged: (v) => setState(() => _scope = v),
             ),
             const SizedBox(height: 28),
@@ -1217,10 +1210,10 @@ class _QuickBudgetSheetState extends State<_QuickBudgetSheet> {
 
 void _showAddCategorySheet(BuildContext context, WidgetRef ref, {String? initialGroupId}) {
   showModalBottomSheet(
-    context: context,
+    context:            context,
     isScrollControlled: true,
-    useSafeArea: true,
-    builder: (_) => _AddCategorySheet(ref: ref, initialGroupId: initialGroupId),
+    useSafeArea:        true,
+    builder:            (_) => _AddCategorySheet(ref: ref, initialGroupId: initialGroupId),
   );
 }
 
@@ -1238,8 +1231,8 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
   final _groupCtrl = TextEditingController();
 
   late String? _selectedGroupId = widget.initialGroupId;
-  bool    _creatingGroup = false;
-  bool    _saving = false;
+  bool _creatingGroup = false;
+  bool _saving        = false;
 
   @override
   void dispose() {
@@ -1250,7 +1243,8 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
 
   bool get _canSave =>
       _nameCtrl.text.trim().isNotEmpty &&
-      (_selectedGroupId != null || (_creatingGroup && _groupCtrl.text.trim().isNotEmpty)) &&
+      (_selectedGroupId != null ||
+          (_creatingGroup && _groupCtrl.text.trim().isNotEmpty)) &&
       !_saving;
 
   Future<void> _save() async {
@@ -1258,19 +1252,16 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
     setState(() => _saving = true);
     try {
       final String groupId;
-
       if (_creatingGroup) {
         groupId = await widget.ref.read(budgetProvider.notifier)
             .addGroup(_groupCtrl.text.trim());
       } else {
         groupId = _selectedGroupId!;
       }
-
       await widget.ref.read(budgetProvider.notifier).addCategory(
         name:    _nameCtrl.text.trim(),
         groupId: groupId,
       );
-
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) {
@@ -1288,10 +1279,10 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
   Widget build(BuildContext context) {
     final cs     = Theme.of(context).colorScheme;
     final groups = ref.watch(budgetProvider).valueOrNull?.groups ?? [];
-    final nonCC  = groups.where((g) =>
-        !g.entries.any((e) => e.isCcPayment)).toList();
+    final nonCC  = groups
+        .where((g) => !g.entries.any((e) => e.isCcPayment))
+        .toList();
 
-    // Auto-select first group once data loads
     if (_selectedGroupId == null && nonCC.isNotEmpty && !_creatingGroup) {
       _selectedGroupId = nonCC.first.id;
     }
@@ -1300,7 +1291,7 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: Container(
         decoration: BoxDecoration(
-          color: cs.surfaceContainerHigh,
+          color:        cs.surfaceContainerHigh,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         ),
         padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
@@ -1312,7 +1303,7 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
               child: Container(
                 width: 40, height: 4,
                 decoration: BoxDecoration(
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                  color:        cs.onSurfaceVariant.withValues(alpha: 0.3),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -1335,8 +1326,8 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
 
             if (!_creatingGroup)
               DropdownButtonFormField<String>(
-                initialValue: _selectedGroupId,
-                decoration: const InputDecoration(labelText: 'Category group'),
+                initialValue:  _selectedGroupId,
+                decoration:    const InputDecoration(labelText: 'Category group'),
                 dropdownColor: cs.surfaceContainerHighest,
                 items: [
                   ...nonCC.map((g) => DropdownMenuItem(
@@ -1359,7 +1350,7 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
                   }
                 },
               )
-            else ...[
+            else
               TextField(
                 controller: _groupCtrl,
                 textCapitalization: TextCapitalization.words,
@@ -1372,14 +1363,14 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
                   ),
                 ),
               ),
-            ],
             const SizedBox(height: 28),
 
             FilledButton(
               onPressed: _canSave ? _save : null,
               style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
               child: _saving
-                  ? SizedBox(height: 20, width: 20,
+                  ? SizedBox(
+                      height: 20, width: 20,
                       child: CircularProgressIndicator(strokeWidth: 2, color: cs.onPrimary))
                   : Text('Add Category',
                       style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
@@ -1452,7 +1443,7 @@ class _SegmentGroup<T> extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Stat cell
+// Stat cell (used in detail sheet)
 // ---------------------------------------------------------------------------
 
 class _StatCell extends StatelessWidget {
