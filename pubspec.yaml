@@ -41,6 +41,9 @@ dependencies:
   # File picking (YNAB import)
   file_picker: ^8.1.0
 
+  # Charts
+  fl_chart: ^0.68.0
+
   # Splash
   flutter_native_splash: ^2.4.3
 
