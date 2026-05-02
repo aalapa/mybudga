@@ -70,6 +70,12 @@ class _CashflowBody extends StatelessWidget {
 
     final isDoomsday = days == _CashflowBody._ddSentinel;
 
+    // Peak balance across the projection — used as the 100% reference for bars
+    double maxBalance = state.startingBalance;
+    for (final d in dayRows) {
+      if (d.endBalance > maxBalance) maxBalance = d.endBalance;
+    }
+
     final lowest = dayRows.isEmpty
         ? state.startingBalance
         : dayRows.map((d) => d.endBalance).reduce((a, b) => a < b ? a : b);
@@ -210,8 +216,8 @@ class _CashflowBody extends StatelessWidget {
               itemBuilder: (context, i) {
                 final day = dayRows[i];
                 return day.hasEvents
-                    ? _EventDayRow(day: day, ref: ref)
-                    : _EmptyDayRow(day: day);
+                    ? _EventDayRow(day: day, ref: ref, maxBalance: maxBalance)
+                    : _EmptyDayRow(day: day, maxBalance: maxBalance);
               },
             ),
           ),
@@ -470,14 +476,14 @@ class _DayData {
 
 class _EmptyDayRow extends StatelessWidget {
   final _DayData day;
-  const _EmptyDayRow({required this.day});
+  final double maxBalance;
+  const _EmptyDayRow({required this.day, required this.maxBalance});
 
   @override
   Widget build(BuildContext context) {
-    final cs  = Theme.of(context).colorScheme;
-    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
-    final now = DateTime.now();
-    final isToday = _sameDay(day.date, now);
+    final cs      = Theme.of(context).colorScheme;
+    final fmt     = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final isToday = _sameDay(day.date, DateTime.now());
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
@@ -496,13 +502,17 @@ class _EmptyDayRow extends StatelessWidget {
               ),
             ),
           ),
+          // ── Balance bar fills the dead space ──────────────────────────
           Expanded(
-            child: Container(
-              height: 1,
-              color: cs.outlineVariant.withValues(alpha: 0.2),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: _BalanceBar(
+                balance:    day.endBalance,
+                maxBalance: maxBalance,
+                height:     5,
+              ),
             ),
           ),
-          const SizedBox(width: 8),
           Text(
             fmt.format(day.endBalance),
             style: GoogleFonts.plusJakartaSans(
@@ -529,7 +539,8 @@ class _EmptyDayRow extends StatelessWidget {
 class _EventDayRow extends StatelessWidget {
   final _DayData day;
   final WidgetRef ref;
-  const _EventDayRow({required this.day, required this.ref});
+  final double maxBalance;
+  const _EventDayRow({required this.day, required this.ref, required this.maxBalance});
 
   @override
   Widget build(BuildContext context) {
@@ -566,15 +577,25 @@ class _EventDayRow extends StatelessWidget {
               ref:      ref,
             )),
         Padding(
-          padding: const EdgeInsets.fromLTRB(0, 4, 0, 2),
+          padding: const EdgeInsets.fromLTRB(0, 6, 0, 2),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
             children: [
               Text(
-                'Balance  ',
+                'Balance',
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 11,
                   color: cs.onSurfaceVariant,
+                ),
+              ),
+              // ── Bar between label and amount ─────────────────────────
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: _BalanceBar(
+                    balance:    day.endBalance,
+                    maxBalance: maxBalance,
+                    height:     4,
+                  ),
                 ),
               ),
               Text(
@@ -594,6 +615,62 @@ class _EventDayRow extends StatelessWidget {
 
   static bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+// ---------------------------------------------------------------------------
+// Balance bar — fills the space between date label and balance number
+// ---------------------------------------------------------------------------
+
+class _BalanceBar extends StatelessWidget {
+  final double balance;
+  final double maxBalance; // peak balance in the projection — sets the 100% mark
+  final double height;
+
+  const _BalanceBar({
+    required this.balance,
+    required this.maxBalance,
+    this.height = 5,
+  });
+
+  Color _fillColor(ColorScheme cs) {
+    if (balance <= 0) return cs.error;
+    if (maxBalance <= 0) return cs.tertiary;
+    // Amber when below 25 % of the peak balance in the period
+    if (balance / maxBalance < 0.25) return const Color(0xFFFFB300);
+    return cs.tertiary; // green
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs       = Theme.of(context).colorScheme;
+    final fraction = maxBalance > 0
+        ? (balance / maxBalance).clamp(0.0, 1.0)
+        : 0.0;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(height / 2),
+      child: Stack(
+        children: [
+          // Track
+          Container(
+            height: height,
+            color: cs.surfaceContainerHigh,
+          ),
+          // Fill
+          FractionallySizedBox(
+            widthFactor: fraction,
+            child: Container(
+              height: height,
+              decoration: BoxDecoration(
+                color: _fillColor(cs),
+                borderRadius: BorderRadius.circular(height / 2),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

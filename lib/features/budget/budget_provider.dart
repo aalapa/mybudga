@@ -132,6 +132,46 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
   }
 
   // ---------------------------------------------------------------------------
+  // Group & category edit / delete
+  // ---------------------------------------------------------------------------
+
+  Future<void> renameGroup(String groupId, String newName) async {
+    final client = ref.read(supabaseProvider);
+    await client
+        .from('category_groups')
+        .update({'name': newName.trim()})
+        .eq('id', groupId);
+    ref.invalidateSelf();
+  }
+
+  Future<void> deleteGroup(String groupId) async {
+    final client = ref.read(supabaseProvider);
+    await client.from('category_groups').update({
+      'deleted_at': DateTime.now().toIso8601String(),
+    }).eq('id', groupId);
+    ref.invalidate(categoriesProvider);
+    ref.invalidateSelf();
+  }
+
+  Future<void> renameCategory(String categoryId, String newName) async {
+    final client = ref.read(supabaseProvider);
+    await client
+        .from('categories')
+        .update({'name': newName.trim()})
+        .eq('id', categoryId);
+    ref.invalidateSelf();
+  }
+
+  Future<void> deleteCategory(String categoryId) async {
+    final client = ref.read(supabaseProvider);
+    await client.from('categories').update({
+      'deleted_at': DateTime.now().toIso8601String(),
+    }).eq('id', categoryId);
+    ref.invalidate(categoriesProvider);
+    ref.invalidateSelf();
+  }
+
+  // ---------------------------------------------------------------------------
   // Goals
   // ---------------------------------------------------------------------------
 
@@ -311,6 +351,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     return BudgetState(month: month, groups: groups, tbb: tbb);
   }
 
+  // ignore: library_private_types_in_public_api
   static DateTime _firstOfMonth(DateTime d) => DateTime(d.year, d.month);
 
   static String _toMonthString(DateTime d) =>
@@ -319,6 +360,20 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
 
 final budgetProvider =
     AsyncNotifierProvider<BudgetNotifier, BudgetState>(BudgetNotifier.new);
+
+/// User's layout preference: true = 3-column (when screen is wide enough).
+final budgetThreeColPrefProvider = StateProvider<bool>((ref) => true);
+
+/// Read-only snapshot for any month — used by the 3-column desktop view.
+/// Does NOT subscribe to realtime; the main budgetProvider handles invalidation.
+final budgetForMonthProvider = FutureProvider.autoDispose
+    .family<BudgetState, DateTime>((ref, month) async {
+  final householdId = await ref.watch(householdIdProvider.future);
+  final client      = ref.watch(supabaseProvider);
+  // Invalidate whenever the main budget changes (category edits, transactions, etc.)
+  ref.watch(budgetProvider);
+  return BudgetNotifier._load(client, householdId, BudgetNotifier._firstOfMonth(month));
+});
 
 /// Fetches actual transactions for a single category + month.
 /// Key: (categoryId, monthKey) where monthKey = "2026-05"

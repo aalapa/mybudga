@@ -10,7 +10,9 @@ import 'budget_provider.dart';
 
 // ---------------------------------------------------------------------------
 
-const _kColW = 82.0; // fixed width per numeric column
+const _kColW      = 82.0; // numeric column width — single-column view
+const _kPanelColW = 68.0; // numeric column width — 3-column comparison panels
+const _k3ColBreak = 1100.0; // min width to activate 3-column layout
 
 class BudgetScreen extends ConsumerWidget {
   const BudgetScreen({super.key});
@@ -28,6 +30,10 @@ class BudgetScreen extends ConsumerWidget {
         builder:            (_) => _CategoryDetailSheet(entry: entry, month: month, ref: ref),
       );
     }
+
+    final wideEnough = MediaQuery.sizeOf(context).width >= _k3ColBreak;
+    final prefThreeCol = ref.watch(budgetThreeColPrefProvider);
+    final isThreeCol = wideEnough && prefThreeCol;
 
     return Scaffold(
       backgroundColor: cs.surface,
@@ -48,19 +54,440 @@ class BudgetScreen extends ConsumerWidget {
             ],
           ),
         ),
-        data: (state) => _BudgetBody(
-          state:         state,
-          ref:           ref,
-          onCategoryTap: onCategoryTap,
-        ),
+        data: (state) => isThreeCol
+            ? _ThreeColumnBudget(state: state)
+            : _BudgetBody(
+                state:         state,
+                ref:           ref,
+                onCategoryTap: onCategoryTap,
+              ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
+      // FAB only in single-column mode — 3-col uses group [+] buttons
+      floatingActionButton: isThreeCol ? null : FloatingActionButton.extended(
         onPressed: () => _showAddCategorySheet(context, ref),
         icon:  const Icon(Icons.add),
         label: Text('Add Category',
             style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
         backgroundColor: cs.primary,
         foregroundColor: cs.onPrimary,
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Three-column desktop layout  (prev | current | next month)
+// ---------------------------------------------------------------------------
+
+class _ThreeColumnBudget extends ConsumerWidget {
+  final BudgetState state; // current month from main provider
+  const _ThreeColumnBudget({required this.state});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs        = Theme.of(context).colorScheme;
+    final prevMonth = DateTime(state.month.year, state.month.month - 1);
+    final nextMonth = DateTime(state.month.year, state.month.month + 1);
+    final prevAsync = ref.watch(budgetForMonthProvider(prevMonth));
+    final nextAsync = ref.watch(budgetForMonthProvider(nextMonth));
+    final notifier  = ref.read(budgetProvider.notifier);
+
+    return Column(
+      children: [
+        // ── Shared navigation header ─────────────────────────────────────────
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(
+                  color: cs.outlineVariant.withValues(alpha: 0.4), width: 0.5),
+            ),
+          ),
+          child: Row(
+            children: [
+              IconButton(
+                onPressed: () => notifier.goToMonth(prevMonth),
+                icon: const Icon(Icons.chevron_left),
+                style: IconButton.styleFrom(
+                    backgroundColor: cs.surfaceContainerHigh),
+              ),
+              const Spacer(),
+              _MonthChip(month: prevMonth,  isCurrent: false),
+              const SizedBox(width: 12),
+              _MonthChip(month: state.month, isCurrent: true),
+              const SizedBox(width: 12),
+              _MonthChip(month: nextMonth,  isCurrent: false),
+              const Spacer(),
+              IconButton(
+                onPressed: () => notifier.goToMonth(nextMonth),
+                icon: const Icon(Icons.chevron_right),
+                style: IconButton.styleFrom(
+                    backgroundColor: cs.surfaceContainerHigh),
+              ),
+              const SizedBox(width: 8),
+              // ── Layout toggle ────────────────────────────────────────────
+              IconButton(
+                tooltip: 'Single column view',
+                icon: const Icon(Icons.view_agenda_outlined, size: 18),
+                onPressed: () => ref
+                    .read(budgetThreeColPrefProvider.notifier)
+                    .state = false,
+                style: IconButton.styleFrom(
+                  backgroundColor: cs.surfaceContainerHigh,
+                  padding: const EdgeInsets.all(6),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // ── Three panels ─────────────────────────────────────────────────────
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _MonthPanel(
+                    async: prevAsync, isCurrent: false, month: prevMonth),
+              ),
+              VerticalDivider(
+                  width: 1,
+                  color: cs.outlineVariant.withValues(alpha: 0.5)),
+              Expanded(
+                child: _MonthPanel(
+                    async: AsyncData(state), isCurrent: true,
+                    month: state.month),
+              ),
+              VerticalDivider(
+                  width: 1,
+                  color: cs.outlineVariant.withValues(alpha: 0.5)),
+              Expanded(
+                child: _MonthPanel(
+                    async: nextAsync, isCurrent: false, month: nextMonth),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Month chip in the shared nav ─────────────────────────────────────────────
+
+class _MonthChip extends StatelessWidget {
+  final DateTime month;
+  final bool isCurrent;
+  const _MonthChip({required this.month, required this.isCurrent});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      decoration: BoxDecoration(
+        color: isCurrent
+            ? cs.primaryContainer
+            : cs.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        DateFormat(isCurrent ? 'MMMM yyyy' : 'MMM yyyy').format(month),
+        style: GoogleFonts.plusJakartaSans(
+          fontSize: isCurrent ? 14 : 12,
+          fontWeight: isCurrent ? FontWeight.w800 : FontWeight.w500,
+          color: isCurrent ? cs.onPrimaryContainer : cs.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+}
+
+// ── One month panel ───────────────────────────────────────────────────────────
+
+class _MonthPanel extends StatelessWidget {
+  final AsyncValue<BudgetState> async;
+  final bool isCurrent;
+  final DateTime month;
+  const _MonthPanel(
+      {required this.async, required this.isCurrent, required this.month});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return switch (async) {
+      AsyncLoading() => const Center(
+          child: Padding(
+            padding: EdgeInsets.all(32),
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )),
+      AsyncError() => Center(
+          child: Icon(Icons.error_outline,
+              color: cs.onSurfaceVariant.withValues(alpha: 0.4))),
+      AsyncData(:final value) => _PanelContent(
+          state: value, isCurrent: isCurrent),
+      _ => const SizedBox.shrink(),
+    };
+  }
+}
+
+// ── Panel content ─────────────────────────────────────────────────────────────
+
+class _PanelContent extends StatelessWidget {
+  final BudgetState state;
+  final bool isCurrent;
+  const _PanelContent({required this.state, required this.isCurrent});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+
+    // Flatten groups → rows
+    final rows = <_BudgetRow>[];
+    for (final g in state.groups) {
+      rows.add(_GroupRow(g));
+      for (final e in g.entries) {
+        rows.add(_EntryRow(e));
+      }
+    }
+
+    return CustomScrollView(
+      slivers: [
+        // ── Panel sub-header: TBB ─────────────────────────────────────
+        SliverToBoxAdapter(
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+            decoration: isCurrent
+                ? BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                          color: cs.primary.withValues(alpha: 0.25),
+                          width: 2),
+                    ),
+                    color: cs.primaryContainer.withValues(alpha: 0.08),
+                  )
+                : BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                          color: cs.outlineVariant.withValues(alpha: 0.3)),
+                    ),
+                  ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    isCurrent ? 'Current month' : '',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11,
+                      color: isCurrent ? cs.primary : cs.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: state.tbb < 0
+                        ? cs.errorContainer
+                        : cs.tertiaryContainer,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${state.tbb < 0 ? '-' : '+'}${fmt.format(state.tbb.abs())} TBB',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: state.tbb < 0
+                          ? cs.onErrorContainer
+                          : cs.onTertiaryContainer,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // ── Column labels ─────────────────────────────────────────────
+        SliverToBoxAdapter(child: _PanelColHeaders()),
+        // ── Rows ─────────────────────────────────────────────────────
+        SliverPadding(
+          padding: const EdgeInsets.only(bottom: 80),
+          sliver: SliverList.builder(
+            itemCount: rows.length,
+            itemBuilder: (ctx, i) => switch (rows[i]) {
+              _GroupRow(:final group) => _PanelGroupRow(group: group),
+              _EntryRow(:final entry) => _PanelEntryRow(
+                  entry: entry, isCurrent: isCurrent),
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Column headers for each panel ────────────────────────────────────────────
+
+class _PanelColHeaders extends StatelessWidget {
+  const _PanelColHeaders();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 4, 12, 4),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom:
+              BorderSide(color: cs.outlineVariant.withValues(alpha: 0.4)),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Expanded(child: SizedBox()),
+          _PanelColLabel('BUDGET'),
+          _PanelColLabel('AVAIL'),
+        ],
+      ),
+    );
+  }
+}
+
+class _PanelColLabel extends StatelessWidget {
+  final String text;
+  const _PanelColLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: _kPanelColW,
+      child: Text(
+        text,
+        textAlign: TextAlign.right,
+        style: GoogleFonts.plusJakartaSans(
+          fontSize: 9,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.8,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+}
+
+// ── Group header row in panel ─────────────────────────────────────────────────
+
+class _PanelGroupRow extends StatelessWidget {
+  final BudgetGroupData group;
+  const _PanelGroupRow({required this.group});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs    = Theme.of(context).colorScheme;
+    final totalBudgeted  = group.entries.fold(0.0, (s, e) => s + e.budgeted);
+    final totalAvailable = group.entries.fold(0.0, (s, e) => s + e.balance);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 8, 12, 6),
+      color: cs.surfaceContainerHigh.withValues(alpha: 0.6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              group.name.toUpperCase(),
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.6,
+                color: cs.onSurfaceVariant,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          _PanelNum(totalBudgeted, cs.onSurfaceVariant),
+          _PanelNum(
+            totalAvailable,
+            totalAvailable < 0 ? cs.error : cs.onSurfaceVariant,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Category entry row in panel ───────────────────────────────────────────────
+
+class _PanelEntryRow extends StatelessWidget {
+  final BudgetEntry entry;
+  final bool isCurrent;
+  const _PanelEntryRow({required this.entry, required this.isCurrent});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs         = Theme.of(context).colorScheme;
+    final isOverspent = entry.balance < 0;
+    final availColor  = isOverspent ? cs.error
+        : entry.balance > 0 ? cs.tertiary
+        : cs.onSurfaceVariant;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 9, 12, 9),
+      child: Row(
+        children: [
+          if (entry.isCcPayment)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Icon(Icons.credit_card, size: 11, color: cs.primary),
+            ),
+          Expanded(
+            child: Text(
+              entry.categoryName,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: cs.onSurface,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          _PanelNum(entry.budgeted, cs.onSurface),
+          _PanelNum(entry.balance, availColor, bold: true),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Right-aligned number cell for panels ─────────────────────────────────────
+
+class _PanelNum extends StatelessWidget {
+  final double value;
+  final Color color;
+  final bool bold;
+  const _PanelNum(this.value, this.color, {this.bold = false});
+
+  static String _fmt(double v) {
+    final abs = v.abs();
+    if (abs >= 1000) return '\$${(abs / 1000).toStringAsFixed(1)}k';
+    return '\$${abs.toStringAsFixed(0)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label  = (value < 0 ? '-' : '') + _fmt(value);
+    final dimmed = value == 0;
+    return SizedBox(
+      width: _kPanelColW,
+      child: Text(
+        label,
+        textAlign: TextAlign.right,
+        style: GoogleFonts.plusJakartaSans(
+          fontSize: 12,
+          fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
+          color: dimmed ? color.withValues(alpha: 0.3) : color,
+        ),
       ),
     );
   }
@@ -222,6 +649,22 @@ class _BudgetHeader extends StatelessWidget {
                 icon: const Icon(Icons.chevron_right),
                 style: IconButton.styleFrom(backgroundColor: cs.surfaceContainerHigh),
               ),
+              // Switch to 3-col on wide screens
+              if (MediaQuery.sizeOf(context).width >= _k3ColBreak)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4),
+                  child: IconButton(
+                    tooltip: 'Three-column view',
+                    icon: const Icon(Icons.view_column_outlined, size: 18),
+                    onPressed: () => ref
+                        .read(budgetThreeColPrefProvider.notifier)
+                        .state = true,
+                    style: IconButton.styleFrom(
+                      backgroundColor: cs.surfaceContainerHigh,
+                      padding: const EdgeInsets.all(6),
+                    ),
+                  ),
+                ),
             ],
           ),
           TextButton.icon(
@@ -346,13 +789,20 @@ class _GroupHeaderRow extends StatelessWidget {
           Expanded(
             child: Row(
               children: [
-                Text(
-                  group.name.toUpperCase(),
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: cs.onSurfaceVariant,
-                    letterSpacing: 0.8,
+                InkWell(
+                  onTap: () => _showGroupActions(context, ref, group),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                    child: Text(
+                      group.name.toUpperCase(),
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: cs.onSurfaceVariant,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 6),
@@ -554,23 +1004,28 @@ class _CategoryTxPanel extends ConsumerWidget {
               ],
             ),
           ),
-          // ── Edit budget button ──
+          // ── Action buttons ──
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                TextButton.icon(
-                  onPressed: onEditTap,
-                  icon: const Icon(Icons.edit_outlined, size: 14),
-                  label: Text('Edit Budget',
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 12, fontWeight: FontWeight.w600)),
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
+                _PanelAction(
+                  icon: Icons.drive_file_rename_outline,
+                  label: 'Rename',
+                  onTap: () => _showRenameCategoryDialog(context, ref, entry),
+                ),
+                const SizedBox(width: 4),
+                _PanelAction(
+                  icon: Icons.delete_outline,
+                  label: 'Delete',
+                  onTap: () => _showDeleteCategoryDialog(context, ref, entry),
+                  isDestructive: true,
+                ),
+                const Spacer(),
+                _PanelAction(
+                  icon: Icons.edit_outlined,
+                  label: 'Edit Budget',
+                  onTap: onEditTap,
                 ),
               ],
             ),
@@ -1569,6 +2024,249 @@ class _QuickBudgetSheetState extends State<_QuickBudgetSheet> {
 
 // ---------------------------------------------------------------------------
 // Add Category sheet
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Group actions — rename / delete
+// ---------------------------------------------------------------------------
+
+void _showGroupActions(
+    BuildContext context, WidgetRef ref, BudgetGroupData group) {
+  final cs = Theme.of(context).colorScheme;
+  showModalBottomSheet(
+    context: context,
+    useSafeArea: true,
+    builder: (_) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 8),
+          Container(
+            width: 36, height: 4,
+            decoration: BoxDecoration(
+              color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Text(
+              group.name,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 15, fontWeight: FontWeight.w700,
+                  color: cs.onSurface),
+            ),
+          ),
+          const SizedBox(height: 8),
+          ListTile(
+            leading: Icon(Icons.drive_file_rename_outline, color: cs.primary),
+            title: Text('Rename group',
+                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w500)),
+            onTap: () {
+              Navigator.pop(context);
+              _showRenameGroupDialog(context, ref, group);
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.delete_outline, color: cs.error),
+            title: Text('Delete group',
+                style: GoogleFonts.plusJakartaSans(
+                    fontWeight: FontWeight.w500, color: cs.error)),
+            onTap: () {
+              Navigator.pop(context);
+              _showDeleteGroupDialog(context, ref, group);
+            },
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    ),
+  );
+}
+
+void _showRenameGroupDialog(
+    BuildContext context, WidgetRef ref, BudgetGroupData group) {
+  final ctrl = TextEditingController(text: group.name);
+  showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Rename group',
+          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+      content: TextField(
+        controller: ctrl,
+        autofocus: true,
+        textCapitalization: TextCapitalization.words,
+        decoration: const InputDecoration(labelText: 'Group name'),
+        onSubmitted: (_) async {
+          if (ctrl.text.trim().isEmpty) return;
+          await ref.read(budgetProvider.notifier).renameGroup(group.id, ctrl.text);
+          if (ctx.mounted) Navigator.pop(ctx);
+        },
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel')),
+        FilledButton(
+          onPressed: () async {
+            if (ctrl.text.trim().isEmpty) return;
+            await ref.read(budgetProvider.notifier).renameGroup(group.id, ctrl.text);
+            if (ctx.mounted) Navigator.pop(ctx);
+          },
+          child: const Text('Save'),
+        ),
+      ],
+    ),
+  );
+}
+
+void _showDeleteGroupDialog(
+    BuildContext context, WidgetRef ref, BudgetGroupData group) {
+  final hasCategories = group.entries.isNotEmpty;
+  showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Delete "${group.name}"?',
+          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+      content: Text(
+        hasCategories
+            ? 'This will also delete all ${group.entries.length} '
+                'categories in this group. Transactions will become '
+                'uncategorized. This cannot be undone.'
+            : 'The group will be permanently removed.',
+        style: GoogleFonts.plusJakartaSans(fontSize: 14),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel')),
+        FilledButton(
+          style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error),
+          onPressed: () async {
+            await ref.read(budgetProvider.notifier).deleteGroup(group.id);
+            if (ctx.mounted) Navigator.pop(ctx);
+          },
+          child: const Text('Delete'),
+        ),
+      ],
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Category rename / delete
+// ---------------------------------------------------------------------------
+
+void _showRenameCategoryDialog(
+    BuildContext context, WidgetRef ref, BudgetEntry entry) {
+  final ctrl = TextEditingController(text: entry.categoryName);
+  showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Rename category',
+          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+      content: TextField(
+        controller: ctrl,
+        autofocus: true,
+        textCapitalization: TextCapitalization.words,
+        decoration: const InputDecoration(labelText: 'Category name'),
+        onSubmitted: (_) async {
+          if (ctrl.text.trim().isEmpty) return;
+          await ref
+              .read(budgetProvider.notifier)
+              .renameCategory(entry.categoryId, ctrl.text);
+          if (ctx.mounted) Navigator.pop(ctx);
+        },
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel')),
+        FilledButton(
+          onPressed: () async {
+            if (ctrl.text.trim().isEmpty) return;
+            await ref
+                .read(budgetProvider.notifier)
+                .renameCategory(entry.categoryId, ctrl.text);
+            if (ctx.mounted) Navigator.pop(ctx);
+          },
+          child: const Text('Save'),
+        ),
+      ],
+    ),
+  );
+}
+
+void _showDeleteCategoryDialog(
+    BuildContext context, WidgetRef ref, BudgetEntry entry) {
+  showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Delete "${entry.categoryName}"?',
+          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+      content: Text(
+        'Existing transactions will become uncategorized. '
+        'This cannot be undone.',
+        style: GoogleFonts.plusJakartaSans(fontSize: 14),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel')),
+        FilledButton(
+          style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error),
+          onPressed: () async {
+            await ref
+                .read(budgetProvider.notifier)
+                .deleteCategory(entry.categoryId);
+            if (ctx.mounted) Navigator.pop(ctx);
+          },
+          child: const Text('Delete'),
+        ),
+      ],
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Small action button used in the expanded category panel
+// ---------------------------------------------------------------------------
+
+class _PanelAction extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool isDestructive;
+
+  const _PanelAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.isDestructive = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs    = Theme.of(context).colorScheme;
+    final color = isDestructive ? cs.error : cs.primary;
+    return TextButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 14, color: color),
+      label: Text(label,
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 12, fontWeight: FontWeight.w600, color: color)),
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 
 void _showAddCategorySheet(BuildContext context, WidgetRef ref, {String? initialGroupId}) {
