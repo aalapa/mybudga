@@ -154,16 +154,16 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
       await client
           .from('transactions')
           .update({'transfer_id': null})
-          .in_('id', pairedTxIds);
+          .inFilter('id', pairedTxIds);
       // Delete the orphaned other-leg transactions.
       await client
           .from('split_transactions')
           .delete()
-          .in_('transaction_id', pairedTxIds);
+          .inFilter('transaction_id', pairedTxIds);
       await client
           .from('transactions')
           .delete()
-          .in_('id', pairedTxIds);
+          .inFilter('id', pairedTxIds);
     }
 
     // ── Step 3: Delete split_transactions for this account's transactions.
@@ -173,7 +173,7 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
       await client
           .from('split_transactions')
           .delete()
-          .in_('transaction_id', ownTxIds);
+          .inFilter('transaction_id', ownTxIds);
     }
 
     // ── Step 4: Null-out any remaining self-referential transfer_id on own txs.
