@@ -730,7 +730,8 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
   final _amountCtrl    = TextEditingController();
   final _memoCtrl      = TextEditingController();
 
-  bool   _isIncome     = false;
+  bool   _isIncome       = false;
+  bool   _incomeNextMonth = false;
   String? _accountId;
   String? _categoryId;
   String? _categoryName;
@@ -754,6 +755,13 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
       _frequency       = p.frequency;
       _nextDate        = p.nextDate;
       _isIncome        = p.isIncome;
+      // Detect if existing income is set to next month
+      final now = DateTime.now();
+      if (p.isIncome &&
+          (p.nextDate.year > now.year ||
+              (p.nextDate.year == now.year && p.nextDate.month > now.month))) {
+        _incomeNextMonth = true;
+      }
     }
   }
 
@@ -860,7 +868,10 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
                           _TypeChip(
                             label: 'Expense',
                             selected: !_isIncome,
-                            onTap: () => setState(() => _isIncome = false),
+                            onTap: () => setState(() {
+                              _isIncome = false;
+                              _incomeNextMonth = false;
+                            }),
                           ),
                           const SizedBox(width: 8),
                           _TypeChip(
@@ -870,6 +881,46 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
                           ),
                         ],
                       ),
+
+                      // Income availability — only shown when Income is selected
+                      if (_isIncome) ...[
+                        const SizedBox(height: 12),
+                        Center(
+                          child: SegmentedButton<bool>(
+                            style: SegmentedButton.styleFrom(
+                              textStyle: GoogleFonts.plusJakartaSans(
+                                  fontSize: 12, fontWeight: FontWeight.w600),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            segments: const [
+                              ButtonSegment(
+                                value: false,
+                                icon: Icon(Icons.calendar_today, size: 13),
+                                label: Text('This month'),
+                              ),
+                              ButtonSegment(
+                                value: true,
+                                icon: Icon(Icons.calendar_month, size: 13),
+                                label: Text('Next month'),
+                              ),
+                            ],
+                            selected: {_incomeNextMonth},
+                            onSelectionChanged: (s) {
+                              final next = s.first;
+                              final now  = DateTime.now();
+                              setState(() {
+                                _incomeNextMonth = next;
+                                if (next) {
+                                  // Shift nextDate to the same day in next month
+                                  // (clamped to 28 so Feb never overflows).
+                                  final day = _nextDate.day.clamp(1, 28);
+                                  _nextDate = DateTime(now.year, now.month + 1, day);
+                                }
+                              });
+                            },
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 16),
 
                       // Amount

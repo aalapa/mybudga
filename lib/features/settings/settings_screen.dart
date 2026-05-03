@@ -247,15 +247,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           .update({'transfer_id': null})
           .eq('household_id', householdId);
 
-      // 2. Split transactions
-      await client
-          .from('split_transactions')
-          .delete()
-          .eq('household_id', householdId);
+      // 2. Split transactions (best-effort — table/schema may differ)
+      try {
+        await client
+            .from('split_transactions')
+            .delete()
+            .eq('household_id', householdId);
+      } catch (_) {}
 
       // 3. Transactions, scheduled transactions, payees, accounts
       await client.from('transactions').delete().eq('household_id', householdId);
-      await client.from('scheduled_transactions').delete().eq('household_id', householdId);
+      try {
+        await client.from('scheduled_transactions').delete().eq('household_id', householdId);
+      } catch (_) {}
       await client.from('payees').delete().eq('household_id', householdId);
       await client.from('accounts').delete().eq('household_id', householdId);
 
@@ -331,14 +335,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           .update({'transfer_id': null})
           .eq('household_id', householdId);
 
-      // 2. Delete split_transactions (has household_id directly)
-      await client.from('split_transactions')
-          .delete()
-          .eq('household_id', householdId);
+      // 2. Delete split_transactions (best-effort — table/schema may differ)
+      try {
+        await client.from('split_transactions')
+            .delete()
+            .eq('household_id', householdId);
+      } catch (_) {}
 
       // 3-9. Delete in FK-safe order
       await client.from('transactions').delete().eq('household_id', householdId);
-      await client.from('scheduled_transactions').delete().eq('household_id', householdId);
+      try {
+        await client.from('scheduled_transactions').delete().eq('household_id', householdId);
+      } catch (_) {}
       await client.from('budget_months').delete().eq('household_id', householdId);
       await client.from('category_goals').delete().eq('household_id', householdId);
       await client.from('payees').delete().eq('household_id', householdId);

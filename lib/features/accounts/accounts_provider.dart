@@ -72,8 +72,17 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
 
     // For budget (non-tracking) accounts with a non-zero opening balance,
     // create a "Starting balance" transaction so the money flows into TBB.
-    // Tracking accounts are net-worth only and don't touch the budget.
-    if (!isTracking && startingBalance != 0) {
+    //
+    // Exceptions — no transaction for:
+    //   • Tracking accounts: net-worth only, never touch the budget.
+    //   • Credit cards / lines of credit: their negative balance is a
+    //     liability, not income. A -$X transaction would incorrectly drain
+    //     TBB. The CC-payment budget category handles the debt separately,
+    //     and the DB trigger would double-count by adding the transaction
+    //     amount on top of the current_balance we already set.
+    final isCcType = type == AccountType.creditCard ||
+                     type == AccountType.lineOfCredit;
+    if (!isTracking && !isCcType && startingBalance != 0) {
       final txDate  = startDate ?? DateTime.now();
       final dateStr = '${txDate.year}-'
           '${txDate.month.toString().padLeft(2, '0')}-'
@@ -155,25 +164,29 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
           .from('transactions')
           .update({'transfer_id': null})
           .inFilter('id', pairedTxIds);
-      // Delete the orphaned other-leg transactions.
-      await client
-          .from('split_transactions')
-          .delete()
-          .inFilter('transaction_id', pairedTxIds);
+      // Best-effort: clean up any split rows referencing the other-leg txs.
+      // Wrapped in try-catch because the split_transactions table / column
+      // schema may differ across deployments.
+      try {
+        await client
+            .from('split_transactions')
+            .delete()
+            .inFilter('transaction_id', pairedTxIds);
+      } catch (_) {}
       await client
           .from('transactions')
           .delete()
           .inFilter('id', pairedTxIds);
     }
 
-    // ── Step 3: Delete split_transactions for this account's transactions.
-    //   Without this, the transaction delete below will FK-violate and silently
-    //   leave orphaned rows behind.
+    // ── Step 3: Best-effort split_transactions cleanup for own transactions.
     if (ownTxIds.isNotEmpty) {
-      await client
-          .from('split_transactions')
-          .delete()
-          .inFilter('transaction_id', ownTxIds);
+      try {
+        await client
+            .from('split_transactions')
+            .delete()
+            .inFilter('transaction_id', ownTxIds);
+      } catch (_) {}
     }
 
     // ── Step 4: Null-out any remaining self-referential transfer_id on own txs.
@@ -182,9 +195,10 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
         .update({'transfer_id': null})
         .eq('account_id', id);
 
-    // ── Step 5: Delete scheduled transactions — otherwise the
-    //   process_due_scheduled_transactions RPC will re-create phantom rows.
-    await client.from('scheduled_transactions').delete().eq('account_id', id);
+    // ── Step 5: Delete scheduled transactions (best-effort — table may not exist).
+    try {
+      await client.from('scheduled_transactions').delete().eq('account_id', id);
+    } catch (_) {}
 
     // ── Step 6: Delete this account's transactions, then the account itself.
     await client.from('transactions').delete().eq('account_id', id);

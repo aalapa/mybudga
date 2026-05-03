@@ -146,7 +146,8 @@ class _ThreeColumnBudget extends ConsumerWidget {
             children: [
               Expanded(
                 child: _MonthPanel(
-                    async: prevAsync, isCurrent: false, month: prevMonth),
+                    async: prevAsync, isCurrent: false, month: prevMonth,
+                    isPast: true),
               ),
               VerticalDivider(
                   width: 1,
@@ -207,14 +208,16 @@ class _MonthChip extends StatelessWidget {
 class _MonthPanel extends StatelessWidget {
   final AsyncValue<BudgetState> async;
   final bool isCurrent;
+  final bool isPast;
   final DateTime month;
   const _MonthPanel(
-      {required this.async, required this.isCurrent, required this.month});
+      {required this.async, required this.isCurrent, required this.month,
+       this.isPast = false});
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return switch (async) {
+    final inner = switch (async) {
       AsyncLoading() => const Center(
           child: Padding(
             padding: EdgeInsets.all(32),
@@ -227,28 +230,44 @@ class _MonthPanel extends StatelessWidget {
           state: value, isCurrent: isCurrent),
       _ => const SizedBox.shrink(),
     };
+    if (!isPast) return inner;
+    return Opacity(opacity: 0.52, child: inner);
   }
 }
 
 // ── Panel content ─────────────────────────────────────────────────────────────
 
-class _PanelContent extends StatelessWidget {
+class _PanelContent extends StatefulWidget {
   final BudgetState state;
   final bool isCurrent;
   const _PanelContent({required this.state, required this.isCurrent});
 
   @override
-  Widget build(BuildContext context) {
-    final cs  = Theme.of(context).colorScheme;
-    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+  State<_PanelContent> createState() => _PanelContentState();
+}
 
-    // Flatten groups → (group?, entry?) pairs for the panel list.
-    // null entry = this slot is a group header row.
+class _PanelContentState extends State<_PanelContent> {
+  /// Only one group is open at a time; null = all collapsed.
+  String? _expandedGroupId;
+
+  void _toggleGroup(String id) => setState(() {
+        _expandedGroupId = _expandedGroupId == id ? null : id;
+      });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs    = Theme.of(context).colorScheme;
+    final fmt   = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final state = widget.state;
+
+    // Flatten groups → (group, entry?) pairs; entries only for the open group.
     final rows = <({BudgetGroupData group, BudgetEntry? entry})>[];
     for (final g in state.groups) {
-      rows.add((group: g, entry: null));
-      for (final e in g.entries) {
-        rows.add((group: g, entry: e));
+      rows.add((group: g, entry: null));           // group header always shown
+      if (_expandedGroupId == g.id) {
+        for (final e in g.entries) {
+          rows.add((group: g, entry: e));
+        }
       }
     }
 
@@ -258,7 +277,7 @@ class _PanelContent extends StatelessWidget {
         SliverToBoxAdapter(
           child: Container(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
-            decoration: isCurrent
+            decoration: widget.isCurrent
                 ? BoxDecoration(
                     border: Border(
                       bottom: BorderSide(
@@ -277,10 +296,10 @@ class _PanelContent extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    isCurrent ? 'Current month' : '',
+                    widget.isCurrent ? 'Current month' : '',
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 11,
-                      color: isCurrent ? cs.primary : cs.onSurfaceVariant,
+                      color: widget.isCurrent ? cs.primary : cs.onSurfaceVariant,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -319,8 +338,13 @@ class _PanelContent extends StatelessWidget {
             itemBuilder: (ctx, i) {
               final row = rows[i];
               return row.entry == null
-                  ? _PanelGroupRow(group: row.group)
-                  : _PanelEntryRow(entry: row.entry!, isCurrent: isCurrent);
+                  ? _PanelGroupRow(
+                      group:      row.group,
+                      isExpanded: _expandedGroupId == row.group.id,
+                      onTap:      () => _toggleGroup(row.group.id),
+                    )
+                  : _PanelEntryRow(
+                      entry: row.entry!, isCurrent: widget.isCurrent);
             },
           ),
         ),
@@ -348,8 +372,8 @@ class _PanelColHeaders extends StatelessWidget {
       child: Row(
         children: [
           const Expanded(child: SizedBox()),
-          _PanelColLabel('BUDGET'),
-          _PanelColLabel('AVAIL'),
+          _PanelColLabel('BUDGET', bg: cs.primary.withValues(alpha: 0.07)),
+          _PanelColLabel('AVAIL',  bg: cs.tertiary.withValues(alpha: 0.07)),
         ],
       ),
     );
@@ -358,11 +382,12 @@ class _PanelColHeaders extends StatelessWidget {
 
 class _PanelColLabel extends StatelessWidget {
   final String text;
-  const _PanelColLabel(this.text);
+  final Color? bg;
+  const _PanelColLabel(this.text, {this.bg});
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
+    final label = SizedBox(
       width: _kPanelColW,
       child: Text(
         text,
@@ -375,6 +400,8 @@ class _PanelColLabel extends StatelessWidget {
         ),
       ),
     );
+    if (bg == null) return label;
+    return ColoredBox(color: bg!, child: label);
   }
 }
 
@@ -382,7 +409,13 @@ class _PanelColLabel extends StatelessWidget {
 
 class _PanelGroupRow extends StatelessWidget {
   final BudgetGroupData group;
-  const _PanelGroupRow({required this.group});
+  final bool isExpanded;
+  final VoidCallback? onTap;
+  const _PanelGroupRow({
+    required this.group,
+    this.isExpanded = false,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -390,29 +423,40 @@ class _PanelGroupRow extends StatelessWidget {
     final totalBudgeted  = group.entries.fold(0.0, (s, e) => s + e.budgeted);
     final totalAvailable = group.entries.fold(0.0, (s, e) => s + e.balance);
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 8, 12, 6),
-      color: cs.surfaceContainerHigh.withValues(alpha: 0.6),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              group.name.toUpperCase(),
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.6,
-                color: cs.onSurfaceVariant,
-              ),
-              overflow: TextOverflow.ellipsis,
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(10, 8, 8, 6),
+        color: cs.surfaceContainerHigh.withValues(alpha: 0.6),
+        child: Row(
+          children: [
+            Icon(
+              isExpanded ? Icons.expand_less : Icons.expand_more,
+              size: 14,
+              color: cs.onSurfaceVariant.withValues(alpha: 0.6),
             ),
-          ),
-          _PanelNum(totalBudgeted, cs.onSurfaceVariant),
-          _PanelNum(
-            totalAvailable,
-            totalAvailable < 0 ? cs.error : cs.onSurfaceVariant,
-          ),
-        ],
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                group.name.toUpperCase(),
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.6,
+                  color: cs.onSurfaceVariant,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            _PanelNum(totalBudgeted, cs.onSurfaceVariant,
+                bg: cs.primary.withValues(alpha: 0.07)),
+            _PanelNum(
+              totalAvailable,
+              totalAvailable < 0 ? cs.error : cs.onSurfaceVariant,
+              bg: cs.tertiary.withValues(alpha: 0.07),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -453,8 +497,10 @@ class _PanelEntryRow extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          _PanelNum(entry.budgeted, cs.onSurface),
-          _PanelNum(entry.balance, availColor, bold: true),
+          _PanelNum(entry.budgeted, cs.onSurface,
+              bg: cs.primary.withValues(alpha: 0.07)),
+          _PanelNum(entry.balance, availColor, bold: true,
+              bg: cs.tertiary.withValues(alpha: 0.07)),
         ],
       ),
     );
@@ -467,7 +513,8 @@ class _PanelNum extends StatelessWidget {
   final double value;
   final Color color;
   final bool bold;
-  const _PanelNum(this.value, this.color, {this.bold = false});
+  final Color? bg;
+  const _PanelNum(this.value, this.color, {this.bold = false, this.bg});
 
   static String _fmt(double v) {
     final abs = v.abs();
@@ -479,7 +526,7 @@ class _PanelNum extends StatelessWidget {
   Widget build(BuildContext context) {
     final label  = (value < 0 ? '-' : '') + _fmt(value);
     final dimmed = value == 0;
-    return SizedBox(
+    final cell = SizedBox(
       width: _kPanelColW,
       child: Text(
         label,
@@ -491,6 +538,8 @@ class _PanelNum extends StatelessWidget {
         ),
       ),
     );
+    if (bg == null) return cell;
+    return ColoredBox(color: bg!, child: cell);
   }
 }
 
@@ -529,11 +578,27 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
   /// Non-null while the user is typing a new category name inline.
   String? _inlineGroupId;
 
+  /// Only one group is expanded at a time; null = all collapsed.
+  String? _expandedGroupId;
+
   /// The category whose detail panel is currently open (accordion: at most one).
   String? _expandedCategoryId;
 
   /// Clears the active inline-add row.
   void _closeInline() => setState(() => _inlineGroupId = null);
+
+  /// Toggles a group open/closed. Opening a group closes any other open group
+  /// and collapses any previously expanded category row.
+  void _toggleGroup(String groupId) => setState(() {
+        if (_expandedGroupId == groupId) {
+          _expandedGroupId = null;
+          _inlineGroupId   = null;
+        } else {
+          _expandedGroupId    = groupId;
+          _expandedCategoryId = null; // close any open category detail
+          if (_inlineGroupId != groupId) _inlineGroupId = null;
+        }
+      });
 
   /// Toggles a category's expansion, closing any previously open one.
   void _toggleCategory(String categoryId) => setState(() {
@@ -590,59 +655,68 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
       );
     }
 
-    // Build one sliver pair (header + reorderable list) per group.
+    // Build one sliver per group header, plus category slivers only for the
+    // expanded group (accordion: at most one group open at a time).
     final groupSlivers = <Widget>[];
     for (int gi = 0; gi < state.groups.length; gi++) {
-      final group = state.groups[gi];
+      final group          = state.groups[gi];
+      final isGroupExpanded = _expandedGroupId == group.id;
 
       groupSlivers.add(SliverToBoxAdapter(
         child: _GroupHeaderRow(
           group:          group,
           isWide:         isWide,
           ref:            ref,
-          onAddInline:    () => setState(() => _inlineGroupId = group.id),
+          isExpanded:     isGroupExpanded,
+          onToggle:       () => _toggleGroup(group.id),
+          onAddInline:    () => setState(() {
+            _expandedGroupId = group.id; // ensure expanded when adding
+            _inlineGroupId   = group.id;
+          }),
           onReorderGroups: () =>
               _showReorderGroupsSheet(context, ref, state.groups),
         ),
       ));
 
-      groupSlivers.add(SliverReorderableList(
-        itemCount:      group.entries.length,
-        proxyDecorator: _proxyDecorator,
-        onReorder: (oldIdx, newIdx) {
-          if (newIdx > oldIdx) newIdx -= 1;
-          final reordered = List.of(group.entries);
-          reordered.insert(newIdx, reordered.removeAt(oldIdx));
-          notifier.reorderCategoriesInGroup(
-            group.id,
-            reordered.map((e) => e.categoryId).toList(),
-          );
-        },
-        itemBuilder: (ctx, idx) {
-          final entry = group.entries[idx];
-          return ReorderableDelayedDragStartListener(
-            key:   ValueKey(entry.categoryId),
-            index: idx,
-            child: _CategoryTableRow(
-              entry:       entry,
-              isWide:      isWide,
-              isExpanded:  _expandedCategoryId == entry.categoryId,
-              month:       state.month,
-              onToggle:    () => _toggleCategory(entry.categoryId),
-              onDetailTap: (e, m) => widget.onCategoryTap(e, m),
-            ),
-          );
-        },
-      ));
-
-      // Inline "add category" row — shown directly below the group's categories.
-      if (_inlineGroupId == group.id) {
-        groupSlivers.add(SliverToBoxAdapter(
-          child: _InlineAddRow(
-            groupId:  group.id,
-            onCancel: _closeInline,
-          ),
+      if (isGroupExpanded) {
+        groupSlivers.add(SliverReorderableList(
+          itemCount:      group.entries.length,
+          proxyDecorator: _proxyDecorator,
+          onReorder: (oldIdx, newIdx) {
+            if (newIdx > oldIdx) newIdx -= 1;
+            final reordered = List.of(group.entries);
+            reordered.insert(newIdx, reordered.removeAt(oldIdx));
+            notifier.reorderCategoriesInGroup(
+              group.id,
+              reordered.map((e) => e.categoryId).toList(),
+            );
+          },
+          itemBuilder: (ctx, idx) {
+            final entry = group.entries[idx];
+            return ReorderableDelayedDragStartListener(
+              key:   ValueKey(entry.categoryId),
+              index: idx,
+              child: _CategoryTableRow(
+                entry:       entry,
+                isWide:      isWide,
+                isExpanded:  _expandedCategoryId == entry.categoryId,
+                month:       state.month,
+                onToggle:    () => _toggleCategory(entry.categoryId),
+                onDetailTap: (e, m) => widget.onCategoryTap(e, m),
+              ),
+            );
+          },
         ));
+
+        // Inline "add category" row — shown directly below the group's categories.
+        if (_inlineGroupId == group.id) {
+          groupSlivers.add(SliverToBoxAdapter(
+            child: _InlineAddRow(
+              groupId:  group.id,
+              onCancel: _closeInline,
+            ),
+          ));
+        }
       }
     }
 
@@ -778,9 +852,9 @@ class _ColumnHeaders extends StatelessWidget {
       child: Row(
         children: [
           const Expanded(child: SizedBox()),
-          _ColLabel('BUDGETED'),
+          _ColLabel('BUDGETED', bg: cs.primary.withValues(alpha: 0.07)),
           _ColLabel('ACTIVITY'),
-          _ColLabel('AVAILABLE'),
+          _ColLabel('AVAILABLE', bg: cs.tertiary.withValues(alpha: 0.07)),
         ],
       ),
     );
@@ -789,11 +863,12 @@ class _ColumnHeaders extends StatelessWidget {
 
 class _ColLabel extends StatelessWidget {
   final String text;
-  const _ColLabel(this.text);
+  final Color? bg;
+  const _ColLabel(this.text, {this.bg});
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
+    final label = SizedBox(
       width: _kColW,
       child: Text(
         text,
@@ -806,6 +881,8 @@ class _ColLabel extends StatelessWidget {
         ),
       ),
     );
+    if (bg == null) return label;
+    return ColoredBox(color: bg!, child: label);
   }
 }
 
@@ -817,6 +894,9 @@ class _GroupHeaderRow extends StatelessWidget {
   final BudgetGroupData group;
   final bool isWide;
   final WidgetRef ref;
+  final bool isExpanded;
+  /// Toggles the group open/closed.
+  final VoidCallback? onToggle;
   /// Opens the inline category-add field below this group.
   final VoidCallback? onAddInline;
   /// Opens the "Reorder Groups" sheet.
@@ -826,6 +906,8 @@ class _GroupHeaderRow extends StatelessWidget {
     required this.group,
     required this.isWide,
     required this.ref,
+    this.isExpanded = false,
+    this.onToggle,
     this.onAddInline,
     this.onReorderGroups,
   });
@@ -837,78 +919,92 @@ class _GroupHeaderRow extends StatelessWidget {
     final groupActivity  = group.entries.fold(0.0, (s, e) => s + e.activity);
     final groupAvailable = group.balance;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerHigh,
-        border: Border(
-          top: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.4)),
+    return InkWell(
+      onTap: onToggle,
+      child: Container(
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHigh,
+          border: Border(
+            top: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.4)),
+          ),
         ),
-      ),
-      padding: const EdgeInsets.fromLTRB(16, 9, 16, 9),
-      child: Row(
-        children: [
-          // Drag handle — tapping opens the "Reorder Groups" sheet.
-          GestureDetector(
-            onTap: onReorderGroups,
-            child: Tooltip(
-              message: 'Reorder groups',
-              child: Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: Icon(
-                  Icons.drag_handle,
-                  size: 18,
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.38),
+        padding: const EdgeInsets.fromLTRB(8, 9, 16, 9),
+        child: Row(
+          children: [
+            // Chevron expand/collapse indicator
+            Padding(
+              padding: const EdgeInsets.only(right: 2),
+              child: Icon(
+                isExpanded ? Icons.expand_less : Icons.expand_more,
+                size: 18,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+              ),
+            ),
+            // Drag handle — tapping opens the "Reorder Groups" sheet.
+            GestureDetector(
+              onTap: onReorderGroups,
+              child: Tooltip(
+                message: 'Reorder groups',
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: Icon(
+                    Icons.drag_handle,
+                    size: 18,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.38),
+                  ),
                 ),
               ),
             ),
-          ),
-          // Group name + [+] button
-          Expanded(
-            child: Row(
-              children: [
-                InkWell(
-                  onTap: () => _showGroupActions(context, ref, group),
-                  borderRadius: BorderRadius.circular(6),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-                    child: Text(
-                      group.name.toUpperCase(),
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: cs.onSurfaceVariant,
-                        letterSpacing: 0.8,
+            // Group name + [+] button
+            Expanded(
+              child: Row(
+                children: [
+                  InkWell(
+                    onTap: () => _showGroupActions(context, ref, group),
+                    borderRadius: BorderRadius.circular(6),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                      child: Text(
+                        group.name.toUpperCase(),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: cs.onSurfaceVariant,
+                          letterSpacing: 0.8,
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 6),
-                InkWell(
-                  onTap: onAddInline,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding: const EdgeInsets.all(3),
-                    child: Icon(Icons.add, size: 13, color: cs.onSurfaceVariant),
+                  const SizedBox(width: 6),
+                  InkWell(
+                    onTap: onAddInline,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.all(3),
+                      child: Icon(Icons.add, size: 13, color: cs.onSurfaceVariant),
+                    ),
                   ),
-                ),
-                if (group.hasOverspend) ...[
-                  const SizedBox(width: 4),
-                  Icon(Icons.warning_amber_rounded, size: 13, color: cs.error),
+                  if (group.hasOverspend) ...[
+                    const SizedBox(width: 4),
+                    Icon(Icons.warning_amber_rounded, size: 13, color: cs.error),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-          // Numeric columns
-          if (isWide) ...[
-            _NumCell(groupBudgeted, cs.onSurfaceVariant, bold: true),
-            _NumCell(groupActivity, cs.onSurfaceVariant, bold: true),
+            // Numeric columns
+            if (isWide) ...[
+              _NumCell(groupBudgeted, cs.onSurfaceVariant, bold: true,
+                  bg: cs.primary.withValues(alpha: 0.07)),
+              _NumCell(groupActivity, cs.onSurfaceVariant, bold: true),
+            ],
+            _NumCell(
+              groupAvailable,
+              groupAvailable < 0 ? cs.error : cs.onSurfaceVariant,
+              bold: true,
+              bg: cs.tertiary.withValues(alpha: 0.07),
+            ),
           ],
-          _NumCell(
-            groupAvailable,
-            groupAvailable < 0 ? cs.error : cs.onSurfaceVariant,
-            bold: true,
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -989,10 +1085,14 @@ class _CategoryTableRow extends ConsumerWidget {
                 ),
                 if (isWide) ...[
                   // Tapping the budgeted cell edits it inline.
-                  _InlineBudgetAmount(entry: entry),
+                  ColoredBox(
+                    color: cs.primary.withValues(alpha: 0.07),
+                    child: _InlineBudgetAmount(entry: entry),
+                  ),
                   _NumCell(entry.activity, cs.onSurfaceVariant),
                 ],
-                _NumCell(entry.balance, availColor, bold: true),
+                _NumCell(entry.balance, availColor, bold: true,
+                    bg: cs.tertiary.withValues(alpha: 0.07)),
                 const SizedBox(width: 4),
                 Icon(
                   isExpanded ? Icons.expand_less : Icons.expand_more,
@@ -1757,8 +1857,9 @@ class _NumCell extends StatelessWidget {
   final double value;
   final Color color;
   final bool bold;
+  final Color? bg;
 
-  const _NumCell(this.value, this.color, {this.bold = false});
+  const _NumCell(this.value, this.color, {this.bold = false, this.bg});
 
   static String _fmt(double v) {
     final abs = v.abs();
@@ -1772,7 +1873,7 @@ class _NumCell extends StatelessWidget {
     final dimmed   = value == 0;
     final fgColor  = dimmed ? color.withValues(alpha: 0.35) : color;
 
-    return SizedBox(
+    final cell = SizedBox(
       width: _kColW,
       child: Text(
         label,
@@ -1784,6 +1885,8 @@ class _NumCell extends StatelessWidget {
         ),
       ),
     );
+    if (bg == null) return cell;
+    return ColoredBox(color: bg!, child: cell);
   }
 }
 

@@ -5,10 +5,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../shared/models/account.dart';
 import '../../shared/models/category.dart';
+import '../../shared/models/scheduled_transaction.dart';
 import '../../shared/models/transaction.dart';
 import '../../shared/providers/categories_provider.dart';
 import '../../shared/providers/payees_provider.dart';
 import '../accounts/accounts_provider.dart';
+import '../cashflow/cashflow_provider.dart';
 import 'transactions_provider.dart';
 import '../../core/sms/sms_parser.dart';
 import '../../core/sms/sms_service.dart';
@@ -553,6 +555,8 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
   DateTime _date = DateTime.now();
   bool _isIncome = false;
   bool _incomeNextMonth = false;
+  bool _makeRecurring = false;
+  ScheduledFrequency _recurFrequency = ScheduledFrequency.monthly;
   bool _showSuggestions = false;
   bool _showCategorySuggestions = false;
   bool _saving = false;
@@ -691,6 +695,22 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
           categoryId: _selectedCategoryId,
           memo:       _memoCtrl.text.trim(),
         );
+        // If "Make recurring" is on, also create a scheduled transaction for
+        // future occurrences. The first occurrence starts after saveDate.
+        if (_makeRecurring) {
+          final nextDate = _recurFrequency.advance(saveDate) ?? saveDate;
+          await ref.read(cashflowProvider.notifier).addScheduled(
+            accountId:  _selectedAccount!.id,
+            amount:     signed,
+            frequency:  _recurFrequency,
+            nextDate:   nextDate,
+            payeeName:  _payeeCtrl.text.trim(),
+            categoryId: _selectedCategoryId,
+            memo:       _memoCtrl.text.trim().isEmpty
+                ? null
+                : _memoCtrl.text.trim(),
+          );
+        }
       }
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -1101,6 +1121,83 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                     onTap:   () => _pickAccount(context),
                   ),
                   const SizedBox(height: 12),
+
+                  const SizedBox(height: 12),
+
+                  // Make recurring — only for new transactions (not edits/confirms)
+                  if (widget.prefill == null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: cs.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(12),
+                        border: _makeRecurring
+                            ? Border.all(
+                                color: cs.primary.withValues(alpha: 0.35))
+                            : null,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.repeat,
+                              size: 16,
+                              color: _makeRecurring
+                                  ? cs.primary
+                                  : cs.onSurfaceVariant),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Make recurring',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 13,
+                                fontWeight: _makeRecurring
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
+                                color: _makeRecurring
+                                    ? cs.onSurface
+                                    : cs.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                          Switch.adaptive(
+                            value: _makeRecurring,
+                            onChanged: (v) =>
+                                setState(() => _makeRecurring = v),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_makeRecurring) ...[
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<ScheduledFrequency>(
+                        initialValue: _recurFrequency,
+                        decoration: const InputDecoration(
+                          labelText: 'Repeat',
+                          prefixIcon:
+                              Icon(Icons.schedule_outlined, size: 18),
+                        ),
+                        items: const [
+                          ScheduledFrequency.weekly,
+                          ScheduledFrequency.biweekly,
+                          ScheduledFrequency.monthly,
+                          ScheduledFrequency.yearly,
+                        ]
+                            .map((f) => DropdownMenuItem(
+                                  value: f,
+                                  child: Text(f.label,
+                                      style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 14)),
+                                ))
+                            .toList(),
+                        onChanged: (v) {
+                          if (v != null) {
+                            setState(() => _recurFrequency = v);
+                          }
+                        },
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                  ],
 
                   // Memo
                   TextField(
