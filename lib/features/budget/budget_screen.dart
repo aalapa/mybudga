@@ -498,14 +498,24 @@ class _PanelEntryRow extends StatelessWidget {
               child: Icon(Icons.credit_card, size: 11, color: cs.primary),
             ),
           Expanded(
-            child: Text(
-              entry.categoryName,
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: cs.onSurface,
-              ),
-              overflow: TextOverflow.ellipsis,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  entry.categoryName,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: cs.onSurface,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                _BatteryBar(
+                  budgeted: entry.budgeted,
+                  spent:    entry.spent,
+                ),
+              ],
             ),
           ),
           _PanelNum(entry.budgeted, cs.onSurface,
@@ -950,6 +960,121 @@ class _TbbLine extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
+// Battery-style budget consumption indicator
+// ---------------------------------------------------------------------------
+
+/// Thin horizontal battery bar showing how much of the budget has been spent.
+///
+/// Colour bands:
+///   < 80 %   → green
+///   80–100 % → amber
+///   > 100 %  → red (overspent)
+///
+/// Hidden when [budgeted] ≤ 0 (no budget set for this category).
+class _BatteryBar extends StatelessWidget {
+  final double budgeted;
+  final double spent; // entry.spent — always ≥ 0
+
+  const _BatteryBar({required this.budgeted, required this.spent});
+
+  @override
+  Widget build(BuildContext context) {
+    if (budgeted <= 0) return const SizedBox.shrink();
+
+    final cs  = Theme.of(context).colorScheme;
+    final pct = spent / budgeted; // may exceed 1.0
+
+    final Color fill;
+    if (pct > 1.0) {
+      fill = cs.error;
+    } else if (pct >= 0.8) {
+      fill = const Color(0xFFF57F17); // amber 800
+    } else {
+      fill = const Color(0xFF2E7D32); // green 800
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 5, right: 2),
+      child: SizedBox(
+        height: 5,
+        child: CustomPaint(
+          painter: _BatteryPainter(
+            fillPct:   pct.clamp(0.0, 1.0),
+            fillColor: fill,
+          ),
+          size: Size.infinite,
+        ),
+      ),
+    );
+  }
+}
+
+class _BatteryPainter extends CustomPainter {
+  final double fillPct;   // 0.0 – 1.0
+  final Color  fillColor;
+
+  const _BatteryPainter({required this.fillPct, required this.fillColor});
+
+  static const _termW = 3.0;
+  static const _termH = 3.0;
+  static const _gap   = 1.0;
+  static const _r     = 2.0;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bodyW = size.width - _termW - _gap;
+    final bodyH = size.height;
+
+    // Track — empty battery body
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          Rect.fromLTWH(0, 0, bodyW, bodyH), const Radius.circular(_r)),
+      Paint()
+        ..color = fillColor.withValues(alpha: 0.15)
+        ..style = PaintingStyle.fill,
+    );
+
+    // Fill
+    if (fillPct > 0) {
+      final fw = ((bodyW - 2) * fillPct).clamp(0.0, bodyW - 2);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromLTWH(1, 1, fw, bodyH - 2),
+            const Radius.circular(_r - 1)),
+        Paint()
+          ..color = fillColor
+          ..style = PaintingStyle.fill,
+      );
+    }
+
+    // Outline
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          Rect.fromLTWH(0, 0, bodyW, bodyH), const Radius.circular(_r)),
+      Paint()
+        ..color = fillColor.withValues(alpha: 0.45)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8,
+    );
+
+    // Terminal bump (+ end)
+    final tY = (bodyH - _termH) / 2;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          Rect.fromLTWH(bodyW + _gap, tY, _termW, _termH),
+          const Radius.circular(1)),
+      Paint()
+        ..color = fillColor.withValues(alpha: 0.5)
+        ..style = PaintingStyle.fill,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_BatteryPainter old) =>
+      old.fillPct != fillPct || old.fillColor != fillColor;
+}
+
+// ---------------------------------------------------------------------------
 // Column headers (wide screens only)
 // ---------------------------------------------------------------------------
 
@@ -1191,13 +1316,23 @@ class _CategoryTableRow extends ConsumerWidget {
                     child: Icon(Icons.flag_outlined, size: 12, color: cs.tertiary),
                   ),
                 Expanded(
-                  child: Text(
-                    entry.categoryName,
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: cs.onSurface,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        entry.categoryName,
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: cs.onSurface,
+                        ),
+                      ),
+                      _BatteryBar(
+                        budgeted: entry.budgeted,
+                        spent:    entry.spent,
+                      ),
+                    ],
                   ),
                 ),
                 if (isWide) ...[
