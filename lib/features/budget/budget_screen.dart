@@ -273,10 +273,10 @@ class _PanelContentState extends State<_PanelContent> {
 
     return CustomScrollView(
       slivers: [
-        // ── Panel sub-header: TBB ─────────────────────────────────────
+        // ── Panel sub-header: TBB breakdown ───────────────────────────
         SliverToBoxAdapter(
           child: Container(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
             decoration: widget.isCurrent
                 ? BoxDecoration(
                     border: Border(
@@ -292,35 +292,46 @@ class _PanelContentState extends State<_PanelContent> {
                           color: cs.outlineVariant.withValues(alpha: 0.3)),
                     ),
                   ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  child: Text(
-                    widget.isCurrent ? 'Current month' : '',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 11,
-                      color: widget.isCurrent ? cs.primary : cs.onSurfaceVariant,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                // Income line
+                _TbbLine(
+                  sign:       '+',
+                  value:      state.income,
+                  label:      'Income for ${DateFormat('MMM').format(state.month)}',
+                  valueColor: cs.tertiary,
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: state.tbb < 0
-                        ? cs.errorContainer
-                        : cs.tertiaryContainer,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '${state.tbb < 0 ? '-' : '+'}${fmt.format(state.tbb.abs())} TBB',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
+                const SizedBox(height: 2),
+                // Budgeted line
+                _TbbLine(
+                  sign:       '−',
+                  value:      state.totalBudgeted,
+                  label:      'Budgeted in ${DateFormat('MMM').format(state.month)}',
+                  valueColor: cs.onSurfaceVariant,
+                ),
+                const SizedBox(height: 6),
+                // TBB result pill
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
                       color: state.tbb < 0
-                          ? cs.onErrorContainer
-                          : cs.onTertiaryContainer,
+                          ? cs.errorContainer
+                          : cs.tertiaryContainer,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '= ${state.tbb < 0 ? '-' : '+'}${fmt.format(state.tbb.abs())} TBB',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: state.tbb < 0
+                            ? cs.onErrorContainer
+                            : cs.onTertiaryContainer,
+                      ),
                     ),
                   ),
                 ),
@@ -614,8 +625,10 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
 
     final header = SliverToBoxAdapter(
       child: _BudgetHeader(
-        month:  state.month,
-        tbb:    state.tbb,
+        month:         state.month,
+        tbb:           state.tbb,
+        income:        state.income,
+        totalBudgeted: state.totalBudgeted,
         onPrev: () => notifier.goToMonth(
             DateTime(state.month.year, state.month.month - 1)),
         onNext: () => notifier.goToMonth(
@@ -740,6 +753,8 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
 class _BudgetHeader extends StatelessWidget {
   final DateTime month;
   final double tbb;
+  final double income;
+  final double totalBudgeted;
   final VoidCallback onPrev;
   final VoidCallback onNext;
   final WidgetRef ref;
@@ -747,6 +762,8 @@ class _BudgetHeader extends StatelessWidget {
   const _BudgetHeader({
     required this.month,
     required this.tbb,
+    required this.income,
+    required this.totalBudgeted,
     required this.onPrev,
     required this.onNext,
     required this.ref,
@@ -804,30 +821,130 @@ class _BudgetHeader extends StatelessWidget {
                 style: GoogleFonts.plusJakartaSans(
                     fontSize: 12, fontWeight: FontWeight.w600, color: cs.primary)),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
+
+          // ── TBB breakdown card ─────────────────────────────────────────────
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
             decoration: BoxDecoration(
-              color:        tbbColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(32),
-              border:       Border.all(color: tbbColor.withValues(alpha: 0.3)),
+              color:        tbbColor.withValues(alpha: 0.07),
+              borderRadius: BorderRadius.circular(16),
+              border:       Border.all(color: tbbColor.withValues(alpha: 0.22)),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  isNeg ? Icons.warning_amber_rounded : Icons.savings_outlined,
-                  size: 16, color: tbbColor,
+                // ── Breakdown lines ──────────────────────────────────────────
+                _TbbLine(
+                  sign:  '+',
+                  value: income,
+                  label: 'Income for ${DateFormat('MMM').format(month)}',
+                  valueColor: cs.tertiary,
                 ),
-                const SizedBox(width: 6),
-                Text('${fmt.format(tbb)} to assign',
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 13, fontWeight: FontWeight.w700, color: tbbColor)),
+                const SizedBox(height: 3),
+                _TbbLine(
+                  sign:  '−',
+                  value: totalBudgeted,
+                  label: 'Budgeted in ${DateFormat('MMM').format(month)}',
+                  valueColor: cs.onSurfaceVariant,
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Divider(
+                    height: 1,
+                    color: tbbColor.withValues(alpha: 0.25),
+                  ),
+                ),
+                // ── TBB total line ───────────────────────────────────────────
+                Row(
+                  children: [
+                    Text('=  ',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: tbbColor.withValues(alpha: 0.6))),
+                    Icon(
+                      isNeg
+                          ? Icons.warning_amber_rounded
+                          : Icons.savings_outlined,
+                      size: 14, color: tbbColor,
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      fmt.format(tbb),
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: tbbColor),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      isNeg ? 'overbudgeted' : 'ready to assign',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: tbbColor.withValues(alpha: 0.7)),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── Single breakdown line: sign · formatted amount · label ────────────────────
+
+class _TbbLine extends StatelessWidget {
+  final String sign;
+  final double value;
+  final String label;
+  final Color  valueColor;
+
+  const _TbbLine({
+    required this.sign,
+    required this.value,
+    required this.label,
+    required this.valueColor,
+  });
+
+  static final _fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        SizedBox(
+          width: 14,
+          child: Text(sign,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: valueColor.withValues(alpha: 0.7))),
+        ),
+        Text(
+          _fmt.format(value),
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: valueColor),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            label,
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                color: cs.onSurfaceVariant),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
   }
 }

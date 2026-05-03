@@ -14,18 +14,33 @@ class BudgetState {
   final List<BudgetGroupData> groups;
   final double tbb;
 
+  /// Inflows that flow into TBB: transactions with no category (positive amount).
+  final double income;
+
+  /// Total amount assigned to categories this month.
+  final double totalBudgeted;
+
   const BudgetState({
     required this.month,
     required this.groups,
     required this.tbb,
+    this.income       = 0,
+    this.totalBudgeted = 0,
   });
 
-  BudgetState copyWith({DateTime? month, List<BudgetGroupData>? groups, double? tbb}) =>
-      BudgetState(
-        month:  month  ?? this.month,
-        groups: groups ?? this.groups,
-        tbb:    tbb    ?? this.tbb,
-      );
+  BudgetState copyWith({
+    DateTime?           month,
+    List<BudgetGroupData>? groups,
+    double?             tbb,
+    double?             income,
+    double?             totalBudgeted,
+  }) => BudgetState(
+    month:         month         ?? this.month,
+    groups:        groups        ?? this.groups,
+    tbb:           tbb           ?? this.tbb,
+    income:        income        ?? this.income,
+    totalBudgeted: totalBudgeted ?? this.totalBudgeted,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -368,7 +383,20 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       }
     }
 
-    // TBB from view
+    // ── Income: uncategorised positive transactions flow straight into TBB ──────
+    // (results[2] is already the full confirmed-tx set for the month)
+    double income = 0;
+    for (final tx in results[2] as List) {
+      final catId = tx['category_id'] as String?;
+      final amt   = (tx['amount']      as num).toDouble();
+      if (catId == null && amt > 0) income += amt;
+    }
+
+    // ── Total assigned this month (sum of all budgeted entries) ──────────────
+    final totalBudgeted = groups.fold(0.0,
+        (s, g) => s + g.entries.fold(0.0, (s2, e) => s2 + e.budgeted));
+
+    // ── TBB from view ────────────────────────────────────────────────────────
     double tbb = 0;
     try {
       final tbbRes = await client
@@ -382,7 +410,13 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
           : 0.0;
     } catch (_) {}
 
-    return BudgetState(month: month, groups: groups, tbb: tbb);
+    return BudgetState(
+      month:         month,
+      groups:        groups,
+      tbb:           tbb,
+      income:        income,
+      totalBudgeted: totalBudgeted,
+    );
   }
 
   // ignore: library_private_types_in_public_api
