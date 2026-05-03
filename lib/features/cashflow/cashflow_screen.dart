@@ -777,16 +777,16 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
     final cs = Theme.of(context).colorScheme;
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Text('Delete scheduled transaction?'),
         content: const Text('This will remove all future occurrences.'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(dialogCtx, false),
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogCtx, true),
             style: TextButton.styleFrom(foregroundColor: cs.error),
             child: const Text('Delete'),
           ),

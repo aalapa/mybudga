@@ -442,31 +442,26 @@ class _TransactionTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(tx.isTransfer ? 'Transfer' : (tx.displayPayee.isNotEmpty ? tx.displayPayee : 'Unknown'),
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-                  Row(
-                    children: [
-                      if (tx.categoryName != null) ...[
-                        Text(tx.categoryName!,
-                            style: GoogleFonts.plusJakartaSans(
-                                fontSize: 12, color: cs.onSurfaceVariant)),
-                        const SizedBox(width: 6),
-                      ],
-                      if (tx.account != null)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: cs.surfaceContainerHighest,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(tx.account!.displayName,
-                              style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 10, fontWeight: FontWeight.w600,
-                                  color: cs.onSurfaceVariant)),
-                        ),
-                    ],
+                  Text(
+                    tx.isTransfer ? 'Transfer' : (tx.displayPayee.isNotEmpty ? tx.displayPayee : 'Unknown'),
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface),
                   ),
+                  if (tx.categoryName != null)
+                    Text(
+                      tx.categoryName!,
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12, color: cs.onSurfaceVariant),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  if (tx.account != null)
+                    Text(
+                      tx.account!.displayName,
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11, fontWeight: FontWeight.w600,
+                          color: cs.onSurfaceVariant),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                 ],
               ),
             ),
@@ -1251,53 +1246,165 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
   }
 
   void _pickAccount(BuildContext context) {
-    final cs       = Theme.of(context).colorScheme;
     final accounts = ref.read(accountsProvider).valueOrNull ?? [];
     final budget   = accounts.where((a) => !a.isTracking).toList();
 
     showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
-      builder: (_) => Container(
-        padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+      context:            context,
+      useSafeArea:        true,
+      isScrollControlled: true,
+      builder: (_) => _AccountPickerSheet(
+        accounts:        budget,
+        selectedAccount: _selectedAccount,
+        onSelect: (a) {
+          setState(() => _selectedAccount = a);
+          Navigator.pop(context);
+        },
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Account picker sheet (with live search)
+// ---------------------------------------------------------------------------
+
+class _AccountPickerSheet extends StatefulWidget {
+  final List<Account> accounts;
+  final Account? selectedAccount;
+  final ValueChanged<Account> onSelect;
+
+  const _AccountPickerSheet({
+    required this.accounts,
+    required this.selectedAccount,
+    required this.onSelect,
+  });
+
+  @override
+  State<_AccountPickerSheet> createState() => _AccountPickerSheetState();
+}
+
+class _AccountPickerSheetState extends State<_AccountPickerSheet> {
+  final _searchCtrl = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<Account> get _filtered {
+    if (_query.isEmpty) return widget.accounts;
+    final q = _query.toLowerCase();
+    return widget.accounts
+        .where((a) => a.displayName.toLowerCase().contains(q))
+        .toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs       = Theme.of(context).colorScheme;
+    final filtered = _filtered;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.5,
+      minChildSize:     0.3,
+      maxChildSize:     0.85,
+      expand:           false,
+      builder: (ctx, scrollController) => Container(
         color: cs.surfaceContainerHigh,
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Account',
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 18, fontWeight: FontWeight.w800, color: cs.onSurface)),
-            const SizedBox(height: 16),
-            ...budget.map((a) => InkWell(
-              onTap: () {
-                setState(() => _selectedAccount = a);
-                Navigator.pop(context);
-              },
-              borderRadius: BorderRadius.circular(12),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
-                child: Row(
-                  children: [
-                    Icon(a.type.icon, size: 18,
-                        color: a == _selectedAccount
-                            ? cs.primary
-                            : cs.onSurfaceVariant),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(a.displayName,
-                          style: GoogleFonts.plusJakartaSans(
-                              fontSize: 14, fontWeight: FontWeight.w600,
-                              color: a == _selectedAccount
-                                  ? cs.primary
-                                  : cs.onSurface)),
-                    ),
-                    if (a == _selectedAccount)
-                      Icon(Icons.check_circle, size: 18, color: cs.primary),
-                  ],
+            // ── Drag handle ────────────────────────────────────────────
+            Center(
+              child: Container(
+                margin: const EdgeInsets.only(top: 10, bottom: 4),
+                width: 36, height: 4,
+                decoration: BoxDecoration(
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-            )),
+            ),
+            // ── Title ──────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 10, 24, 8),
+              child: Text('Account',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 18, fontWeight: FontWeight.w800,
+                      color: cs.onSurface)),
+            ),
+            // ── Search field ───────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: TextField(
+                controller: _searchCtrl,
+                onChanged: (v) => setState(() => _query = v),
+                decoration: InputDecoration(
+                  hintText: 'Search accounts…',
+                  prefixIcon: const Icon(Icons.search, size: 18),
+                  suffixIcon: _query.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 16),
+                          onPressed: () => setState(() {
+                            _query = '';
+                            _searchCtrl.clear();
+                          }),
+                        )
+                      : null,
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            // ── Filtered account list ──────────────────────────────────
+            Expanded(
+              child: filtered.isEmpty
+                  ? Center(
+                      child: Text('No accounts match "$_query"',
+                          style: GoogleFonts.plusJakartaSans(
+                              color: cs.onSurfaceVariant)),
+                    )
+                  : ListView.builder(
+                      controller: scrollController,
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+                      itemCount: filtered.length,
+                      itemBuilder: (_, i) {
+                        final a          = filtered[i];
+                        final isSelected = a == widget.selectedAccount;
+                        return InkWell(
+                          onTap: () => widget.onSelect(a),
+                          borderRadius: BorderRadius.circular(12),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                vertical: 13, horizontal: 4),
+                            child: Row(
+                              children: [
+                                Icon(a.type.icon, size: 18,
+                                    color: isSelected
+                                        ? cs.primary
+                                        : cs.onSurfaceVariant),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(a.displayName,
+                                      style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          color: isSelected
+                                              ? cs.primary
+                                              : cs.onSurface)),
+                                ),
+                                if (isSelected)
+                                  Icon(Icons.check_circle,
+                                      size: 18, color: cs.primary),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
           ],
         ),
       ),

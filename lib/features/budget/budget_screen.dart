@@ -62,13 +62,11 @@ class BudgetScreen extends ConsumerWidget {
               ),
       ),
       // FAB only in single-column mode — 3-col uses group [+] buttons
-      floatingActionButton: isThreeCol ? null : FloatingActionButton.extended(
+      floatingActionButton: isThreeCol ? null : FloatingActionButton(
         onPressed: () => _showAddCategorySheet(context, ref),
-        icon:  const Icon(Icons.add),
-        label: Text('Add Category',
-            style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
         backgroundColor: cs.primary,
         foregroundColor: cs.onPrimary,
+        child: const Icon(Icons.add),
       ),
     );
   }
@@ -929,9 +927,20 @@ class _TbbLine extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Row(
       children: [
+        Expanded(
+          child: Text(
+            label,
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                color: cs.onSurfaceVariant),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 8),
         SizedBox(
           width: 14,
           child: Text(sign,
+              textAlign: TextAlign.right,
               style: GoogleFonts.plusJakartaSans(
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
@@ -943,16 +952,6 @@ class _TbbLine extends StatelessWidget {
               fontSize: 12,
               fontWeight: FontWeight.w600,
               color: valueColor),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            label,
-            style: GoogleFonts.plusJakartaSans(
-                fontSize: 11,
-                color: cs.onSurfaceVariant),
-            overflow: TextOverflow.ellipsis,
-          ),
         ),
       ],
     );
