@@ -3,6 +3,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/supabase/supabase_provider.dart';
 import '../../shared/models/scheduled_transaction.dart';
 import '../../shared/providers/household_provider.dart';
+import '../insights/notification_service.dart';
+import 'bill_reminders_provider.dart';
 
 // ---------------------------------------------------------------------------
 // State
@@ -49,14 +51,18 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
       ref.onDispose(() => client.removeChannel(ch));
     }
 
-    return _load(client, householdId);
+    final state      = await _load(client, householdId);
+    final enabledIds = ref.read(billRemindersProvider);
+    await NotificationService.instance
+        .rescheduleAllBillReminders(state.scheduled, enabledIds);
+    return state;
   }
 
   // ---------------------------------------------------------------------------
   // CRUD
   // ---------------------------------------------------------------------------
 
-  Future<void> addScheduled({
+  Future<String> addScheduled({
     required String accountId,
     required double amount,
     required ScheduledFrequency frequency,
@@ -80,7 +86,7 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
       );
     }
 
-    await client.from('scheduled_transactions').insert({
+    final row = await client.from('scheduled_transactions').insert({
       'household_id': householdId,
       'account_id':   accountId,
       'payee_id':     payeeId,
@@ -92,7 +98,39 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
       'end_date':     endDate != null ? _toDateString(endDate) : null,
       'auto_approve': autoApprove,
       'is_active':    true,
-    });
+    }).select('id').single();
+
+    ref.invalidateSelf();
+    return row['id'] as String;
+  }
+
+  Future<void> markAsPaid(String id) async {
+    final client = ref.read(supabaseProvider);
+    final st     = state.valueOrNull?.scheduled
+        .where((s) => s.id == id)
+        .firstOrNull;
+    if (st == null) return;
+
+    final next = st.frequency.advance(st.nextDate);
+    if (next == null) {
+      await client.from('scheduled_transactions')
+          .update({'is_active': false}).eq('id', id);
+    } else {
+      await client.from('scheduled_transactions')
+          .update({'next_date': _toDateString(next)}).eq('id', id);
+    }
+
+    // Cancel the old reminder; if still active reschedule for next date.
+    await NotificationService.instance.cancelBillReminder(id);
+    final enabledIds = ref.read(billRemindersProvider);
+    if (next != null && enabledIds.contains(id)) {
+      await NotificationService.instance.scheduleBillReminder(
+        scheduledTxId: id,
+        payee:         st.payeeName ?? st.memo ?? 'Bill',
+        amount:        st.amount,
+        dueDate:       next,
+      );
+    }
 
     ref.invalidateSelf();
   }
@@ -145,6 +183,8 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
   Future<void> deleteScheduled(String id) async {
     final client = ref.read(supabaseProvider);
     await client.from('scheduled_transactions').delete().eq('id', id);
+    await NotificationService.instance.cancelBillReminder(id);
+    ref.read(billRemindersProvider.notifier).setEnabled(id, enabled: false);
     ref.invalidateSelf();
   }
 

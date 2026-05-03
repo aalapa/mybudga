@@ -7,6 +7,8 @@ import '../../shared/models/scheduled_transaction.dart';
 import '../../shared/models/account.dart';
 import '../../shared/providers/categories_provider.dart';
 import '../accounts/accounts_provider.dart';
+import '../insights/notification_service.dart';
+import 'bill_reminders_provider.dart';
 import 'cashflow_provider.dart';
 
 // ---------------------------------------------------------------------------
@@ -374,6 +376,7 @@ class _CashflowTile extends StatelessWidget {
 
     return InkWell(
       onTap: () => _showAddScheduledSheet(context, ref, prefill: entry.scheduledTx),
+      onLongPress: () => _showTileActions(context, ref, entry),
       borderRadius: BorderRadius.circular(12),
       child: Container(
         margin: const EdgeInsets.only(bottom: 2),
@@ -699,6 +702,63 @@ class _ProjectedEntry {
 }
 
 // ---------------------------------------------------------------------------
+// Cashflow tile long-press actions
+// ---------------------------------------------------------------------------
+
+void _showTileActions(
+    BuildContext context, WidgetRef ref, _ProjectedEntry entry) {
+  final cs = Theme.of(context).colorScheme;
+  final st = entry.scheduledTx;
+
+  showModalBottomSheet<void>(
+    context:     context,
+    useSafeArea: true,
+    builder: (ctx) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 12),
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          ListTile(
+            leading: Icon(Icons.check_circle_outline, color: cs.tertiary),
+            title: Text('Mark as paid',
+                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
+            subtitle: Text(
+              'Advances due date to the next occurrence',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12, color: cs.onSurfaceVariant),
+            ),
+            onTap: () async {
+              Navigator.pop(ctx);
+              await ref.read(cashflowProvider.notifier).markAsPaid(st.id);
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.edit_outlined, color: cs.onSurfaceVariant),
+            title: Text('Edit',
+                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
+            onTap: () {
+              Navigator.pop(ctx);
+              _showAddScheduledSheet(context, ref, prefill: st);
+            },
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Add scheduled transaction sheet
 // ---------------------------------------------------------------------------
 
@@ -737,6 +797,7 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
   String? _categoryName;
   ScheduledFrequency _frequency = ScheduledFrequency.monthly;
   DateTime _nextDate  = DateTime.now();
+  bool _remindMe      = false;
   bool _saving        = false;
 
   bool get _isEditing => widget.prefill != null;
@@ -755,6 +816,7 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
       _frequency       = p.frequency;
       _nextDate        = p.nextDate;
       _isIncome        = p.isIncome;
+      _remindMe        = widget.widgetRef.read(billRemindersProvider).contains(p.id);
       // Detect if existing income is set to next month
       final now = DateTime.now();
       if (p.isIncome &&
@@ -1035,6 +1097,43 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
                         controller: _memoCtrl,
                         decoration: const InputDecoration(labelText: 'Memo (optional)'),
                       ),
+                      const SizedBox(height: 14),
+
+                      // Remind me toggle
+                      Container(
+                        decoration: BoxDecoration(
+                          color: _remindMe
+                              ? cs.primaryContainer.withValues(alpha: 0.4)
+                              : cs.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
+                          border: _remindMe
+                              ? Border.all(
+                                  color: cs.primary.withValues(alpha: 0.35))
+                              : null,
+                        ),
+                        child: SwitchListTile.adaptive(
+                          contentPadding: const EdgeInsets.fromLTRB(14, 4, 8, 4),
+                          secondary: Icon(
+                            Icons.notifications_outlined,
+                            size: 18,
+                            color: _remindMe ? cs.primary : cs.onSurfaceVariant,
+                          ),
+                          title: Text(
+                            'Remind me 1 day before',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13,
+                              fontWeight: _remindMe
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
+                              color: _remindMe
+                                  ? cs.onSurface
+                                  : cs.onSurfaceVariant,
+                            ),
+                          ),
+                          value: _remindMe,
+                          onChanged: (v) => setState(() => _remindMe = v),
+                        ),
+                      ),
                       const SizedBox(height: 28),
 
                       // Save button
@@ -1157,9 +1256,11 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
       final amount = _isIncome ? raw.abs() : -raw.abs();
       final memo   = _memoCtrl.text.trim().isEmpty ? null : _memoCtrl.text.trim();
 
+      String savedId;
       if (_isEditing) {
+        savedId = widget.prefill!.id;
         await ref.read(cashflowProvider.notifier).updateScheduled(
-          widget.prefill!.id,
+          savedId,
           accountId:  _accountId!,
           amount:     amount,
           frequency:  _frequency,
@@ -1169,7 +1270,7 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
           memo:       memo,
         );
       } else {
-        await ref.read(cashflowProvider.notifier).addScheduled(
+        savedId = await ref.read(cashflowProvider.notifier).addScheduled(
           accountId:  _accountId!,
           amount:     amount,
           frequency:  _frequency,
@@ -1178,6 +1279,22 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
           categoryId: _categoryId,
           memo:       memo,
         );
+      }
+
+      // Persist reminder preference and schedule/cancel the notification.
+      await ref.read(billRemindersProvider.notifier)
+          .setEnabled(savedId, enabled: _remindMe);
+      if (_remindMe) {
+        await NotificationService.instance.scheduleBillReminder(
+          scheduledTxId: savedId,
+          payee:         _payeeCtrl.text.trim().isNotEmpty
+              ? _payeeCtrl.text.trim()
+              : (memo ?? 'Bill'),
+          amount:        amount,
+          dueDate:       _nextDate,
+        );
+      } else {
+        await NotificationService.instance.cancelBillReminder(savedId);
       }
 
       if (mounted) Navigator.pop(context);

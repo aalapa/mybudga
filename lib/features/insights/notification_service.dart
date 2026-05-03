@@ -2,6 +2,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:intl/intl.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tzdata;
+import '../../shared/models/scheduled_transaction.dart';
 import 'payee_pattern.dart';
 
 // ---------------------------------------------------------------------------
@@ -9,8 +10,11 @@ import 'payee_pattern.dart';
 // ---------------------------------------------------------------------------
 
 // IDs 2000–2099 reserved for payee-pattern reminders
-const _kBaseId = 2000;
-const _kMaxSlots = 20; // max concurrent pattern notifications
+const _kBaseId    = 2000;
+const _kMaxSlots  = 20;
+// IDs 3000–3099 reserved for bill-due reminders (max 100 scheduled transactions)
+const _kBillBase  = 3000;
+const _kBillSlots = 100;
 
 // ---------------------------------------------------------------------------
 // NotificationService — singleton
@@ -105,6 +109,80 @@ class NotificationService {
       } catch (_) {
         // Scheduling can fail on some emulators/OS versions — silently skip
       }
+    }
+  }
+
+  // ── Bill-due reminders ───────────────────────────────────────────────────
+
+  static int _billNotifId(String scheduledTxId) =>
+      _kBillBase + (scheduledTxId.hashCode.abs() % _kBillSlots);
+
+  Future<void> scheduleBillReminder({
+    required String scheduledTxId,
+    required String payee,
+    required double amount,
+    required DateTime dueDate,
+  }) async {
+    if (!_initialized) return;
+
+    final id  = _billNotifId(scheduledTxId);
+    await _plugin.cancel(id);
+
+    // Fire at 9 am the day before the due date.
+    final loc         = tz.local;
+    final reminderDay = dueDate.subtract(const Duration(days: 1));
+    final scheduled   = tz.TZDateTime(
+        loc, reminderDay.year, reminderDay.month, reminderDay.day, 9, 0);
+    if (!scheduled.isAfter(tz.TZDateTime.now(loc))) return;
+
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    try {
+      await _plugin.zonedSchedule(
+        id,
+        'Bill due tomorrow',
+        '$payee · ${fmt.format(amount.abs())} due tomorrow',
+        scheduled,
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            'bill_reminders',
+            'Bill Reminders',
+            channelDescription: 'Reminders for upcoming bill payments',
+            importance: Importance.high,
+            priority:   Priority.high,
+          ),
+          iOS:   const DarwinNotificationDetails(),
+          macOS: const DarwinNotificationDetails(),
+        ),
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> cancelBillReminder(String scheduledTxId) async {
+    if (!_initialized) return;
+    await _plugin.cancel(_billNotifId(scheduledTxId));
+  }
+
+  /// Cancel all known bill reminders then reschedule for active entries
+  /// where [enabledIds] contains the scheduled transaction id.
+  Future<void> rescheduleAllBillReminders(
+    List<ScheduledTransaction> scheduled,
+    Set<String> enabledIds,
+  ) async {
+    if (!_initialized) return;
+    for (final st in scheduled) {
+      await cancelBillReminder(st.id);
+    }
+    for (final st in scheduled) {
+      if (!st.isActive || !enabledIds.contains(st.id)) continue;
+      await scheduleBillReminder(
+        scheduledTxId: st.id,
+        payee:         st.payeeName ?? st.memo ?? 'Bill',
+        amount:        st.amount,
+        dueDate:       st.nextDate,
+      );
     }
   }
 
