@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/supabase/supabase_config.dart';
 import 'core/theme/app_theme.dart';
+import 'core/theme/theme_provider.dart';
 import 'core/router/app_router.dart';
 import 'core/sms/sms_service.dart';
 import 'features/insights/notification_service.dart';
@@ -20,8 +22,16 @@ void main() async {
     ),
   );
 
+  // Load persisted theme prefs before the first frame so there's no flash.
+  final prefs = await SharedPreferences.getInstance();
+
   FlutterNativeSplash.remove();
-  runApp(const ProviderScope(child: MyBudgaApp()));
+  runApp(ProviderScope(
+    overrides: [
+      sharedPreferencesProvider.overrideWithValue(prefs),
+    ],
+    child: const MyBudgaApp(),
+  ));
 
   // MethodChannel calls require a running platform loop — init after first frame.
   WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -42,12 +52,13 @@ class MyBudgaApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final router = ref.watch(routerProvider);
+    final router    = ref.watch(routerProvider);
+    final themePref = ref.watch(themeProvider);
     return MaterialApp.router(
-      title: 'MyBudga',
-      theme: AppTheme.light(),
-      darkTheme: AppTheme.dark(),
-      themeMode: ThemeMode.dark,
+      title:      'MyBudga',
+      theme:      AppTheme.light(seedColor: themePref.seedColor),
+      darkTheme:  AppTheme.dark(seedColor: themePref.seedColor),
+      themeMode:  themePref.mode,
       routerConfig: router,
       debugShowCheckedModeBanner: false,
     );

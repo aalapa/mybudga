@@ -230,13 +230,15 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
   /// [orderedIds] is the full list of category IDs in the desired order.
   Future<void> reorderCategoriesInGroup(
       String groupId, List<String> orderedIds) async {
-    final client = ref.read(supabaseProvider);
+    final householdId = await ref.read(householdIdProvider.future);
+    final client      = ref.read(supabaseProvider);
     await Future.wait([
       for (int i = 0; i < orderedIds.length; i++)
         client
             .from('categories')
             .update({'sort_order': (i + 1) * 10})
-            .eq('id', orderedIds[i]),
+            .eq('id', orderedIds[i])
+            .eq('household_id', householdId),
     ]);
     ref.invalidateSelf();
   }
@@ -244,13 +246,15 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
   /// Persists a new group order.
   /// [orderedGroups] is the full list in the desired order.
   Future<void> reorderGroups(List<BudgetGroupData> orderedGroups) async {
-    final client = ref.read(supabaseProvider);
+    final householdId = await ref.read(householdIdProvider.future);
+    final client      = ref.read(supabaseProvider);
     await Future.wait([
       for (int i = 0; i < orderedGroups.length; i++)
         client
             .from('category_groups')
             .update({'sort_order': (i + 1) * 10})
-            .eq('id', orderedGroups[i].id),
+            .eq('id', orderedGroups[i].id)
+            .eq('household_id', householdId),
     ]);
     ref.invalidate(categoriesProvider);
     ref.invalidateSelf();
@@ -345,9 +349,16 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       final groupId   = gMap['id'] as String;
       final groupName = gMap['name'] as String;
       final groupSort = gMap['sort_order'] as int;
-      final catsRaw   = (gMap['categories'] as List? ?? [])
+      // Sort categories client-side — the nested .order() on a PostgREST
+      // embedded relation is not reliably honoured by all client versions.
+      final catsRaw = (gMap['categories'] as List? ?? [])
           .where((c) => (c as Map)['is_hidden'] != true)
-          .toList();
+          .toList()
+          ..sort((a, b) {
+            final ao = (a as Map)['sort_order'] as int? ?? 0;
+            final bo = (b as Map)['sort_order'] as int? ?? 0;
+            return ao.compareTo(bo);
+          });
 
       final entries = catsRaw.map((cRaw) {
         final c          = cRaw as Map<String, dynamic>;
@@ -382,6 +393,9 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
         ));
       }
     }
+
+    // Sort groups client-side for the same reason as categories above.
+    groups.sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
 
     // ── Income: uncategorised positive transactions flow straight into TBB ──────
     // (results[2] is already the full confirmed-tx set for the month)

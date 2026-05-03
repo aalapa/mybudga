@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/sms/sms_service.dart';
+import '../../core/theme/theme_provider.dart';
 import '../../shared/providers/categories_provider.dart';
 import '../../shared/providers/household_provider.dart';
 import '../../shared/providers/payees_provider.dart';
@@ -498,6 +499,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
         children: [
+          // ── Appearance ─────────────────────────────────────────────────────
+          _sectionLabel(context, 'APPEARANCE'),
+          const SizedBox(height: 8),
+          _AppearanceCard(),
+          const SizedBox(height: 24),
+
           // Account info
           _SettingsCard(
             children: [
@@ -706,6 +713,162 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     ),
   );
 }
+
+// ---------------------------------------------------------------------------
+// Appearance card — theme mode toggle + colour palette
+// ---------------------------------------------------------------------------
+
+class _AppearanceCard extends ConsumerWidget {
+  const _AppearanceCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs       = Theme.of(context).colorScheme;
+    final settings = ref.watch(themeProvider);
+    final notifier = ref.read(themeProvider.notifier);
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Theme mode ────────────────────────────────────────────────
+            Row(
+              children: [
+                Icon(Icons.brightness_6_outlined,
+                    size: 18, color: cs.onSurfaceVariant),
+                const SizedBox(width: 10),
+                Text('Theme',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14, fontWeight: FontWeight.w600,
+                        color: cs.onSurface)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: SegmentedButton<ThemeMode>(
+                segments: const [
+                  ButtonSegment(
+                    value: ThemeMode.light,
+                    icon:  Icon(Icons.light_mode_outlined, size: 15),
+                    label: Text('Light'),
+                  ),
+                  ButtonSegment(
+                    value: ThemeMode.system,
+                    icon:  Icon(Icons.brightness_auto_outlined, size: 15),
+                    label: Text('System'),
+                  ),
+                  ButtonSegment(
+                    value: ThemeMode.dark,
+                    icon:  Icon(Icons.dark_mode_outlined, size: 15),
+                    label: Text('Dark'),
+                  ),
+                ],
+                selected:          {settings.mode},
+                onSelectionChanged: (s) => notifier.setMode(s.first),
+                style: ButtonStyle(
+                  textStyle: WidgetStateProperty.all(
+                      GoogleFonts.plusJakartaSans(fontSize: 12,
+                          fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 18),
+            const Divider(height: 1),
+            const SizedBox(height: 14),
+
+            // ── Accent colour ─────────────────────────────────────────────
+            Row(
+              children: [
+                Icon(Icons.palette_outlined,
+                    size: 18, color: cs.onSurfaceVariant),
+                const SizedBox(width: 10),
+                Text('Accent Colour',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14, fontWeight: FontWeight.w600,
+                        color: cs.onSurface)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing:    10,
+              runSpacing: 10,
+              children: [
+                for (final entry in appColorPalette)
+                  _ColorSwatch(
+                    color:      entry.color,
+                    label:      entry.label,
+                    isSelected: settings.seedColor.toARGB32() ==
+                        entry.color.toARGB32(),
+                    onTap:      () => notifier.setSeedColor(entry.color),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Single colour swatch circle ───────────────────────────────────────────────
+
+class _ColorSwatch extends StatelessWidget {
+  final Color color;
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _ColorSwatch({
+    required this.color,
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: label,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          width:  38,
+          height: 38,
+          decoration: BoxDecoration(
+            color:  color,
+            shape:  BoxShape.circle,
+            border: Border.all(
+              color: isSelected
+                  ? Colors.white.withValues(alpha: 0.9)
+                  : Colors.transparent,
+              width: 2.5,
+            ),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color:       color.withValues(alpha: 0.55),
+                      blurRadius:  10,
+                      spreadRadius: 2,
+                    )
+                  ]
+                : null,
+          ),
+          child: isSelected
+              ? const Icon(Icons.check, color: Colors.white, size: 18)
+              : null,
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 class _SettingsCard extends StatelessWidget {
   final List<Widget> children;

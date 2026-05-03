@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-const _seedColor = Color(0xFF5C00F2); // Electric Indigo
+const kDefaultSeedColor = Color(0xFF5C00F2); // Electric Indigo
 
 class AppTheme {
-  static ThemeData dark() {
+  static ThemeData dark({Color seedColor = kDefaultSeedColor}) {
     final colorScheme = ColorScheme.fromSeed(
-      seedColor: _seedColor,
+      seedColor: seedColor,
       brightness: Brightness.dark,
     );
     return ThemeData(
@@ -54,9 +54,9 @@ class AppTheme {
     );
   }
 
-  static ThemeData light() {
+  static ThemeData light({Color seedColor = kDefaultSeedColor}) {
     final colorScheme = ColorScheme.fromSeed(
-      seedColor: _seedColor,
+      seedColor: seedColor,
       brightness: Brightness.light,
     );
     return ThemeData(
