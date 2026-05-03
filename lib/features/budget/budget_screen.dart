@@ -420,10 +420,12 @@ class _PanelGroupRow extends StatelessWidget {
   final BudgetGroupData group;
   final bool isExpanded;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
   const _PanelGroupRow({
     required this.group,
     this.isExpanded = false,
     this.onTap,
+    this.onLongPress,
   });
 
   @override
@@ -434,17 +436,12 @@ class _PanelGroupRow extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Container(
         padding: const EdgeInsets.fromLTRB(10, 8, 8, 6),
         color: cs.surfaceContainerHigh.withValues(alpha: 0.6),
         child: Row(
           children: [
-            Icon(
-              isExpanded ? Icons.expand_less : Icons.expand_more,
-              size: 14,
-              color: cs.onSurfaceVariant.withValues(alpha: 0.6),
-            ),
-            const SizedBox(width: 4),
             Expanded(
               child: Text(
                 group.name.toUpperCase(),
@@ -689,11 +686,8 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
           isWide:         isWide,
           ref:            ref,
           isExpanded:     isGroupExpanded,
-          onToggle:       () => _toggleGroup(group.id),
-          onAddInline:    () => setState(() {
-            _expandedGroupId = group.id; // ensure expanded when adding
-            _inlineGroupId   = group.id;
-          }),
+          onToggle:        () => _toggleGroup(group.id),
+          onLongPress:     () => _showGroupActions(context, ref, group),
           onReorderGroups: () =>
               _showReorderGroupsSheet(context, ref, state.groups),
         ),
@@ -1138,8 +1132,8 @@ class _GroupHeaderRow extends StatelessWidget {
   final bool isExpanded;
   /// Toggles the group open/closed.
   final VoidCallback? onToggle;
-  /// Opens the inline category-add field below this group.
-  final VoidCallback? onAddInline;
+  /// Long-press → opens rename / delete menu.
+  final VoidCallback? onLongPress;
   /// Opens the "Reorder Groups" sheet.
   final VoidCallback? onReorderGroups;
 
@@ -1149,7 +1143,7 @@ class _GroupHeaderRow extends StatelessWidget {
     required this.ref,
     this.isExpanded = false,
     this.onToggle,
-    this.onAddInline,
+    this.onLongPress,
     this.onReorderGroups,
   });
 
@@ -1162,6 +1156,7 @@ class _GroupHeaderRow extends StatelessWidget {
 
     return InkWell(
       onTap: onToggle,
+      onLongPress: onLongPress,
       child: Container(
         decoration: BoxDecoration(
           color: cs.surfaceContainerHigh,
@@ -1172,15 +1167,6 @@ class _GroupHeaderRow extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(8, 9, 16, 9),
         child: Row(
           children: [
-            // Chevron expand/collapse indicator
-            Padding(
-              padding: const EdgeInsets.only(right: 2),
-              child: Icon(
-                isExpanded ? Icons.expand_less : Icons.expand_more,
-                size: 18,
-                color: cs.onSurfaceVariant.withValues(alpha: 0.6),
-              ),
-            ),
             // Drag handle — tapping opens the "Reorder Groups" sheet.
             GestureDetector(
               onTap: onReorderGroups,
@@ -1196,33 +1182,17 @@ class _GroupHeaderRow extends StatelessWidget {
                 ),
               ),
             ),
-            // Group name + [+] button
+            // Group name
             Expanded(
               child: Row(
                 children: [
-                  InkWell(
-                    onTap: () => _showGroupActions(context, ref, group),
-                    borderRadius: BorderRadius.circular(6),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-                      child: Text(
-                        group.name.toUpperCase(),
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: cs.onSurfaceVariant,
-                          letterSpacing: 0.8,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  InkWell(
-                    onTap: onAddInline,
-                    borderRadius: BorderRadius.circular(8),
-                    child: Padding(
-                      padding: const EdgeInsets.all(3),
-                      child: Icon(Icons.add, size: 13, color: cs.onSurfaceVariant),
+                  Text(
+                    group.name.toUpperCase(),
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: cs.onSurfaceVariant,
+                      letterSpacing: 0.8,
                     ),
                   ),
                   if (group.hasOverspend) ...[

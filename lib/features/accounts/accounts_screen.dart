@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../shared/models/account.dart';
 import '../../shared/models/transaction.dart';
+import 'account_labels_provider.dart';
 import 'accounts_provider.dart';
 
 class AccountsScreen extends ConsumerStatefulWidget {
@@ -16,12 +17,11 @@ class AccountsScreen extends ConsumerStatefulWidget {
 }
 
 class _AccountsScreenState extends ConsumerState<AccountsScreen> {
-  bool _ccExpanded = false;
-
   @override
   Widget build(BuildContext context) {
     final cs           = Theme.of(context).colorScheme;
     final accountsAsync = ref.watch(accountsProvider);
+    final labels        = ref.watch(accountLabelsProvider);
 
     return Scaffold(
       backgroundColor: cs.surface,
@@ -44,18 +44,16 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
           ),
         ),
         data: (accounts) => _AccountsBody(
-          accounts:    accounts,
-          ccExpanded:  _ccExpanded,
-          onToggleCC:  () => setState(() => _ccExpanded = !_ccExpanded),
+          accounts:       accounts,
+          labels:         labels,
+          onManageLabels: () => _showManageLabelsSheet(context, ref),
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton(
         onPressed: () => _showAddAccountSheet(context, ref),
-        icon: const Icon(Icons.add),
-        label: Text('Add Account',
-            style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
         backgroundColor: cs.primary,
         foregroundColor: cs.onPrimary,
+        child: const Icon(Icons.add),
       ),
     );
   }
@@ -67,65 +65,83 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
 
 class _AccountsBody extends StatelessWidget {
   final List<Account> accounts;
-  final bool ccExpanded;
-  final VoidCallback onToggleCC;
+  final List<AccountLabel> labels;
+  final VoidCallback onManageLabels;
 
   const _AccountsBody({
     required this.accounts,
-    required this.ccExpanded,
-    required this.onToggleCC,
+    required this.labels,
+    required this.onManageLabels,
   });
 
-  List<Account> get _budgetNonCC => accounts
+  List<Account> get _budgetAccounts => accounts.where((a) => !a.isTracking).toList();
+  List<Account> get _tracking        => accounts.where((a) => a.isTracking).toList();
+
+  double get _netWorth   => accounts.fold(0.0, (s, a) => s + a.balance);
+  double get _liquidCash => accounts
       .where((a) => !a.isTracking && !a.isCreditCard)
-      .toList();
-
-  List<Account> get _creditCards => accounts
+      .fold(0.0, (s, a) => s + a.balance);
+  double get _ccDebt     => accounts
       .where((a) => a.isCreditCard)
-      .toList();
-
-  List<Account> get _tracking => accounts.where((a) => a.isTracking).toList();
-
-  double get _netWorth  => accounts.fold(0.0, (s, a) => s + a.balance);
-  double get _liquidCash => _budgetNonCC.fold(0.0, (s, a) => s + a.balance);
-  double get _ccDebt    => _creditCards.fold(0.0, (s, a) => s + a.balance);
+      .fold(0.0, (s, a) => s + a.balance);
 
   @override
   Widget build(BuildContext context) {
+    final budget = _budgetAccounts;
+
+    // Build labeled sections when labels are defined.
+    // Each label claims accounts in order; a claimed account is not shown again.
+    final claimed = <String>{};
+    final labeledSections = <({AccountLabel label, List<Account> accounts})>[];
+    for (final label in labels) {
+      final matched = budget.where((a) => !claimed.contains(a.id) && label.matches(a)).toList();
+      if (matched.isNotEmpty) {
+        for (final a in matched) claimed.add(a.id);
+        labeledSections.add((label: label, accounts: matched));
+      }
+    }
+    final unclaimed = budget.where((a) => !claimed.contains(a.id)).toList();
+
     return SafeArea(
       child: CustomScrollView(
         slivers: [
           SliverToBoxAdapter(
             child: _NetWorthHeader(
-              netWorth:  _netWorth,
-              liquidCash: _liquidCash,
-              ccDebt:    _ccDebt,
+              netWorth:       _netWorth,
+              liquidCash:     _liquidCash,
+              ccDebt:         _ccDebt,
+              onManageLabels: onManageLabels,
             ),
           ),
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
-                if (_budgetNonCC.isNotEmpty) ...[
-                  _SectionHeader(label: 'BUDGET ACCOUNTS', total: _liquidCash),
-                  const SizedBox(height: 8),
-                  _AccountGroup(accounts: _budgetNonCC),
-                  const SizedBox(height: 20),
-                ],
-                if (_creditCards.isNotEmpty) ...[
+                // ── Labeled sections ──────────────────────────────────────
+                for (final sec in labeledSections) ...[
                   _SectionHeader(
-                    label: 'CREDIT CARDS (${_creditCards.length})',
-                    total: _ccDebt,
-                    isDebt: true,
+                    label: sec.label.name.toUpperCase(),
+                    total: sec.accounts.fold(0.0, (s, a) => s + a.balance),
+                    isDebt: sec.accounts.every((a) => a.isCreditCard),
                   ),
                   const SizedBox(height: 8),
-                  _CreditCardGroup(
-                    accounts:  _creditCards,
-                    expanded:  ccExpanded,
-                    onToggle:  onToggleCC,
-                  ),
+                  _AccountGroup(accounts: sec.accounts),
                   const SizedBox(height: 20),
                 ],
+
+                // ── Unclaimed budget accounts ("Other") ───────────────────
+                if (unclaimed.isNotEmpty) ...[
+                  _SectionHeader(
+                    label: labels.isEmpty ? 'BUDGET ACCOUNTS' : 'OTHER',
+                    total: unclaimed.fold(0.0, (s, a) => s + a.balance),
+                    isDebt: unclaimed.every((a) => a.isCreditCard),
+                  ),
+                  const SizedBox(height: 8),
+                  _AccountGroup(accounts: unclaimed),
+                  const SizedBox(height: 20),
+                ],
+
+                // ── Tracking accounts ─────────────────────────────────────
                 if (_tracking.isNotEmpty) ...[
                   _SectionHeader(
                     label: 'TRACKING ACCOUNTS',
@@ -151,11 +167,13 @@ class _NetWorthHeader extends StatelessWidget {
   final double netWorth;
   final double liquidCash;
   final double ccDebt;
+  final VoidCallback onManageLabels;
 
   const _NetWorthHeader({
     required this.netWorth,
     required this.liquidCash,
     required this.ccDebt,
+    required this.onManageLabels,
   });
 
   @override
@@ -181,10 +199,37 @@ class _NetWorthHeader extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('NET WORTH',
-              style: GoogleFonts.plusJakartaSans(
-                  fontSize: 11, fontWeight: FontWeight.w700,
-                  color: cs.primary, letterSpacing: 1)),
+          Row(
+            children: [
+              Text('NET WORTH',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11, fontWeight: FontWeight.w700,
+                      color: cs.primary, letterSpacing: 1)),
+              const Spacer(),
+              InkWell(
+                onTap: onManageLabels,
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.label_outline, size: 13, color: cs.primary),
+                      const SizedBox(width: 5),
+                      Text('Groups',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11, fontWeight: FontWeight.w700,
+                              color: cs.primary)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 4),
           Text(fmt.format(netWorth),
               style: GoogleFonts.plusJakartaSans(
@@ -325,66 +370,6 @@ class _AccountGroup extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Credit card group — collapsed by default
-// ---------------------------------------------------------------------------
-
-class _CreditCardGroup extends StatelessWidget {
-  final List<Account> accounts;
-  final bool expanded;
-  final VoidCallback onToggle;
-
-  const _CreditCardGroup({
-    required this.accounts,
-    required this.expanded,
-    required this.onToggle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs        = Theme.of(context).colorScheme;
-    final visible   = expanded ? accounts : accounts.take(3).toList();
-    final remaining = accounts.length - 3;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        children: [
-          ...visible.asMap().entries.map((e) {
-            final isLast = e.key == visible.length - 1 && (expanded || remaining <= 0);
-            return _AccountTile(account: e.value, isLast: isLast);
-          }),
-          if (accounts.length > 3)
-            InkWell(
-              onTap: onToggle,
-              borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      expanded ? Icons.expand_less : Icons.expand_more,
-                      size: 16, color: cs.primary,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      expanded ? 'Show less' : 'Show $remaining more',
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 13, fontWeight: FontWeight.w600, color: cs.primary),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Account tile
@@ -456,6 +441,287 @@ class _AccountTile extends ConsumerWidget {
     AccountType.loan         => cs.onSurfaceVariant,
     AccountType.asset        => cs.onSurfaceVariant,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Manage account labels sheet
+// ---------------------------------------------------------------------------
+
+void _showManageLabelsSheet(BuildContext context, WidgetRef ref) {
+  showModalBottomSheet(
+    context:            context,
+    isScrollControlled: true,
+    useSafeArea:        true,
+    builder: (_) => _ManageLabelsSheet(widgetRef: ref),
+  );
+}
+
+class _ManageLabelsSheet extends ConsumerStatefulWidget {
+  final WidgetRef widgetRef;
+  const _ManageLabelsSheet({required this.widgetRef});
+
+  @override
+  ConsumerState<_ManageLabelsSheet> createState() => _ManageLabelsSheetState();
+}
+
+class _ManageLabelsSheetState extends ConsumerState<_ManageLabelsSheet> {
+  @override
+  Widget build(BuildContext context) {
+    final cs     = Theme.of(context).colorScheme;
+    final labels = ref.watch(accountLabelsProvider);
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.6,
+      minChildSize:     0.4,
+      maxChildSize:     0.92,
+      expand:           false,
+      builder: (ctx, scrollCtrl) => Container(
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHigh,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          children: [
+            // Handle
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 16, 16, 8),
+              child: Row(
+                children: [
+                  Text('Account Groups',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 18, fontWeight: FontWeight.w800,
+                          color: cs.onSurface)),
+                  const Spacer(),
+                  FilledButton.icon(
+                    onPressed: () => _showEditLabelDialog(
+                        context, ref, null),
+                    icon:  const Icon(Icons.add, size: 16),
+                    label: Text('New',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w700)),
+                    style: FilledButton.styleFrom(
+                      minimumSize: Size.zero,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Text(
+              'Accounts matching earlier groups won\'t appear in later ones.',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11, color: cs.onSurfaceVariant),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            const Divider(height: 1),
+            Expanded(
+              child: labels.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.label_outline,
+                              size: 48, color: cs.onSurfaceVariant),
+                          const SizedBox(height: 12),
+                          Text('No groups yet',
+                              style: GoogleFonts.plusJakartaSans(
+                                  color: cs.onSurfaceVariant)),
+                          const SizedBox(height: 6),
+                          Text('Tap New to create your first group.',
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 12,
+                                  color: cs.onSurfaceVariant)),
+                        ],
+                      ),
+                    )
+                  : ReorderableListView.builder(
+                      scrollController: scrollCtrl,
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+                      itemCount: labels.length,
+                      onReorder: (old, neo) =>
+                          ref.read(accountLabelsProvider.notifier)
+                              .reorder(old, neo),
+                      itemBuilder: (_, i) {
+                        final label = labels[i];
+                        return _LabelTile(
+                          key:     ValueKey(label.id),
+                          label:   label,
+                          onEdit:  () => _showEditLabelDialog(
+                              context, ref, label),
+                          onDelete: () => ref
+                              .read(accountLabelsProvider.notifier)
+                              .deleteLabel(label.id),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LabelTile extends StatelessWidget {
+  final AccountLabel label;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  const _LabelTile({
+    super.key,
+    required this.label,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+        leading: Icon(Icons.label_outline, size: 18, color: cs.primary),
+        title: Text(label.name,
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 14, fontWeight: FontWeight.w600,
+                color: cs.onSurface)),
+        subtitle: Text(
+          '${label.matchType == LabelMatchType.startsWith ? 'Starts with' : 'Contains'}  "${label.keyword}"',
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 12, color: cs.onSurfaceVariant),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: Icon(Icons.edit_outlined,
+                  size: 18, color: cs.onSurfaceVariant),
+              onPressed: onEdit,
+              tooltip: 'Edit',
+            ),
+            IconButton(
+              icon: Icon(Icons.delete_outline, size: 18, color: cs.error),
+              onPressed: onDelete,
+              tooltip: 'Delete',
+            ),
+            Icon(Icons.drag_handle,
+                size: 18,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.4)),
+            const SizedBox(width: 4),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+void _showEditLabelDialog(
+    BuildContext context, WidgetRef ref, AccountLabel? existing) {
+  final nameCtrl    = TextEditingController(text: existing?.name ?? '');
+  final keywordCtrl = TextEditingController(text: existing?.keyword ?? '');
+  var matchType     = existing?.matchType ?? LabelMatchType.contains;
+
+  showDialog<void>(
+    context: context,
+    builder: (dialogCtx) {
+      final cs = Theme.of(dialogCtx).colorScheme;
+      return StatefulBuilder(builder: (dialogCtx, setDlgState) {
+        return AlertDialog(
+          title: Text(existing == null ? 'New Group' : 'Edit Group',
+              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller:         nameCtrl,
+                autofocus:          true,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Group name'),
+              ),
+              const SizedBox(height: 14),
+              // Match type toggle
+              Text('Match type',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, color: cs.onSurfaceVariant)),
+              const SizedBox(height: 6),
+              SegmentedButton<LabelMatchType>(
+                style: SegmentedButton.styleFrom(
+                  textStyle: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, fontWeight: FontWeight.w600),
+                  visualDensity: VisualDensity.compact,
+                ),
+                segments: const [
+                  ButtonSegment(
+                    value: LabelMatchType.contains,
+                    label: Text('Contains'),
+                  ),
+                  ButtonSegment(
+                    value: LabelMatchType.startsWith,
+                    label: Text('Starts with'),
+                  ),
+                ],
+                selected: {matchType},
+                onSelectionChanged: (s) =>
+                    setDlgState(() => matchType = s.first),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller:  keywordCtrl,
+                decoration:  const InputDecoration(
+                  labelText: 'Keyword',
+                  hintText:  'e.g. HDFC, Axis',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final name    = nameCtrl.text.trim();
+                final keyword = keywordCtrl.text.trim();
+                if (name.isEmpty || keyword.isEmpty) return;
+                final notifier =
+                    ref.read(accountLabelsProvider.notifier);
+                if (existing == null) {
+                  notifier.addLabel(
+                      name: name, matchType: matchType, keyword: keyword);
+                } else {
+                  notifier.updateLabel(existing.copyWith(
+                      name: name,
+                      matchType: matchType,
+                      keyword: keyword));
+                }
+                Navigator.pop(dialogCtx);
+              },
+              child: Text(existing == null ? 'Create' : 'Save',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w700)),
+            ),
+          ],
+        );
+      });
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
