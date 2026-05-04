@@ -356,7 +356,7 @@ class _BalanceCard extends StatelessWidget {
 // Cashflow tile
 // ---------------------------------------------------------------------------
 
-class _CashflowTile extends StatelessWidget {
+class _CashflowTile extends ConsumerWidget {
   final _ProjectedEntry entry;
   final bool isDanger;
   final WidgetRef ref;
@@ -368,11 +368,13 @@ class _CashflowTile extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef wRef) {
     final cs           = Theme.of(context).colorScheme;
     final fmt          = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
     final amountColor  = entry.isIncome ? cs.tertiary : cs.onSurface;
     final balanceColor = isDanger ? cs.error : cs.onSurfaceVariant;
+    final hasReminder  = wRef.watch(billRemindersProvider)
+        .contains(entry.scheduledTx.id);
 
     return InkWell(
       onTap: () => _showAddScheduledSheet(context, ref, prefill: entry.scheduledTx),
@@ -407,11 +409,24 @@ class _CashflowTile extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      entry.payee,
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface,
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            entry.payee,
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 14, fontWeight: FontWeight.w600,
+                              color: cs.onSurface,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (hasReminder) ...[
+                          const SizedBox(width: 4),
+                          Icon(Icons.notifications_active_outlined,
+                              size: 13, color: cs.primary),
+                        ],
+                      ],
                     ),
                     Text(
                       entry.category != null
@@ -1111,27 +1126,56 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
                                   color: cs.primary.withValues(alpha: 0.35))
                               : null,
                         ),
-                        child: SwitchListTile.adaptive(
-                          contentPadding: const EdgeInsets.fromLTRB(14, 4, 8, 4),
-                          secondary: Icon(
-                            Icons.notifications_outlined,
-                            size: 18,
-                            color: _remindMe ? cs.primary : cs.onSurfaceVariant,
-                          ),
-                          title: Text(
-                            'Remind me 1 day before',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 13,
-                              fontWeight: _remindMe
-                                  ? FontWeight.w600
-                                  : FontWeight.w400,
-                              color: _remindMe
-                                  ? cs.onSurface
-                                  : cs.onSurfaceVariant,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SwitchListTile.adaptive(
+                              contentPadding:
+                                  const EdgeInsets.fromLTRB(14, 4, 8, 4),
+                              secondary: Icon(
+                                Icons.notifications_outlined,
+                                size: 18,
+                                color: _remindMe
+                                    ? cs.primary
+                                    : cs.onSurfaceVariant,
+                              ),
+                              title: Text(
+                                'Remind me 1 day before',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 13,
+                                  fontWeight: _remindMe
+                                      ? FontWeight.w600
+                                      : FontWeight.w400,
+                                  color: _remindMe
+                                      ? cs.onSurface
+                                      : cs.onSurfaceVariant,
+                                ),
+                              ),
+                              value: _remindMe,
+                              onChanged: (v) =>
+                                  setState(() => _remindMe = v),
                             ),
-                          ),
-                          value: _remindMe,
-                          onChanged: (v) => setState(() => _remindMe = v),
+                            if (_remindMe) ...[
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                    14, 0, 14, 12),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.alarm_outlined,
+                                        size: 13, color: cs.primary),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'Reminder on ${DateFormat('MMM d').format(_nextDate.subtract(const Duration(days: 1)))} at 9 am',
+                                      style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 12,
+                                          color: cs.primary,
+                                          fontWeight: FontWeight.w500),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
                       const SizedBox(height: 28),
