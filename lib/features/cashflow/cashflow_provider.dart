@@ -53,8 +53,10 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
 
     final state      = await _load(client, householdId);
     final enabledIds = ref.read(billRemindersProvider);
-    await NotificationService.instance
-        .rescheduleAllBillReminders(state.scheduled, enabledIds);
+    // Fire-and-forget — notification errors must never crash the provider.
+    NotificationService.instance
+        .rescheduleAllBillReminders(state.scheduled, enabledIds)
+        .ignore();
     return state;
   }
 
