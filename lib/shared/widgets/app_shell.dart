@@ -204,14 +204,14 @@ class _NavItem extends StatelessWidget {
             width: isSelected ? 56 : 32,
             height: 32,
             decoration: BoxDecoration(
-              color: isSelected ? cs.primaryContainer : Colors.transparent,
+              color: isSelected ? cs.primary : Colors.transparent,
               borderRadius: BorderRadius.circular(16),
             ),
             child: Center(
               child: Icon(
                 isSelected ? item.activeIcon : item.icon,
                 size: 20,
-                color: isSelected ? cs.onPrimaryContainer : cs.onSurfaceVariant,
+                color: isSelected ? cs.onPrimary : cs.onSurfaceVariant,
               ),
             ),
           ),
