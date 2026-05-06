@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -43,11 +45,22 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
             ],
           ),
         ),
-        data: (accounts) => _AccountsBody(
-          accounts:       accounts,
-          labels:         labels,
-          onManageLabels: () => _showManageLabelsSheet(context, ref),
-        ),
+        data: (accounts) {
+          final ccIdsKey = (accounts
+                  .where((a) => a.isCreditCard)
+                  .map((a) => a.id)
+                  .toList()
+                ..sort())
+              .join(',');
+          return _AccountsBody(
+            accounts:       accounts,
+            labels:         labels,
+            onManageLabels: () => _showManageLabelsSheet(context, ref),
+            onCcDebtTap:    ccIdsKey.isEmpty
+                ? null
+                : () => _showCcDebtHistorySheet(context, ccIdsKey),
+          );
+        },
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showAddAccountSheet(context, ref),
@@ -67,11 +80,13 @@ class _AccountsBody extends StatelessWidget {
   final List<Account> accounts;
   final List<AccountLabel> labels;
   final VoidCallback onManageLabels;
+  final VoidCallback? onCcDebtTap;
 
   const _AccountsBody({
     required this.accounts,
     required this.labels,
     required this.onManageLabels,
+    this.onCcDebtTap,
   });
 
   List<Account> get _budgetAccounts => accounts.where((a) => !a.isTracking).toList();
@@ -111,6 +126,7 @@ class _AccountsBody extends StatelessWidget {
               liquidCash:     _liquidCash,
               ccDebt:         _ccDebt,
               onManageLabels: onManageLabels,
+              onCcDebtTap:    onCcDebtTap,
             ),
           ),
           SliverPadding(
@@ -168,12 +184,14 @@ class _NetWorthHeader extends StatelessWidget {
   final double liquidCash;
   final double ccDebt;
   final VoidCallback onManageLabels;
+  final VoidCallback? onCcDebtTap;
 
   const _NetWorthHeader({
     required this.netWorth,
     required this.liquidCash,
     required this.ccDebt,
     required this.onManageLabels,
+    this.onCcDebtTap,
   });
 
   @override
@@ -250,6 +268,7 @@ class _NetWorthHeader extends StatelessWidget {
                 color: cs.error,
                 icon:  Icons.credit_card_outlined,
                 isNegative: true,
+                onTap: onCcDebtTap,
               ),
             ],
           ),
@@ -265,6 +284,7 @@ class _NetWorthStat extends StatelessWidget {
   final Color color;
   final IconData icon;
   final bool isNegative;
+  final VoidCallback? onTap;
 
   const _NetWorthStat({
     required this.label,
@@ -272,36 +292,46 @@ class _NetWorthStat extends StatelessWidget {
     required this.color,
     required this.icon,
     this.isNegative = false,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, size: 16, color: color),
-            const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isNegative ? '-$value' : value,
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 14, fontWeight: FontWeight.w700, color: color),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isNegative ? '-$value' : value,
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 14, fontWeight: FontWeight.w700, color: color),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(label,
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11, color: cs.onSurfaceVariant)),
+                  ],
                 ),
-                Text(label,
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 11, color: cs.onSurfaceVariant)),
-              ],
-            ),
-          ],
+              ),
+              if (onTap != null)
+                Icon(Icons.bar_chart_rounded, size: 14, color: color.withValues(alpha: 0.6)),
+            ],
+          ),
         ),
       ),
     );
@@ -441,6 +471,150 @@ class _AccountTile extends ConsumerWidget {
     AccountType.loan         => cs.onSurfaceVariant,
     AccountType.asset        => cs.onSurfaceVariant,
   };
+}
+
+// ---------------------------------------------------------------------------
+// CC debt history sheet
+// ---------------------------------------------------------------------------
+
+void _showCcDebtHistorySheet(BuildContext context, String ccIdsKey) {
+  showModalBottomSheet(
+    context:            context,
+    isScrollControlled: true,
+    backgroundColor:    Colors.transparent,
+    builder: (_) => _CcDebtHistorySheet(ccIdsKey: ccIdsKey),
+  );
+}
+
+class _CcDebtHistorySheet extends ConsumerWidget {
+  final String ccIdsKey;
+  const _CcDebtHistorySheet({required this.ccIdsKey});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs   = Theme.of(context).colorScheme;
+    final hist = ref.watch(ccDebtHistoryProvider(ccIdsKey));
+
+    return Container(
+      decoration: BoxDecoration(
+        color:        cs.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 36),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color:        cs.onSurfaceVariant.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text('CC Debt History',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 18, fontWeight: FontWeight.w800, color: cs.onSurface)),
+          const SizedBox(height: 2),
+          Text('End-of-month balance — lower is better',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12, color: cs.onSurfaceVariant)),
+          const SizedBox(height: 24),
+          SizedBox(
+            height: 220,
+            child: hist.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error:   (e, s) => Center(
+                  child: Text('Could not load history',
+                      style: GoogleFonts.plusJakartaSans(color: cs.onSurfaceVariant))),
+              data: (data) {
+                final nonZero = data.where((d) => d.debt > 0).toList();
+                if (nonZero.isEmpty) {
+                  return Center(
+                    child: Text('No CC debt found',
+                        style: GoogleFonts.plusJakartaSans(color: cs.onSurfaceVariant)),
+                  );
+                }
+                return _CcDebtChart(data: data);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CcDebtChart extends StatelessWidget {
+  final List<({DateTime month, double debt})> data;
+  const _CcDebtChart({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs     = Theme.of(context).colorScheme;
+    final fmt    = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final maxVal = data.map((d) => d.debt).fold(0.0, math.max);
+
+    return BarChart(
+      BarChartData(
+        maxY: maxVal * 1.25,
+        barGroups: data.asMap().entries.map((e) {
+          return BarChartGroupData(
+            x: e.key,
+            barRods: [
+              BarChartRodData(
+                toY:          e.value.debt,
+                color:        cs.error.withValues(alpha: 0.75),
+                width:        18,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(5)),
+              ),
+            ],
+          );
+        }).toList(),
+        titlesData: FlTitlesData(
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles:   true,
+              reservedSize: 28,
+              getTitlesWidget: (value, meta) {
+                final i = value.toInt();
+                if (i < 0 || i >= data.length) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    DateFormat('MMM').format(data[i].month),
+                    style: TextStyle(fontSize: 10, color: cs.onSurfaceVariant),
+                  ),
+                );
+              },
+            ),
+          ),
+          leftTitles:  AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles:   AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        ),
+        gridData:   FlGridData(show: false),
+        borderData: FlBorderData(show: false),
+        barTouchData: BarTouchData(
+          touchTooltipData: BarTouchTooltipData(
+            getTooltipItem: (group, gi, rod, ri) {
+              final d = data[group.x];
+              return BarTooltipItem(
+                '${DateFormat('MMM yy').format(d.month)}\n${fmt.format(d.debt)}',
+                GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurface),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

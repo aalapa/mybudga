@@ -211,6 +211,69 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
 final accountsProvider =
     AsyncNotifierProvider<AccountsNotifier, List<Account>>(AccountsNotifier.new);
 
+// ---------------------------------------------------------------------------
+// CC debt history — monthly end-of-month balances for the last 12 months.
+// Key: comma-joined sorted CC account IDs (stable string for family caching).
+// ---------------------------------------------------------------------------
+
+DateTime _ccMonthStart(DateTime base, int monthsBack) {
+  var month = base.month - monthsBack;
+  var year  = base.year;
+  while (month <= 0) { month += 12; year--; }
+  while (month > 12) { month -= 12; year++; }
+  return DateTime(year, month, 1);
+}
+
+final ccDebtHistoryProvider = FutureProvider.autoDispose
+    .family<List<({DateTime month, double debt})>, String>(
+        (ref, ccIdsKey) async {
+  if (ccIdsKey.isEmpty) return [];
+  final ccIds = ccIdsKey.split(',');
+
+  final householdId = await ref.watch(householdIdProvider.future);
+  final client      = ref.watch(supabaseProvider);
+
+  // Fresh current balances
+  final accountRows = await client
+      .from('accounts')
+      .select('current_balance')
+      .inFilter('id', ccIds)
+      .eq('is_active', true);
+  final currentTotal = (accountRows as List)
+      .fold<double>(0.0, (s, r) => s + (r['current_balance'] as num).toDouble());
+
+  // Transactions going back 12 months
+  final now       = DateTime.now();
+  final cutoff    = _ccMonthStart(now, 11);
+  final cutoffStr =
+      '${cutoff.year}-${cutoff.month.toString().padLeft(2, '0')}-01';
+
+  final txRows = await client
+      .from('transactions')
+      .select('amount, date')
+      .inFilter('account_id', ccIds)
+      .gte('date', cutoffStr)
+      .isFilter('deleted_at', null);
+
+  final txList = (txRows as List)
+      .map((r) => (
+            amount: (r['amount'] as num).toDouble(),
+            date: DateTime.parse(r['date'] as String),
+          ))
+      .toList();
+
+  // Reconstruct end-of-month balances: balance_at_end_of_M = currentTotal - sum(txs after M)
+  final months = List.generate(12, (i) => _ccMonthStart(now, 11 - i));
+  return months.map((ms) {
+    final nextMs   = _ccMonthStart(ms, -1);
+    final laterSum = txList
+        .where((tx) => !tx.date.isBefore(nextMs))
+        .fold<double>(0.0, (s, tx) => s + tx.amount);
+    final balance  = currentTotal - laterSum;
+    return (month: ms, debt: (-balance).clamp(0.0, double.infinity));
+  }).toList();
+});
+
 /// Transactions for a single account over the last [days] days.
 final accountTransactionsProvider = FutureProvider.autoDispose
     .family<List<Transaction>, ({String accountId, int days})>((ref, args) async {
