@@ -30,6 +30,17 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
         ),
         callback: (_) => ref.invalidateSelf(),
       )
+      ..onPostgresChanges(
+        event:  PostgresChangeEvent.update,
+        schema: 'public',
+        table:  'categories',
+        filter: PostgresChangeFilter(
+          type:   PostgresChangeFilterType.eq,
+          column: 'household_id',
+          value:  householdId,
+        ),
+        callback: (_) => ref.invalidateSelf(),
+      )
       ..subscribe();
 
     ref.onDispose(() => client.removeChannel(channel));

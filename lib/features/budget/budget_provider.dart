@@ -6,6 +6,13 @@ import '../../shared/providers/categories_provider.dart';
 import '../../shared/providers/household_provider.dart';
 
 // ---------------------------------------------------------------------------
+// Quick-budget enums (public so the UI can reference them)
+// ---------------------------------------------------------------------------
+
+enum QuickBudgetStrategy { lastMonth, averageSpending, coverSpending }
+enum QuickBudgetScope    { thisMonth, next3, next6, next12 }
+
+// ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
@@ -134,6 +141,95 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
         .from('categories')
         .update({'icon_codepoint': iconCodePoint})
         .eq('id', categoryId);
+    ref.invalidateSelf();
+  }
+
+  Future<void> applyQuickBudget({
+    required QuickBudgetStrategy strategy,
+    required QuickBudgetScope scope,
+    required DateTime baseMonth,
+  }) async {
+    final householdId = await ref.read(householdIdProvider.future);
+    final client      = ref.read(supabaseProvider);
+
+    // ── How many months to fill ───────────────────────────────────────────
+    final monthCount = switch (scope) {
+      QuickBudgetScope.thisMonth => 1,
+      QuickBudgetScope.next3     => 3,
+      QuickBudgetScope.next6     => 6,
+      QuickBudgetScope.next12    => 12,
+    };
+
+    final targetMonths = List.generate(monthCount, (i) {
+      final m = DateTime(baseMonth.year, baseMonth.month + i);
+      return '${m.year}-${m.month.toString().padLeft(2, '0')}';
+    });
+
+    // ── Amounts per category ──────────────────────────────────────────────
+    final amounts = <String, double>{};
+
+    switch (strategy) {
+      case QuickBudgetStrategy.lastMonth:
+        final prev    = DateTime(baseMonth.year, baseMonth.month - 1);
+        final prevStr = '${prev.year}-${prev.month.toString().padLeft(2, '0')}';
+        final rows    = await client
+            .from('budget_months')
+            .select('category_id, budgeted')
+            .eq('household_id', householdId)
+            .eq('month', prevStr);
+        for (final r in rows as List) {
+          final b = (r['budgeted'] as num).toDouble();
+          if (b > 0) amounts[r['category_id'] as String] = b;
+        }
+
+      case QuickBudgetStrategy.averageSpending:
+        // Actual spending over the 3 complete months before baseMonth
+        final from    = DateTime(baseMonth.year, baseMonth.month - 3);
+        final fromStr = '${from.year}-${from.month.toString().padLeft(2, '0')}-01';
+        final toStr   = '${baseMonth.year}-${baseMonth.month.toString().padLeft(2, '0')}-01';
+        final txRows  = await client
+            .from('transactions')
+            .select('category_id, amount')
+            .eq('household_id', householdId)
+            .gte('date', fromStr)
+            .lt('date', toStr)
+            .eq('status', 'confirmed')
+            .isFilter('deleted_at', null)
+            .not('category_id', 'is', null);
+        final totals = <String, double>{};
+        for (final r in txRows as List) {
+          final a = (r['amount'] as num).toDouble();
+          if (a < 0) {
+            final id = r['category_id'] as String;
+            totals[id] = (totals[id] ?? 0) + a.abs();
+          }
+        }
+        for (final e in totals.entries) {
+          amounts[e.key] = (e.value / 3).ceilToDouble();
+        }
+
+      case QuickBudgetStrategy.coverSpending:
+        final entries = state.valueOrNull?.groups.expand((g) => g.entries) ?? [];
+        for (final e in entries) {
+          if (e.spent > 0) amounts[e.categoryId] = e.spent;
+        }
+    }
+
+    if (amounts.isEmpty) return;
+
+    // ── Upsert for each target month ──────────────────────────────────────
+    for (final monthStr in targetMonths) {
+      await client.from('budget_months').upsert(
+        amounts.entries.map((e) => {
+          'household_id': householdId,
+          'category_id':  e.key,
+          'month':        monthStr,
+          'budgeted':     e.value,
+        }).toList(),
+        onConflict: 'household_id, category_id, month',
+      );
+    }
+
     ref.invalidateSelf();
   }
 

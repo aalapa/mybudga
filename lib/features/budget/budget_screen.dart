@@ -2724,8 +2724,9 @@ void _showQuickBudgetSheet(BuildContext context, DateTime month, WidgetRef ref) 
   );
 }
 
-enum _QuickBudgetStrategy { lastMonth, averageSpending, coverSpending }
-enum _QuickBudgetScope    { thisMonth, next3, next6, next12 }
+// Use public enums from budget_provider.dart
+typedef _QuickBudgetStrategy = QuickBudgetStrategy;
+typedef _QuickBudgetScope    = QuickBudgetScope;
 
 class _QuickBudgetSheet extends StatefulWidget {
   final DateTime month;
@@ -2739,6 +2740,28 @@ class _QuickBudgetSheet extends StatefulWidget {
 class _QuickBudgetSheetState extends State<_QuickBudgetSheet> {
   _QuickBudgetStrategy _strategy = _QuickBudgetStrategy.lastMonth;
   _QuickBudgetScope    _scope    = _QuickBudgetScope.thisMonth;
+  bool _applying = false;
+
+  Future<void> _apply() async {
+    setState(() => _applying = true);
+    try {
+      await widget.ref.read(budgetProvider.notifier).applyQuickBudget(
+        strategy:  _strategy,
+        scope:     _scope,
+        baseMonth: widget.month,
+      );
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+          behavior: SnackBarBehavior.floating,
+        ));
+        setState(() => _applying = false);
+      }
+    }
+  }
 
   String get _strategyLabel => switch (_strategy) {
     _QuickBudgetStrategy.lastMonth       => "Last month's budgeted amounts",
@@ -2831,10 +2854,16 @@ class _QuickBudgetSheetState extends State<_QuickBudgetSheet> {
             const SizedBox(height: 28),
 
             FilledButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: _applying ? null : _apply,
               style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-              child: Text(_applyLabel,
-                  style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+              child: _applying
+                  ? SizedBox(
+                      height: 20, width: 20,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Theme.of(context).colorScheme.onPrimary))
+                  : Text(_applyLabel,
+                      style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
             ),
           ],
         ),
