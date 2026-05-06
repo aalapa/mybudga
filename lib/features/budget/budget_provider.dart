@@ -111,6 +111,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
   Future<String> addCategory({
     required String name,
     required String groupId,
+    int? iconCodePoint,
   }) async {
     final householdId = await ref.read(householdIdProvider.future);
     final client      = ref.read(supabaseProvider);
@@ -119,11 +120,21 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       'household_id':       householdId,
       'category_group_id':  groupId,
       'name':               name,
+      if (iconCodePoint != null) 'icon_codepoint': iconCodePoint,
     }).select('id').single();
 
     ref.invalidate(categoriesProvider);
     ref.invalidateSelf();
     return res['id'] as String;
+  }
+
+  Future<void> updateCategoryIcon(String categoryId, int? iconCodePoint) async {
+    final client = ref.read(supabaseProvider);
+    await client
+        .from('categories')
+        .update({'icon_codepoint': iconCodePoint})
+        .eq('id', categoryId);
+    ref.invalidateSelf();
   }
 
   Future<String> addGroup(String name) async {
@@ -289,7 +300,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       // 1. category groups + categories
       client
           .from('category_groups')
-          .select('id, name, sort_order, categories(id, name, sort_order, is_cc_payment, overspending_behavior, is_hidden)')
+          .select('id, name, sort_order, categories(id, name, sort_order, icon_codepoint, is_cc_payment, overspending_behavior, is_hidden)')
           .eq('household_id', householdId)
           .eq('is_hidden', false)
           .isFilter('deleted_at', null)
@@ -381,6 +392,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
           isCcPayment:         c['is_cc_payment'] as bool? ?? false,
           carryOverspend:      carryOver,
           goal:                goalMap[catId],
+          iconCodePoint:       c['icon_codepoint'] as int?,
         );
       }).toList();
 

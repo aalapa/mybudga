@@ -13,6 +13,7 @@ import '../accounts/accounts_provider.dart';
 import '../cashflow/cashflow_provider.dart';
 import 'transactions_provider.dart';
 import '../../core/sms/sms_parser.dart';
+import '../budget/category_icons.dart';
 import '../../core/sms/sms_service.dart';
 
 // ---------------------------------------------------------------------------
@@ -436,7 +437,11 @@ class _TransactionTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
-            _PayeeAvatar(payee: tx.isTransfer ? 'Transfer' : tx.displayPayee, color: cs.primary),
+            _PayeeAvatar(
+              payee:         tx.isTransfer ? 'Transfer' : tx.displayPayee,
+              color:         cs.primary,
+              iconCodePoint: tx.isTransfer ? null : tx.categoryIconCodePoint,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -483,10 +488,15 @@ class _TransactionTile extends StatelessWidget {
 class _PayeeAvatar extends StatelessWidget {
   final String payee;
   final Color color;
-  const _PayeeAvatar({required this.payee, required this.color});
+  final int? iconCodePoint;
+  const _PayeeAvatar({required this.payee, required this.color, this.iconCodePoint});
 
   @override
   Widget build(BuildContext context) {
+    final iconData = iconCodePoint != null
+        ? iconDataFromCodePoint(iconCodePoint!)
+        : null;
+
     return Container(
       width: 40, height: 40,
       decoration: BoxDecoration(
@@ -494,11 +504,13 @@ class _PayeeAvatar extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
       ),
       alignment: Alignment.center,
-      child: Text(
-        payee.isNotEmpty ? payee[0].toUpperCase() : '?',
-        style: GoogleFonts.plusJakartaSans(
-            fontSize: 16, fontWeight: FontWeight.w800, color: color),
-      ),
+      child: iconData != null
+          ? Icon(iconData, size: 20, color: color)
+          : Text(
+              payee.isNotEmpty ? payee[0].toUpperCase() : '?',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 16, fontWeight: FontWeight.w800, color: color),
+            ),
     );
   }
 }

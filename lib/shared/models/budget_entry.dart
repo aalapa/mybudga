@@ -92,6 +92,7 @@ class BudgetEntry {
   final bool isCcPayment;
   final bool carryOverspend;
   final BudgetGoal? goal;
+  final int? iconCodePoint;
 
   const BudgetEntry({
     required this.categoryId,
@@ -106,6 +107,7 @@ class BudgetEntry {
     required this.isCcPayment,
     required this.carryOverspend,
     this.goal,
+    this.iconCodePoint,
   });
 
   double get spent => activity < 0 ? activity.abs() : 0;

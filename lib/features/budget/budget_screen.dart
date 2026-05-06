@@ -7,6 +7,7 @@ import '../../shared/models/budget_entry.dart';
 import '../insights/insights_provider.dart';
 import '../insights/payee_pattern.dart';
 import 'budget_provider.dart';
+import 'category_icons.dart';
 
 // ---------------------------------------------------------------------------
 
@@ -483,15 +484,34 @@ class _PanelEntryRow extends StatelessWidget {
         : entry.balance > 0 ? cs.tertiary
         : cs.onSurfaceVariant;
 
+    final iconCp = entry.iconCodePoint;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 9, 12, 9),
+      padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
       child: Row(
         children: [
+          // Icon avatar (or CC badge)
           if (entry.isCcPayment)
             Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: Icon(Icons.credit_card, size: 11, color: cs.primary),
-            ),
+              padding: const EdgeInsets.only(right: 6),
+              child: Icon(Icons.credit_card, size: 14, color: cs.primary),
+            )
+          else if (iconCp != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Container(
+                width: 28, height: 28,
+                decoration: BoxDecoration(
+                  color: cs.primaryContainer.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Center(
+                  child: iconFromCodePoint(iconCp, size: 15, color: cs.primary),
+                ),
+              ),
+            )
+          else
+            const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1806,6 +1826,14 @@ class _CategoryTxPanel extends ConsumerWidget {
                 ),
                 const SizedBox(width: 4),
                 _PanelAction(
+                  icon: entry.iconCodePoint != null
+                      ? Icons.emoji_emotions_outlined
+                      : Icons.add_reaction_outlined,
+                  label: 'Icon',
+                  onTap: () => _showCategoryIconPicker(context, ref, entry),
+                ),
+                const SizedBox(width: 4),
+                _PanelAction(
                   icon: Icons.delete_outline,
                   label: 'Delete',
                   onTap: () => _showDeleteCategoryDialog(context, ref, entry),
@@ -2952,42 +2980,113 @@ void _showDeleteGroupDialog(
 // Category rename / delete
 // ---------------------------------------------------------------------------
 
+void _showCategoryIconPicker(
+    BuildContext context, WidgetRef ref, BudgetEntry entry) async {
+  final picked = await showModalBottomSheet<int?>(
+    context:            context,
+    isScrollControlled: true,
+    backgroundColor:    Colors.transparent,
+    builder: (_) => _IconPickerSheet(selected: entry.iconCodePoint),
+  );
+  if (!context.mounted) return;
+  // null means "Remove" was tapped; skip update if sheet was dismissed without picking
+  if (picked != null || entry.iconCodePoint != null) {
+    await ref.read(budgetProvider.notifier).updateCategoryIcon(entry.categoryId, picked);
+  }
+}
+
 void _showRenameCategoryDialog(
     BuildContext context, WidgetRef ref, BudgetEntry entry) {
   final ctrl = TextEditingController(text: entry.categoryName);
+  var iconCp = entry.iconCodePoint;
+
   showDialog(
     context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text('Rename category',
-          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
-      content: TextField(
-        controller: ctrl,
-        autofocus: true,
-        textCapitalization: TextCapitalization.words,
-        decoration: const InputDecoration(labelText: 'Category name'),
-        onSubmitted: (_) async {
-          if (ctrl.text.trim().isEmpty) return;
-          await ref
-              .read(budgetProvider.notifier)
-              .renameCategory(entry.categoryId, ctrl.text);
-          if (ctx.mounted) Navigator.pop(ctx);
-        },
-      ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel')),
-        FilledButton(
-          onPressed: () async {
-            if (ctrl.text.trim().isEmpty) return;
-            await ref
-                .read(budgetProvider.notifier)
-                .renameCategory(entry.categoryId, ctrl.text);
-            if (ctx.mounted) Navigator.pop(ctx);
-          },
-          child: const Text('Save'),
-        ),
-      ],
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setDlgState) {
+        final cs = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          title: Text('Edit category',
+              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: ctrl,
+                autofocus:  true,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Category name'),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Text('Icon',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13, color: cs.onSurfaceVariant)),
+                  const SizedBox(width: 12),
+                  GestureDetector(
+                    onTap: () async {
+                      final picked = await showModalBottomSheet<int?>(
+                        context:         context,
+                        isScrollControlled: true,
+                        backgroundColor:  Colors.transparent,
+                        builder: (_) => _IconPickerSheet(selected: iconCp),
+                      );
+                      if (!ctx.mounted) return;
+                      setDlgState(() => iconCp = picked);
+                    },
+                    child: Container(
+                      width: 44, height: 44,
+                      decoration: BoxDecoration(
+                        color: iconCp != null
+                            ? cs.primaryContainer
+                            : cs.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: iconCp != null
+                              ? cs.primary.withValues(alpha: 0.4)
+                              : cs.outline.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Center(
+                        child: iconCp != null
+                            ? iconFromCodePoint(iconCp!, size: 20, color: cs.primary)
+                            : Icon(Icons.add_reaction_outlined, size: 18,
+                                color: cs.onSurfaceVariant),
+                      ),
+                    ),
+                  ),
+                  if (iconCp != null) ...[
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () => setDlgState(() => iconCp = null),
+                      child: Icon(Icons.close, size: 16, color: cs.onSurfaceVariant),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () async {
+                if (ctrl.text.trim().isEmpty) return;
+                await ref
+                    .read(budgetProvider.notifier)
+                    .renameCategory(entry.categoryId, ctrl.text);
+                await ref
+                    .read(budgetProvider.notifier)
+                    .updateCategoryIcon(entry.categoryId, iconCp);
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
     ),
   );
 }
@@ -3236,6 +3335,8 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
   late String? _selectedGroupId = widget.initialGroupId;
   bool _creatingGroup = false;
   bool _saving        = false;
+  int? _iconCodePoint;        // null = no icon chosen yet
+  bool _iconManuallyPicked = false; // user overrode the suggestion
 
   @override
   void dispose() {
@@ -3250,6 +3351,30 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
           (_creatingGroup && _groupCtrl.text.trim().isNotEmpty)) &&
       !_saving;
 
+  void _onNameChanged() {
+    if (!_iconManuallyPicked) {
+      final suggested = suggestCategoryIcon(_nameCtrl.text);
+      if (suggested != _iconCodePoint) setState(() => _iconCodePoint = suggested);
+    } else {
+      setState(() {});
+    }
+  }
+
+  Future<void> _pickIcon(BuildContext context) async {
+    final cs = Theme.of(context).colorScheme;
+    final picked = await showModalBottomSheet<int?>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _IconPickerSheet(selected: _iconCodePoint),
+    );
+    if (!mounted) return;
+    setState(() {
+      _iconCodePoint     = picked;
+      _iconManuallyPicked = true;
+    });
+  }
+
   Future<void> _save() async {
     if (!_canSave) return;
     setState(() => _saving = true);
@@ -3262,8 +3387,9 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
         groupId = _selectedGroupId!;
       }
       await widget.ref.read(budgetProvider.notifier).addCategory(
-        name:    _nameCtrl.text.trim(),
-        groupId: groupId,
+        name:          _nameCtrl.text.trim(),
+        groupId:       groupId,
+        iconCodePoint: _iconCodePoint,
       );
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -3289,6 +3415,8 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
     if (_selectedGroupId == null && nonCC.isNotEmpty && !_creatingGroup) {
       _selectedGroupId = nonCC.first.id;
     }
+
+    final hasIcon = _iconCodePoint != null;
 
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
@@ -3317,14 +3445,59 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
                     fontSize: 22, fontWeight: FontWeight.w800, color: cs.onSurface)),
             const SizedBox(height: 24),
 
-            TextField(
-              controller: _nameCtrl,
-              autofocus: true,
-              textCapitalization: TextCapitalization.words,
-              textInputAction: TextInputAction.next,
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(labelText: 'Category name'),
+            // ── Name + icon row ───────────────────────────────────────────
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _nameCtrl,
+                    autofocus: true,
+                    textCapitalization: TextCapitalization.words,
+                    textInputAction: TextInputAction.next,
+                    onChanged: (_) => _onNameChanged(),
+                    decoration: const InputDecoration(labelText: 'Category name'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                GestureDetector(
+                  onTap: () => _pickIcon(context),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: 52, height: 52,
+                    decoration: BoxDecoration(
+                      color: hasIcon
+                          ? cs.primaryContainer
+                          : cs.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: hasIcon
+                            ? cs.primary.withValues(alpha: 0.4)
+                            : cs.outline.withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Center(
+                      child: hasIcon
+                          ? iconFromCodePoint(_iconCodePoint!, size: 22, color: cs.primary)
+                          : Icon(Icons.add_reaction_outlined, size: 20,
+                              color: cs.onSurfaceVariant),
+                    ),
+                  ),
+                ),
+              ],
             ),
+            if (hasIcon)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Text(_iconManuallyPicked ? 'Tap to change' : 'Auto-suggested · tap to change',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 10, color: cs.onSurfaceVariant)),
+                  ],
+                ),
+              ),
             const SizedBox(height: 16),
 
             if (!_creatingGroup)
@@ -3380,6 +3553,103 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Icon picker sheet
+// ---------------------------------------------------------------------------
+
+class _IconPickerSheet extends StatelessWidget {
+  final int? selected;
+  const _IconPickerSheet({this.selected});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Container(
+      decoration: BoxDecoration(
+        color:        cs.surfaceContainerHigh,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 40, height: 4,
+            decoration: BoxDecoration(
+              color:        cs.onSurfaceVariant.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: Text('Choose an icon',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 17, fontWeight: FontWeight.w700,
+                        color: cs.onSurface)),
+              ),
+              if (selected != null)
+                TextButton(
+                  onPressed: () => Navigator.pop(context, null),
+                  child: Text('Remove', style: TextStyle(color: cs.error)),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          GridView.builder(
+            shrinkWrap:  true,
+            physics:     const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 5,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
+              childAspectRatio: 0.85,
+            ),
+            itemCount: kPickableIcons.length,
+            itemBuilder: (ctx, i) {
+              final (iconData, label) = kPickableIcons[i];
+              final cp         = iconData.codePoint;
+              final isSelected = cp == selected;
+
+              return GestureDetector(
+                onTap: () => Navigator.pop(context, cp),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? cs.primaryContainer
+                        : cs.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(12),
+                    border: isSelected
+                        ? Border.all(color: cs.primary, width: 1.5)
+                        : null,
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(iconData, size: 24,
+                          color: isSelected ? cs.primary : cs.onSurfaceVariant),
+                      const SizedBox(height: 4),
+                      Text(label,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 9,
+                              color: isSelected ? cs.primary : cs.onSurfaceVariant),
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
     );
   }

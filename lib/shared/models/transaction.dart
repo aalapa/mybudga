@@ -22,6 +22,7 @@ class Transaction {
   final String? payeeName;
   final String? categoryId;
   final String? categoryName;
+  final int? categoryIconCodePoint;
   final double amount;
   final DateTime date;
   final String? memo;
@@ -38,6 +39,7 @@ class Transaction {
     this.payeeName,
     this.categoryId,
     this.categoryName,
+    this.categoryIconCodePoint,
     required this.amount,
     required this.date,
     this.memo,
@@ -58,8 +60,9 @@ class Transaction {
       account:      accountJson != null ? Account.fromJson(accountJson) : null,
       payeeId:      json['payee_id'] as String?,
       payeeName:    payeeJson?['name'] as String?,
-      categoryId:   json['category_id'] as String?,
-      categoryName: catJson?['name'] as String?,
+      categoryId:            json['category_id'] as String?,
+      categoryName:          catJson?['name'] as String?,
+      categoryIconCodePoint: catJson?['icon_codepoint'] as int?,
       amount:       (json['amount'] as num).toDouble(),
       date:         DateTime.parse(json['date'] as String),
       memo:         json['memo'] as String?,

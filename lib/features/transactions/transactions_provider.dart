@@ -11,7 +11,7 @@ import '../cashflow/cashflow_provider.dart';
 class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
   static const _joinClause =
       '*, accounts(id, household_id, name, nickname, account_type, last_four, is_tracking, current_balance, is_active), '
-      'payees(id, name), categories(id, name)';
+      'payees(id, name), categories(id, name, icon_codepoint)';
 
   @override
   Future<List<Transaction>> build() async {
