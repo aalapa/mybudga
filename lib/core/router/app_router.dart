@@ -91,7 +91,7 @@ final appAuthNotifier = _AppAuthNotifier();
 final routerProvider = Provider<GoRouter>((ref) {
   final router = GoRouter(
     refreshListenable: appAuthNotifier,
-    initialLocation: '/budget',
+    initialLocation: '/transactions',
     redirect: (context, state) {
       final authState = appAuthNotifier.state;
       final loc = state.matchedLocation;
