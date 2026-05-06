@@ -105,7 +105,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           return loc == '/setup' ? null : '/setup';
         case _AppAuthState.ready:
           if (loc == '/login' || loc == '/setup' || loc == '/loading') {
-            return '/budget';
+            return '/transactions';
           }
           return null; // '/settings' and all shell routes are allowed
       }
