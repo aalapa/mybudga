@@ -21,7 +21,8 @@ class CashflowScreen extends ConsumerStatefulWidget {
 }
 
 class _CashflowScreenState extends ConsumerState<CashflowScreen> {
-  int _days = 30;
+  int  _days    = 30;
+  bool _compact = true;
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +34,14 @@ class _CashflowScreenState extends ConsumerState<CashflowScreen> {
       body: state.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error:   (e, _) => Center(child: Text('Error: $e')),
-        data:    (s) => _CashflowBody(state: s, days: _days, onDaysChanged: (d) => setState(() => _days = d), ref: ref),
+        data:    (s) => _CashflowBody(
+          state:            s,
+          days:             _days,
+          compact:          _compact,
+          onDaysChanged:    (d) => setState(() => _days = d),
+          onCompactChanged: (c) => setState(() => _compact = c),
+          ref:              ref,
+        ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showAddScheduledSheet(context, ref, prefill: null),
@@ -51,13 +59,17 @@ class _CashflowScreenState extends ConsumerState<CashflowScreen> {
 class _CashflowBody extends StatelessWidget {
   final CashflowState state;
   final int days;
+  final bool compact;
   final ValueChanged<int> onDaysChanged;
+  final ValueChanged<bool> onCompactChanged;
   final WidgetRef ref;
 
   const _CashflowBody({
     required this.state,
     required this.days,
+    required this.compact,
     required this.onDaysChanged,
+    required this.onCompactChanged,
     required this.ref,
   });
 
@@ -120,6 +132,16 @@ class _CashflowBody extends StatelessWidget {
                           ),
                         ],
                       ),
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        compact
+                            ? Icons.view_agenda_outlined
+                            : Icons.view_stream_outlined,
+                        color: cs.onSurfaceVariant,
+                      ),
+                      tooltip: compact ? 'Show details' : 'Compact view',
+                      onPressed: () => onCompactChanged(!compact),
                     ),
                   ],
                 ),
@@ -219,7 +241,7 @@ class _CashflowBody extends StatelessWidget {
               itemBuilder: (context, i) {
                 final day = dayRows[i];
                 return day.hasEvents
-                    ? _EventDayRow(day: day, ref: ref, maxBalance: maxBalance)
+                    ? _EventDayRow(day: day, ref: ref, maxBalance: maxBalance, compact: compact)
                     : _EmptyDayRow(day: day, maxBalance: maxBalance);
               },
             ),
@@ -590,14 +612,94 @@ class _EventDayRow extends StatelessWidget {
   final _DayData day;
   final WidgetRef ref;
   final double maxBalance;
-  const _EventDayRow({required this.day, required this.ref, required this.maxBalance});
+  final bool compact;
+  const _EventDayRow({
+    required this.day,
+    required this.ref,
+    required this.maxBalance,
+    required this.compact,
+  });
 
   @override
   Widget build(BuildContext context) {
+    return compact ? _buildCompact(context) : _buildFull(context);
+  }
+
+  Widget _buildCompact(BuildContext context) {
+    final cs         = Theme.of(context).colorScheme;
+    final fmt        = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final now        = DateTime.now();
+    final isToday    = _sameDay(day.date, now);
+    final isTomorrow = _sameDay(day.date, now.add(const Duration(days: 1)));
+    final hasIncome  = day.events.any((e) => e.isIncome);
+    final hasExpense = day.events.any((e) => !e.isIncome);
+
+    final dateLabel = isToday
+        ? 'Today'
+        : isTomorrow
+            ? 'Tmrw'
+            : DateFormat('MMM d').format(day.date);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 56,
+            child: Text(
+              dateLabel,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                fontWeight: isToday ? FontWeight.w700 : FontWeight.w500,
+                color: isToday ? cs.primary : cs.onSurface,
+              ),
+            ),
+          ),
+          if (hasExpense)
+            Text(
+              '−',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 13, fontWeight: FontWeight.w800, color: cs.primary,
+              ),
+            ),
+          if (hasIncome)
+            Text(
+              '+',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 13, fontWeight: FontWeight.w800, color: cs.tertiary,
+              ),
+            ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: _BalanceBar(
+                balance:    day.endBalance,
+                maxBalance: maxBalance,
+                height:     5,
+              ),
+            ),
+          ),
+          Text(
+            fmt.format(day.endBalance),
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: day.endBalance < 500
+                  ? cs.error.withValues(alpha: 0.7)
+                  : cs.onSurfaceVariant.withValues(alpha: 0.55),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFull(BuildContext context) {
     final cs  = Theme.of(context).colorScheme;
     final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
     final now = DateTime.now();
-    final isToday = _sameDay(day.date, now);
+    final isToday    = _sameDay(day.date, now);
     final isTomorrow = _sameDay(day.date, now.add(const Duration(days: 1)));
 
     final label = isToday
@@ -637,7 +739,6 @@ class _EventDayRow extends StatelessWidget {
                   color: cs.onSurfaceVariant,
                 ),
               ),
-              // ── Bar between label and amount ─────────────────────────
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 10),
