@@ -170,7 +170,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
 
     switch (strategy) {
       case QuickBudgetStrategy.currentMonth:
-        final curStr = '${baseMonth.year}-${baseMonth.month.toString().padLeft(2, '0')}';
+        final curStr = '${baseMonth.year}-${baseMonth.month.toString().padLeft(2, '0')}-01';
         final rows   = await client
             .from('budget_months')
             .select('category_id, budgeted')
@@ -183,7 +183,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
 
       case QuickBudgetStrategy.lastMonth:
         final prev    = DateTime(baseMonth.year, baseMonth.month - 1);
-        final prevStr = '${prev.year}-${prev.month.toString().padLeft(2, '0')}';
+        final prevStr = '${prev.year}-${prev.month.toString().padLeft(2, '0')}-01';
         final rows    = await client
             .from('budget_months')
             .select('category_id, budgeted')
