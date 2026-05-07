@@ -9,7 +9,7 @@ import '../../shared/providers/household_provider.dart';
 // Quick-budget enums (public so the UI can reference them)
 // ---------------------------------------------------------------------------
 
-enum QuickBudgetStrategy { lastMonth, averageSpending, coverSpending }
+enum QuickBudgetStrategy { currentMonth, lastMonth, averageSpending, coverSpending }
 enum QuickBudgetScope    { thisMonth, next3, next6, next12 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +169,18 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     final amounts = <String, double>{};
 
     switch (strategy) {
+      case QuickBudgetStrategy.currentMonth:
+        final curStr = '${baseMonth.year}-${baseMonth.month.toString().padLeft(2, '0')}';
+        final rows   = await client
+            .from('budget_months')
+            .select('category_id, budgeted')
+            .eq('household_id', householdId)
+            .eq('month', curStr);
+        for (final r in rows as List) {
+          final b = (r['budgeted'] as num).toDouble();
+          if (b > 0) amounts[r['category_id'] as String] = b;
+        }
+
       case QuickBudgetStrategy.lastMonth:
         final prev    = DateTime(baseMonth.year, baseMonth.month - 1);
         final prevStr = '${prev.year}-${prev.month.toString().padLeft(2, '0')}';

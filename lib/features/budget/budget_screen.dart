@@ -2764,9 +2764,10 @@ class _QuickBudgetSheetState extends State<_QuickBudgetSheet> {
   }
 
   String get _strategyLabel => switch (_strategy) {
-    _QuickBudgetStrategy.lastMonth       => "Last month's budgeted amounts",
-    _QuickBudgetStrategy.averageSpending => 'Average spending (last 3 months)',
-    _QuickBudgetStrategy.coverSpending   => "Cover this month's spending",
+    _QuickBudgetStrategy.currentMonth    => "Copy this month's budgeted amounts",
+    _QuickBudgetStrategy.lastMonth       => "Copy last month's budgeted amounts",
+    _QuickBudgetStrategy.averageSpending => 'Average of last 3 months actual spending',
+    _QuickBudgetStrategy.coverSpending   => "Match this month's actual spending",
   };
 
   String get _applyLabel => switch (_scope) {
@@ -2820,8 +2821,9 @@ class _QuickBudgetSheetState extends State<_QuickBudgetSheet> {
             const SizedBox(height: 10),
             _SegmentGroup<_QuickBudgetStrategy>(
               options: const [
+                (_QuickBudgetStrategy.currentMonth,    'This Month',   Icons.today),
                 (_QuickBudgetStrategy.lastMonth,       'Last Month',   Icons.history),
-                (_QuickBudgetStrategy.averageSpending, '3-Mo Average', Icons.show_chart),
+                (_QuickBudgetStrategy.averageSpending, '3-Mo Avg',     Icons.show_chart),
                 (_QuickBudgetStrategy.coverSpending,   'Cover Spent',  Icons.check_circle_outline),
               ],
               selected:  _strategy,
