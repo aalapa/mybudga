@@ -63,12 +63,13 @@ class _CashflowBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs      = Theme.of(context).colorScheme;
-    final fmt     = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
-    final today   = DateTime.now();
+    final cs       = Theme.of(context).colorScheme;
+    final fmt      = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final today    = DateTime.now();
+    final accounts = ref.watch(accountsProvider).valueOrNull ?? [];
 
     // Build projected entries
-    final dayRows = _buildDayRows(state, today, days);
+    final dayRows = _buildDayRows(state, today, days, accounts);
 
     final isDoomsday = days == _CashflowBody._ddSentinel;
 
@@ -236,6 +237,7 @@ class _CashflowBody extends StatelessWidget {
     CashflowState state,
     DateTime today,
     int days,
+    List<Account> accounts,
   ) {
     final isDoomsday = days == _ddSentinel;
     final maxDays    = isDoomsday ? 365 : days;
@@ -248,15 +250,29 @@ class _CashflowBody extends StatelessWidget {
     final entries = <_ProjectedEntry>[];
 
     for (final st in cashScheduled) {
+      // Resolve TO account name from local accounts list (join removed from query)
+      final toAccountName = st.isTransfer && st.transferToAccountId != null
+          ? accounts
+              .where((a) => a.id == st.transferToAccountId)
+              .firstOrNull
+              ?.displayName
+          : null;
+
       for (final date in st.occurrencesUntil(today, cutoff)) {
         entries.add(_ProjectedEntry(
           scheduledTx: st,
           date:        date,
-          payee:       st.payeeName ?? st.memo ?? 'Scheduled',
+          payee:       st.isTransfer
+              ? (st.payeeName?.isNotEmpty == true
+                  ? st.payeeName!
+                  : 'Transfer')
+              : (st.payeeName ?? st.memo ?? 'Scheduled'),
           accountName: st.accountName,
           amount:      st.amount,
-          isIncome:    st.amount > 0,
-          category:    st.categoryName,
+          isIncome:    !st.isTransfer && st.amount > 0,
+          category:    st.isTransfer
+              ? '→ ${toAccountName ?? 'account'}'
+              : st.categoryName,
         ));
       }
     }
@@ -394,13 +410,22 @@ class _CashflowTile extends ConsumerWidget {
               Container(
                 width: 36, height: 36,
                 decoration: BoxDecoration(
-                  color: (entry.isIncome ? cs.tertiary : cs.primary).withValues(alpha: 0.1),
+                  color: (entry.scheduledTx.isTransfer
+                          ? cs.secondary
+                          : entry.isIncome ? cs.tertiary : cs.primary)
+                      .withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
-                  entry.isIncome ? Icons.arrow_downward_rounded : Icons.arrow_upward_rounded,
+                  entry.scheduledTx.isTransfer
+                      ? Icons.compare_arrows_rounded
+                      : entry.isIncome
+                          ? Icons.arrow_downward_rounded
+                          : Icons.arrow_upward_rounded,
                   size: 17,
-                  color: entry.isIncome ? cs.tertiary : cs.primary,
+                  color: entry.scheduledTx.isTransfer
+                      ? cs.secondary
+                      : entry.isIncome ? cs.tertiary : cs.primary,
                 ),
               ),
               const SizedBox(width: 12),
@@ -429,11 +454,18 @@ class _CashflowTile extends ConsumerWidget {
                       ],
                     ),
                     Text(
-                      entry.category != null
-                          ? '${entry.accountName} · ${entry.category}'
-                          : entry.accountName,
+                      entry.scheduledTx.needsAccount
+                          ? entry.category != null
+                              ? 'Account TBD · ${entry.category}'
+                              : 'Account TBD'
+                          : entry.category != null
+                              ? '${entry.accountName} · ${entry.category}'
+                              : (entry.accountName ?? ''),
                       style: GoogleFonts.plusJakartaSans(
-                        fontSize: 11, color: cs.onSurfaceVariant,
+                        fontSize: 11,
+                        color: entry.scheduledTx.needsAccount
+                            ? cs.primary
+                            : cs.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -699,7 +731,7 @@ class _ProjectedEntry {
   final ScheduledTransaction scheduledTx;
   final DateTime date;
   final String payee;
-  final String accountName;
+  final String? accountName;
   final double amount;
   final bool isIncome;
   final String? category;
@@ -743,20 +775,36 @@ void _showTileActions(
             ),
           ),
           const SizedBox(height: 4),
-          ListTile(
-            leading: Icon(Icons.check_circle_outline, color: cs.tertiary),
-            title: Text('Mark as paid',
-                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
-            subtitle: Text(
-              'Advances due date to the next occurrence',
-              style: GoogleFonts.plusJakartaSans(
-                  fontSize: 12, color: cs.onSurfaceVariant),
+          if (st.needsAccount)
+            ListTile(
+              leading: Icon(Icons.check_circle_outline, color: cs.tertiary),
+              title: Text('Confirm Payment',
+                  style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
+              subtitle: Text(
+                'Choose account & confirm actual amount',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12, color: cs.onSurfaceVariant),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showConfirmPaymentSheet(context, ref, entry);
+              },
+            )
+          else
+            ListTile(
+              leading: Icon(Icons.check_circle_outline, color: cs.tertiary),
+              title: Text('Mark as paid',
+                  style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
+              subtitle: Text(
+                'Advances due date to the next occurrence',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12, color: cs.onSurfaceVariant),
+              ),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await ref.read(cashflowProvider.notifier).markAsPaid(st.id);
+              },
             ),
-            onTap: () async {
-              Navigator.pop(ctx);
-              await ref.read(cashflowProvider.notifier).markAsPaid(st.id);
-            },
-          ),
           ListTile(
             leading: Icon(Icons.edit_outlined, color: cs.onSurfaceVariant),
             title: Text('Edit',
@@ -805,9 +853,12 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
   final _amountCtrl    = TextEditingController();
   final _memoCtrl      = TextEditingController();
 
-  bool   _isIncome       = false;
+  bool   _isIncome        = false;
+  bool   _isTransfer      = false;
   bool   _incomeNextMonth = false;
+  bool   _accountTbd      = false; // pick FROM account at payment time
   String? _accountId;
+  String? _toAccountId;   // transfer destination (TO account)
   String? _categoryId;
   String? _categoryName;
   ScheduledFrequency _frequency = ScheduledFrequency.monthly;
@@ -826,6 +877,9 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
       _payeeCtrl.text  = p.payeeName ?? '';
       _memoCtrl.text   = p.memo ?? '';
       _accountId       = p.accountId;
+      _accountTbd      = p.accountId == null;
+      _isTransfer      = p.isTransfer;
+      _toAccountId     = p.transferToAccountId;
       _categoryId      = p.categoryId;
       _categoryName    = p.categoryName;
       _frequency       = p.frequency;
@@ -893,7 +947,7 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
         .where((a) => !a.isTracking && a.type != AccountType.investment && a.type != AccountType.loan)
         .toList();
 
-    if (_accountId == null && budgetAccounts.isNotEmpty) {
+    if (_accountId == null && !_accountTbd && budgetAccounts.isNotEmpty) {
       _accountId = budgetAccounts.first.id;
     }
 
@@ -949,22 +1003,38 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Income / Expense toggle
+                      // Expense / Income / Transfer
                       Row(
                         children: [
                           _TypeChip(
                             label: 'Expense',
-                            selected: !_isIncome,
+                            selected: !_isIncome && !_isTransfer,
                             onTap: () => setState(() {
-                              _isIncome = false;
+                              _isIncome    = false;
+                              _isTransfer  = false;
                               _incomeNextMonth = false;
                             }),
                           ),
                           const SizedBox(width: 8),
                           _TypeChip(
                             label: 'Income',
-                            selected: _isIncome,
-                            onTap: () => setState(() => _isIncome = true),
+                            selected: _isIncome && !_isTransfer,
+                            onTap: () => setState(() {
+                              _isIncome   = true;
+                              _isTransfer = false;
+                            }),
+                          ),
+                          const SizedBox(width: 8),
+                          _TypeChip(
+                            label: 'Transfer',
+                            selected: _isTransfer,
+                            onTap: () => setState(() {
+                              _isTransfer      = true;
+                              _isIncome        = false;
+                              _incomeNextMonth = false;
+                              _accountTbd      = true; // FROM is TBD by default
+                              _accountId       = null;
+                            }),
                           ),
                         ],
                       ),
@@ -1010,6 +1080,26 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
                       ],
                       const SizedBox(height: 16),
 
+                      // Transfer: TO account picker
+                      if (_isTransfer) ...[
+                        DropdownButtonFormField<String>(
+                          value: _toAccountId,
+                          decoration: const InputDecoration(
+                            labelText: 'To account',
+                            helperText: 'The account receiving the money (e.g. credit card)',
+                          ),
+                          dropdownColor: cs.surfaceContainerHighest,
+                          items: budgetAccounts.map((a) => DropdownMenuItem(
+                            value: a.id,
+                            child: Text(a.displayName,
+                                style: GoogleFonts.plusJakartaSans(fontSize: 14)),
+                          )).toList(),
+                          onChanged: (v) => setState(() => _toAccountId = v),
+                          validator: (v) => _isTransfer && v == null ? 'Required' : null,
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+
                       // Amount
                       TextFormField(
                         controller:  _amountCtrl,
@@ -1027,27 +1117,59 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
                       ),
                       const SizedBox(height: 14),
 
-                      // Payee
-                      TextFormField(
-                        controller: _payeeCtrl,
-                        textCapitalization: TextCapitalization.words,
-                        decoration: const InputDecoration(labelText: 'Payee'),
-                      ),
-                      const SizedBox(height: 14),
+                      // Payee (not shown for transfers — TO account serves as destination)
+                      if (!_isTransfer) ...[
+                        TextFormField(
+                          controller: _payeeCtrl,
+                          textCapitalization: TextCapitalization.words,
+                          decoration: const InputDecoration(labelText: 'Payee'),
+                        ),
+                        const SizedBox(height: 14),
+                      ],
 
-                      // Account picker
-                      DropdownButtonFormField<String>(
-                        initialValue: _accountId,
-                        decoration: const InputDecoration(labelText: 'Account'),
-                        dropdownColor: cs.surfaceContainerHighest,
-                        items: budgetAccounts.map((a) => DropdownMenuItem(
-                          value: a.id,
-                          child: Text(a.displayName,
-                              style: GoogleFonts.plusJakartaSans(fontSize: 14)),
-                        )).toList(),
-                        onChanged: (v) => setState(() => _accountId = v),
-                        validator: (v) => v == null ? 'Required' : null,
+                      // Account — fixed or TBD
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          'Pick account at payment time',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13,
+                              fontWeight: _accountTbd
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
+                              color: _accountTbd
+                                  ? cs.onSurface
+                                  : cs.onSurfaceVariant),
+                        ),
+                        subtitle: _accountTbd
+                            ? Text(
+                                'You\'ll choose the account when you confirm payment',
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 11, color: cs.onSurfaceVariant),
+                              )
+                            : null,
+                        value: _accountTbd,
+                        onChanged: (v) => setState(() {
+                          _accountTbd = v;
+                          if (v) _accountId = null;
+                        }),
                       ),
+                      if (!_accountTbd) ...[
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<String>(
+                          key: const ValueKey('account_picker'),
+                          value: _accountId,
+                          decoration: const InputDecoration(labelText: 'Account'),
+                          dropdownColor: cs.surfaceContainerHighest,
+                          items: budgetAccounts.map((a) => DropdownMenuItem(
+                            value: a.id,
+                            child: Text(a.displayName,
+                                style: GoogleFonts.plusJakartaSans(fontSize: 14)),
+                          )).toList(),
+                          onChanged: (v) => setState(() => _accountId = v),
+                          validator: (v) => v == null ? 'Required' : null,
+                        ),
+                      ],
                       const SizedBox(height: 14),
 
                       // Category picker
@@ -1302,36 +1424,41 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_accountId == null) return;
+    if (!_accountTbd && _accountId == null) return;
 
     setState(() => _saving = true);
     try {
-      final raw    = double.parse(_amountCtrl.text.trim());
-      final amount = _isIncome ? raw.abs() : -raw.abs();
-      final memo   = _memoCtrl.text.trim().isEmpty ? null : _memoCtrl.text.trim();
+      final raw       = double.parse(_amountCtrl.text.trim());
+      final amount    = _isTransfer || !_isIncome ? -raw.abs() : raw.abs();
+      final memo      = _memoCtrl.text.trim().isEmpty ? null : _memoCtrl.text.trim();
+      final accountId = _accountTbd ? null : _accountId;
 
       String savedId;
       if (_isEditing) {
         savedId = widget.prefill!.id;
         await ref.read(cashflowProvider.notifier).updateScheduled(
           savedId,
-          accountId:  _accountId!,
-          amount:     amount,
-          frequency:  _frequency,
-          nextDate:   _nextDate,
-          payeeName:  _payeeCtrl.text.trim(),
-          categoryId: _categoryId,
-          memo:       memo,
+          accountId:            accountId,
+          amount:               amount,
+          frequency:            _frequency,
+          nextDate:             _nextDate,
+          payeeName:            _payeeCtrl.text.trim(),
+          categoryId:           _isTransfer ? null : _categoryId,
+          memo:                 memo,
+          isTransfer:           _isTransfer,
+          transferToAccountId:  _isTransfer ? _toAccountId : null,
         );
       } else {
         savedId = await ref.read(cashflowProvider.notifier).addScheduled(
-          accountId:  _accountId!,
-          amount:     amount,
-          frequency:  _frequency,
-          nextDate:   _nextDate,
-          payeeName:  _payeeCtrl.text.trim(),
-          categoryId: _categoryId,
-          memo:       memo,
+          accountId:            accountId,
+          amount:               amount,
+          frequency:            _frequency,
+          nextDate:             _nextDate,
+          payeeName:            _payeeCtrl.text.trim(),
+          categoryId:           _isTransfer ? null : _categoryId,
+          memo:                 memo,
+          isTransfer:           _isTransfer,
+          transferToAccountId:  _isTransfer ? _toAccountId : null,
         );
       }
 
@@ -1351,6 +1478,231 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
         await NotificationService.instance.cancelBillReminder(savedId);
       }
 
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Confirm payment sheet — for account-less scheduled bills
+// ---------------------------------------------------------------------------
+
+void _showConfirmPaymentSheet(
+    BuildContext context, WidgetRef ref, _ProjectedEntry entry) {
+  showModalBottomSheet(
+    context:            context,
+    isScrollControlled: true,
+    backgroundColor:    Colors.transparent,
+    builder: (_) => _ConfirmPaymentSheet(entry: entry, widgetRef: ref),
+  );
+}
+
+class _ConfirmPaymentSheet extends ConsumerStatefulWidget {
+  final _ProjectedEntry entry;
+  final WidgetRef widgetRef;
+  const _ConfirmPaymentSheet({required this.entry, required this.widgetRef});
+
+  @override
+  ConsumerState<_ConfirmPaymentSheet> createState() => _ConfirmPaymentSheetState();
+}
+
+class _ConfirmPaymentSheetState extends ConsumerState<_ConfirmPaymentSheet> {
+  final _amountCtrl = TextEditingController();
+  String? _accountId;
+  DateTime _date = DateTime.now();
+  bool _saving   = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _amountCtrl.text = widget.entry.amount.abs().toStringAsFixed(2);
+    // Pre-fill FROM account if already set on the scheduled transaction
+    _accountId = widget.entry.scheduledTx.accountId;
+  }
+
+  @override
+  void dispose() {
+    _amountCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs       = Theme.of(context).colorScheme;
+    final accounts = ref.watch(accountsProvider).valueOrNull ?? [];
+    final checkingAccounts = accounts
+        .where((a) => !a.isTracking &&
+            (a.type == AccountType.checking ||
+             a.type == AccountType.savings ||
+             a.type == AccountType.cash))
+        .toList();
+
+    if (_accountId == null && checkingAccounts.isNotEmpty) {
+      _accountId = checkingAccounts.first.id;
+    }
+
+    final st  = widget.entry.scheduledTx;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+
+    final toAccountName = st.isTransfer && st.transferToAccountId != null
+        ? accounts
+            .where((a) => a.id == st.transferToAccountId)
+            .firstOrNull
+            ?.displayName
+        : null;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: Container(
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerLow,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 36, height: 4,
+                decoration: BoxDecoration(
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Icon(
+                  st.isTransfer
+                      ? Icons.compare_arrows_rounded
+                      : Icons.check_circle_outline,
+                  size: 20, color: cs.tertiary),
+                const SizedBox(width: 8),
+                Text(
+                  st.isTransfer ? 'Confirm Transfer' : 'Confirm Payment',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 18, fontWeight: FontWeight.w800,
+                      color: cs.onSurface)),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              st.isTransfer
+                  ? '→ ${toAccountName ?? 'account'}'
+                  : (widget.entry.payee.isNotEmpty
+                      ? widget.entry.payee
+                      : (st.memo ?? 'Bill')),
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13, color: cs.onSurfaceVariant),
+            ),
+            const SizedBox(height: 24),
+
+            // Amount — editable
+            TextFormField(
+              controller: _amountCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+              decoration: InputDecoration(
+                labelText: 'Actual amount',
+                prefixText: '\$ ',
+                helperText: 'Forecast was ${fmt.format(widget.entry.amount.abs())}',
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // FROM account picker
+            DropdownButtonFormField<String>(
+              value: _accountId,
+              decoration: InputDecoration(
+                labelText: st.isTransfer ? 'Pay from account' : 'Account',
+              ),
+              dropdownColor: cs.surfaceContainerHighest,
+              items: checkingAccounts.map((a) => DropdownMenuItem(
+                value: a.id,
+                child: Text(a.displayName,
+                    style: GoogleFonts.plusJakartaSans(fontSize: 14)),
+              )).toList(),
+              onChanged: (v) => setState(() => _accountId = v),
+            ),
+            const SizedBox(height: 16),
+
+            // Date
+            GestureDetector(
+              onTap: () async {
+                final picked = await showDatePicker(
+                  context:     context,
+                  initialDate: _date,
+                  firstDate:   DateTime.now().subtract(const Duration(days: 31)),
+                  lastDate:    DateTime.now().add(const Duration(days: 7)),
+                );
+                if (picked != null) setState(() => _date = picked);
+              },
+              child: InputDecorator(
+                decoration: const InputDecoration(labelText: 'Payment date'),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        DateFormat('MMM d, yyyy').format(_date),
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 14, color: cs.onSurface),
+                      ),
+                    ),
+                    Icon(Icons.calendar_today_outlined,
+                        size: 16, color: cs.onSurfaceVariant),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 28),
+
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: (_saving || _accountId == null) ? null : _confirm,
+                style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(52)),
+                child: _saving
+                    ? const SizedBox(
+                        height: 18, width: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text('Confirm & Record',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirm() async {
+    final raw = double.tryParse(_amountCtrl.text.trim());
+    if (raw == null || _accountId == null) return;
+
+    final actualAmount = widget.entry.scheduledTx.isIncome ? raw.abs() : -raw.abs();
+
+    setState(() => _saving = true);
+    try {
+      await ref.read(cashflowProvider.notifier).confirmPayment(
+        widget.entry.scheduledTx.id,
+        accountId:    _accountId!,
+        actualAmount: actualAmount,
+        date:         _date,
+      );
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) {
