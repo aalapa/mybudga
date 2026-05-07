@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:uuid/uuid.dart';
 import '../../core/supabase/supabase_provider.dart';
 import '../../shared/models/transaction.dart';
 import '../../shared/providers/household_provider.dart';
@@ -119,38 +120,35 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
     required DateTime date,
     String? memo,
   }) async {
+    const uuid        = Uuid();
+    final debitId     = uuid.v4();
+    final creditId    = uuid.v4();
     final householdId = await ref.read(householdIdProvider.future);
     final client      = ref.read(supabaseProvider);
+    final memoValue   = memo?.isNotEmpty == true ? memo : null;
 
-    // Insert the debit leg first to get its id
-    final debit = await client.from('transactions').insert({
+    // Both legs know each other's ID upfront — no SELECT or UPDATE needed.
+    await client.from('transactions').insert({
+      'id':           debitId,
       'household_id': householdId,
       'account_id':   fromAccountId,
       'amount':       -amount.abs(),
       'date':         _toDateString(date),
-      'memo':         memo?.isNotEmpty == true ? memo : null,
+      'memo':         memoValue,
       'status':       'confirmed',
-    }).select('id').single();
+      'transfer_id':  creditId,
+    });
 
-    final debitId = debit['id'] as String;
-
-    // Insert the credit leg, linking back to debit
-    final credit = await client.from('transactions').insert({
+    await client.from('transactions').insert({
+      'id':           creditId,
       'household_id': householdId,
       'account_id':   toAccountId,
       'amount':       amount.abs(),
       'date':         _toDateString(date),
-      'memo':         memo?.isNotEmpty == true ? memo : null,
+      'memo':         memoValue,
       'status':       'confirmed',
       'transfer_id':  debitId,
-    }).select('id').single();
-
-    final creditId = credit['id'] as String;
-
-    // Link debit back to credit
-    await client.from('transactions')
-        .update({'transfer_id': creditId})
-        .eq('id', debitId);
+    });
 
     ref.invalidateSelf();
     ref.invalidate(accountsProvider);
@@ -211,10 +209,28 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
 
   Future<void> deleteTransaction(String id) async {
     final client = ref.read(supabaseProvider);
+
+    // Fetch the transfer partner (if any) before deleting.
+    final row = await client
+        .from('transactions')
+        .select('transfer_id')
+        .eq('id', id)
+        .maybeSingle();
+    final partnerId = row?['transfer_id'] as String?;
+
+    final deletedAt = DateTime.now().toIso8601String();
     await client
         .from('transactions')
-        .update({'deleted_at': DateTime.now().toIso8601String()})
+        .update({'deleted_at': deletedAt})
         .eq('id', id);
+
+    if (partnerId != null) {
+      await client
+          .from('transactions')
+          .update({'deleted_at': deletedAt})
+          .eq('id', partnerId);
+    }
+
     ref.invalidateSelf();
     ref.invalidate(accountsProvider);
     ref.invalidate(budgetProvider);
@@ -247,13 +263,15 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
       return id;
     }
 
-    final created = await client.from('payees').insert({
-      'household_id':       householdId,
-      'name':               name,
+    const uuid  = Uuid();
+    final newId = uuid.v4();
+    await client.from('payees').insert({
+      'id':                  newId,
+      'household_id':        householdId,
+      'name':                name,
       'default_category_id': categoryId,
-    }).select('id').single();
-
-    return created['id'] as String;
+    });
+    return newId;
   }
 
   static String _toDateString(DateTime d) =>

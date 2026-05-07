@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:uuid/uuid.dart';
 import '../../core/supabase/supabase_provider.dart';
 import '../../shared/models/scheduled_transaction.dart';
 import '../../shared/providers/household_provider.dart';
@@ -75,6 +76,8 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
     DateTime? endDate,
     bool autoApprove = false,
   }) async {
+    const uuid        = Uuid();
+    final id          = uuid.v4();
     final householdId = await ref.read(householdIdProvider.future);
     final client      = ref.read(supabaseProvider);
 
@@ -88,7 +91,8 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
       );
     }
 
-    final row = await client.from('scheduled_transactions').insert({
+    await client.from('scheduled_transactions').insert({
+      'id':           id,
       'household_id': householdId,
       'account_id':   accountId,
       'payee_id':     payeeId,
@@ -100,10 +104,10 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
       'end_date':     endDate != null ? _toDateString(endDate) : null,
       'auto_approve': autoApprove,
       'is_active':    true,
-    }).select('id').single();
+    });
 
     ref.invalidateSelf();
-    return row['id'] as String;
+    return id;
   }
 
   Future<void> markAsPaid(String id) async {
@@ -183,8 +187,15 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
   }
 
   Future<void> deleteScheduled(String id) async {
-    final client = ref.read(supabaseProvider);
-    await client.from('scheduled_transactions').delete().eq('id', id);
+    final client  = ref.read(supabaseProvider);
+    final deleted = await client
+        .from('scheduled_transactions')
+        .delete()
+        .eq('id', id)
+        .select('id');
+    if (deleted.isEmpty) {
+      throw Exception('Could not delete — record not found or permission denied.');
+    }
     await NotificationService.instance.cancelBillReminder(id);
     ref.read(billRemindersProvider.notifier).setEnabled(id, enabled: false);
     ref.invalidateSelf();
@@ -257,13 +268,15 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
       return id;
     }
 
-    final created = await client.from('payees').insert({
+    const uuid  = Uuid();
+    final newId = uuid.v4();
+    await client.from('payees').insert({
+      'id':                  newId,
       'household_id':        householdId,
       'name':                name,
       'default_category_id': categoryId,
-    }).select('id').single();
-
-    return created['id'] as String;
+    });
+    return newId;
   }
 
   static String _toDateString(DateTime d) =>

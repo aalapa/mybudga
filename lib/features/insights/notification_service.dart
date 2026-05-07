@@ -124,19 +124,18 @@ class NotificationService {
     required DateTime dueDate,
   }) async {
     if (!_initialized) return;
-
-    final id  = _billNotifId(scheduledTxId);
-    await _plugin.cancel(id);
-
-    // Fire at 9 am the day before the due date.
-    final loc         = tz.local;
-    final reminderDay = dueDate.subtract(const Duration(days: 1));
-    final scheduled   = tz.TZDateTime(
-        loc, reminderDay.year, reminderDay.month, reminderDay.day, 9, 0);
-    if (!scheduled.isAfter(tz.TZDateTime.now(loc))) return;
-
-    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
     try {
+      final id  = _billNotifId(scheduledTxId);
+      await _plugin.cancel(id);
+
+      // Fire at 9 am the day before the due date.
+      final loc         = tz.local;
+      final reminderDay = dueDate.subtract(const Duration(days: 1));
+      final scheduled   = tz.TZDateTime(
+          loc, reminderDay.year, reminderDay.month, reminderDay.day, 9, 0);
+      if (!scheduled.isAfter(tz.TZDateTime.now(loc))) return;
+
+      final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
       await _plugin.zonedSchedule(
         id,
         'Bill due tomorrow',
@@ -162,7 +161,9 @@ class NotificationService {
 
   Future<void> cancelBillReminder(String scheduledTxId) async {
     if (!_initialized) return;
-    await _plugin.cancel(_billNotifId(scheduledTxId));
+    try {
+      await _plugin.cancel(_billNotifId(scheduledTxId));
+    } catch (_) {}
   }
 
   /// Cancel all known bill reminders then reschedule for active entries

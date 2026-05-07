@@ -851,7 +851,9 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
   }
 
   Future<void> _delete() async {
-    final cs = Theme.of(context).colorScheme;
+    final cs        = Theme.of(context).colorScheme;
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
@@ -871,8 +873,16 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
       ),
     );
     if (confirm != true || !mounted) return;
-    await ref.read(cashflowProvider.notifier).deleteScheduled(widget.prefill!.id);
-    if (mounted) Navigator.pop(context);
+    try {
+      await ref.read(cashflowProvider.notifier).deleteScheduled(widget.prefill!.id);
+      navigator.pop();
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+        content: Text('Error: $e'),
+        backgroundColor: cs.error,
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
   }
 
   @override
