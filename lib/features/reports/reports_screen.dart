@@ -1,3 +1,5 @@
+import 'dart:math' show max, min;
+
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,7 +18,23 @@ class ReportsScreen extends ConsumerStatefulWidget {
 
 class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   int _months     = 1;
-  int _touchedIdx = -1; // for donut chart
+  int _touchedIdx = -1;
+
+  void _showDeepDive(
+      BuildContext context, ReportsState data, CategorySpend cat, Color color) {
+    final monthly = data.categoryMonthlySpend[cat.categoryId] ?? [];
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _CategoryDeepDiveSheet(
+        category:     cat,
+        byMonth:      data.byMonth,
+        monthlySpend: monthly,
+        color:        color,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -49,6 +67,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
             touchedIdx: _touchedIdx,
             onMonthsChanged:     (m) => setState(() { _months = m; _touchedIdx = -1; }),
             onTouchedIdxChanged: (i) => setState(() => _touchedIdx = i),
+            onDrillDown: (cat, color) => _showDeepDive(context, data, cat, color),
           ),
         ),
       ),
@@ -66,6 +85,7 @@ class _ReportsBody extends StatelessWidget {
   final int touchedIdx;
   final ValueChanged<int> onMonthsChanged;
   final ValueChanged<int> onTouchedIdxChanged;
+  final void Function(CategorySpend, Color) onDrillDown;
 
   const _ReportsBody({
     required this.data,
@@ -73,12 +93,11 @@ class _ReportsBody extends StatelessWidget {
     required this.touchedIdx,
     required this.onMonthsChanged,
     required this.onTouchedIdxChanged,
+    required this.onDrillDown,
   });
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
     return CustomScrollView(
       slivers: [
         // ── Header + period selector ────────────────────────────────────────
@@ -91,7 +110,7 @@ class _ReportsBody extends StatelessWidget {
                 Text('Reports',
                     style: GoogleFonts.plusJakartaSans(
                         fontSize: 24, fontWeight: FontWeight.w800,
-                        color: cs.onSurface)),
+                        color: Theme.of(context).colorScheme.onSurface)),
                 const SizedBox(height: 14),
                 _PeriodSelector(months: months, onChanged: onMonthsChanged),
                 const SizedBox(height: 20),
@@ -101,32 +120,41 @@ class _ReportsBody extends StatelessWidget {
         ),
 
         // ── Net Worth ───────────────────────────────────────────────────────
-        SliverToBoxAdapter(
-          child: _NetWorthSection(data: data),
-        ),
+        SliverToBoxAdapter(child: _NetWorthSection(data: data)),
 
         // ── Summary (income / expenses / saved / rate) ─────────────────────
+        SliverToBoxAdapter(child: _SummarySection(data: data, months: months)),
+
+        // ── Budget vs Actual ────────────────────────────────────────────────
         SliverToBoxAdapter(
-          child: _SummarySection(data: data, months: months),
+          child: data.budgetVsActual.isEmpty
+              ? const SizedBox.shrink()
+              : _BudgetVsActualSection(data: data),
         ),
 
-        // ── Spending by category ────────────────────────────────────────────
+        // ── Spending by category (donut + deep-dive) ───────────────────────
         SliverToBoxAdapter(
           child: data.byCategory.isEmpty
               ? _EmptySection(
-                  label: 'SPENDING BY CATEGORY',
+                  label:   'SPENDING BY CATEGORY',
                   message: 'No expense transactions in this period',
                 )
               : _SpendingSection(
                   data:       data,
                   touchedIdx: touchedIdx,
                   onTouch:    onTouchedIdxChanged,
+                  onDrillDown: onDrillDown,
                 ),
         ),
 
-        // ── Monthly trend ───────────────────────────────────────────────────
+        // ── Monthly income vs expenses trend ────────────────────────────────
+        SliverToBoxAdapter(child: _TrendSection(data: data, months: months)),
+
+        // ── Savings rate trend ──────────────────────────────────────────────
         SliverToBoxAdapter(
-          child: _TrendSection(data: data, months: months),
+          child: months > 1
+              ? _SavingsRateTrendSection(data: data)
+              : const SizedBox.shrink(),
         ),
 
         // ── Top payees ──────────────────────────────────────────────────────
@@ -233,7 +261,6 @@ class _NetWorthSection extends StatelessWidget {
                 style: GoogleFonts.plusJakartaSans(
                     fontSize: 12, color: cs.onSurfaceVariant)),
             const SizedBox(height: 16),
-            // Assets vs liabilities bar
             _NetWorthBar(
               assets:      data.totalAssets,
               liabilities: data.totalLiabilities,
@@ -433,18 +460,138 @@ class _MetricCard extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Spending by category — donut chart
+// Budget vs Actual
+// ---------------------------------------------------------------------------
+
+class _BudgetVsActualSection extends StatelessWidget {
+  final ReportsState data;
+  const _BudgetVsActualSection({required this.data});
+
+  Color _barColor(BudgetVsActualEntry e, ColorScheme cs) {
+    if (e.budgeted == 0) return cs.primary;
+    final ratio = e.spent / e.budgeted;
+    if (ratio > 1.0) return cs.error;
+    if (ratio > 0.85) return const Color(0xFFFF9800);
+    return cs.tertiary;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+
+    return _Section(
+      label: 'BUDGET VS ACTUAL',
+      child: Column(
+        children: data.budgetVsActual.map((e) {
+          final color      = _barColor(e, cs);
+          final fillRatio  = e.budgeted > 0
+              ? (e.spent / e.budgeted).clamp(0.0, 1.0)
+              : 0.0;
+          final pctLabel   = e.budgeted > 0
+              ? '${(e.spent / e.budgeted * 100).toStringAsFixed(0)}%'
+              : '—';
+
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(e.name,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: cs.onSurface),
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${fmt.format(e.spent)} / ${fmt.format(e.budgeted)}',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: e.isOverBudget ? cs.error : cs.onSurface),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                LayoutBuilder(
+                  builder: (_, constraints) => ClipRRect(
+                    borderRadius: BorderRadius.circular(5),
+                    child: SizedBox(
+                      height: 8,
+                      width: constraints.maxWidth,
+                      child: Stack(
+                        children: [
+                          Container(color: cs.surfaceContainerHighest),
+                          FractionallySizedBox(
+                            widthFactor: fillRatio,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    color.withValues(alpha: 0.75),
+                                    color,
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Text(pctLabel,
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 10, color: color)),
+                    const Spacer(),
+                    if (e.isOverBudget)
+                      Text(
+                        '+${fmt.format(e.spent - e.budgeted)} over',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: cs.error),
+                      )
+                    else if (e.budgeted > 0)
+                      Text(
+                        '${fmt.format(e.variance)} left',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 10, color: cs.onSurfaceVariant),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Spending by category — donut chart with deep-dive
 // ---------------------------------------------------------------------------
 
 class _SpendingSection extends StatelessWidget {
   final ReportsState data;
   final int touchedIdx;
   final ValueChanged<int> onTouch;
+  final void Function(CategorySpend, Color) onDrillDown;
 
   const _SpendingSection({
     required this.data,
     required this.touchedIdx,
     required this.onTouch,
+    required this.onDrillDown,
   });
 
   @override
@@ -452,7 +599,6 @@ class _SpendingSection extends StatelessWidget {
     final cs  = Theme.of(context).colorScheme;
     final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
 
-    // Limit to top 9 + "Other"
     final cats  = data.byCategory;
     final shown = cats.take(9).toList();
     final other = cats.length > 9
@@ -464,13 +610,13 @@ class _SpendingSection extends StatelessWidget {
     ];
 
     final sections = allSlices.asMap().entries.map((e) {
-      final i      = e.key;
-      final cat    = e.value;
-      final pct    = data.totalExpenses > 0
+      final i     = e.key;
+      final cat   = e.value;
+      final pct   = data.totalExpenses > 0
           ? cat.amount / data.totalExpenses * 100
           : 0.0;
-      final color  = chartPalette[i % chartPalette.length];
-      final isSel  = touchedIdx == i;
+      final color = chartPalette[i % chartPalette.length];
+      final isSel = touchedIdx == i;
 
       return PieChartSectionData(
         color:  color,
@@ -480,7 +626,6 @@ class _SpendingSection extends StatelessWidget {
         titleStyle: GoogleFonts.plusJakartaSans(
           fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white,
         ),
-        badgeWidget: null,
       );
     }).toList();
 
@@ -506,29 +651,23 @@ class _SpendingSection extends StatelessWidget {
                     sectionsSpace: 2,
                     pieTouchData: PieTouchData(
                       enabled: true,
-                      touchCallback: (FlTouchEvent event,
-                          PieTouchResponse? response) {
+                      touchCallback: (FlTouchEvent event, PieTouchResponse? response) {
                         if (!event.isInterestedForInteractions ||
                             response?.touchedSection == null) {
                           onTouch(-1);
                         } else {
-                          onTouch(response!
-                              .touchedSection!.touchedSectionIndex);
+                          onTouch(response!.touchedSection!.touchedSectionIndex);
                         }
                       },
                     ),
                   ),
-                  swapAnimationDuration:
-                      const Duration(milliseconds: 200),
+                  swapAnimationDuration: const Duration(milliseconds: 200),
                 ),
-                // Centre text
                 Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      selCat != null
-                          ? selCat.name
-                          : 'Total spent',
+                      selCat != null ? selCat.name : 'Total spent',
                       style: GoogleFonts.plusJakartaSans(
                           fontSize: 11, color: cs.onSurfaceVariant),
                       textAlign: TextAlign.center,
@@ -539,16 +678,14 @@ class _SpendingSection extends StatelessWidget {
                           ? fmt.format(selCat.amount)
                           : fmt.format(data.totalExpenses),
                       style: GoogleFonts.plusJakartaSans(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
+                          fontSize: 18, fontWeight: FontWeight.w800,
                           color: cs.onSurface),
                     ),
                     if (selCat != null)
                       Text(
                         '${(selCat.amount / data.totalExpenses * 100).toStringAsFixed(1)}%',
                         style: GoogleFonts.plusJakartaSans(
-                            fontSize: 11,
-                            color: cs.onSurfaceVariant),
+                            fontSize: 11, color: cs.onSurfaceVariant),
                       ),
                   ],
                 ),
@@ -557,25 +694,26 @@ class _SpendingSection extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // Legend
+          // Legend rows — tap colour dot to select, chart icon to deep-dive
           ...allSlices.asMap().entries.map((e) {
-            final i   = e.key;
-            final cat = e.value;
-            final pct = data.totalExpenses > 0
+            final i      = e.key;
+            final cat    = e.value;
+            final pct    = data.totalExpenses > 0
                 ? cat.amount / data.totalExpenses * 100
                 : 0.0;
             final barFrac = data.totalExpenses > 0
                 ? cat.amount / data.totalExpenses
                 : 0.0;
-            final color   = chartPalette[i % chartPalette.length];
-            final isSel   = touchedIdx == i;
+            final color  = chartPalette[i % chartPalette.length];
+            final isSel  = touchedIdx == i;
+            final canDrill = cat.categoryId != null;
 
             return GestureDetector(
               onTap: () => onTouch(isSel ? -1 : i),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
                 margin: const EdgeInsets.only(bottom: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
                 decoration: BoxDecoration(
                   color: isSel
                       ? color.withValues(alpha: 0.1)
@@ -586,31 +724,25 @@ class _SpendingSection extends StatelessWidget {
                   children: [
                     Container(
                       width: 10, height: 10,
-                      decoration: BoxDecoration(
-                          color: color, shape: BoxShape.circle),
+                      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(cat.name,
                           style: GoogleFonts.plusJakartaSans(
                               fontSize: 13,
-                              fontWeight: isSel
-                                  ? FontWeight.w700
-                                  : FontWeight.w500,
+                              fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
                               color: cs.onSurface)),
                     ),
                     const SizedBox(width: 8),
-                    // Mini bar
                     ClipRRect(
                       borderRadius: BorderRadius.circular(3),
                       child: SizedBox(
                         width: 80, height: 4,
                         child: LinearProgressIndicator(
                           value: barFrac,
-                          backgroundColor:
-                              cs.surfaceContainerHighest,
-                          valueColor:
-                              AlwaysStoppedAnimation(color),
+                          backgroundColor: cs.surfaceContainerHighest,
+                          valueColor: AlwaysStoppedAnimation(color),
                         ),
                       ),
                     ),
@@ -621,8 +753,7 @@ class _SpendingSection extends StatelessWidget {
                         '${pct.toStringAsFixed(0)}%',
                         textAlign: TextAlign.right,
                         style: GoogleFonts.plusJakartaSans(
-                            fontSize: 11,
-                            color: cs.onSurfaceVariant),
+                            fontSize: 11, color: cs.onSurfaceVariant),
                       ),
                     ),
                     const SizedBox(width: 6),
@@ -632,16 +763,265 @@ class _SpendingSection extends StatelessWidget {
                         fmt.format(cat.amount),
                         textAlign: TextAlign.right,
                         style: GoogleFonts.plusJakartaSans(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
+                            fontSize: 13, fontWeight: FontWeight.w700,
                             color: cs.onSurface),
                       ),
                     ),
+                    if (canDrill)
+                      GestureDetector(
+                        onTap: () => onDrillDown(cat, color),
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 4),
+                          child: Icon(
+                            Icons.show_chart_rounded,
+                            size: 18,
+                            color: isSel ? color : cs.onSurfaceVariant.withValues(alpha: 0.5),
+                          ),
+                        ),
+                      )
+                    else
+                      const SizedBox(width: 22),
                   ],
                 ),
               ),
             );
           }),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Category deep-dive bottom sheet
+// ---------------------------------------------------------------------------
+
+class _CategoryDeepDiveSheet extends StatelessWidget {
+  final CategorySpend     category;
+  final List<MonthData>   byMonth;
+  final List<double>      monthlySpend;
+  final Color             color;
+
+  const _CategoryDeepDiveSheet({
+    required this.category,
+    required this.byMonth,
+    required this.monthlySpend,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+
+    // Pad monthlySpend to match byMonth length (fills zeros for months with no spend)
+    final amounts = List<double>.generate(
+      byMonth.length,
+      (i) => i < monthlySpend.length ? monthlySpend[i] : 0.0,
+    );
+
+    final nonZero = amounts.where((a) => a > 0);
+    final avg     = nonZero.isEmpty ? 0.0 : nonZero.reduce((a, b) => a + b) / nonZero.length;
+    final peak    = amounts.isEmpty ? 0.0 : amounts.reduce(max);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Drag handle
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: cs.outlineVariant,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Header
+          Row(
+            children: [
+              Container(
+                width: 12, height: 12,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(category.name,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 18, fontWeight: FontWeight.w800,
+                        color: cs.onSurface)),
+              ),
+              Text(fmt.format(category.amount),
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 16, fontWeight: FontWeight.w700,
+                      color: cs.onSurface)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text('Monthly spending trend',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12, color: cs.onSurfaceVariant)),
+          const SizedBox(height: 20),
+
+          // Bar chart
+          if (byMonth.isEmpty)
+            Center(
+              child: Text('No data for this period',
+                  style: GoogleFonts.plusJakartaSans(color: cs.onSurfaceVariant)),
+            )
+          else
+            _DeepDiveChart(
+              byMonth:  byMonth,
+              amounts:  amounts,
+              color:    color,
+              peak:     peak,
+            ),
+          const SizedBox(height: 20),
+
+          // Stats row
+          Row(
+            children: [
+              _DeepDiveStat(label: 'Monthly avg', value: fmt.format(avg), color: color),
+              _DeepDiveStat(label: 'Peak month',  value: fmt.format(peak), color: color),
+              _DeepDiveStat(label: 'Total',        value: fmt.format(category.amount), color: color),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DeepDiveChart extends StatelessWidget {
+  final List<MonthData> byMonth;
+  final List<double>    amounts;
+  final Color           color;
+  final double          peak;
+
+  const _DeepDiveChart({
+    required this.byMonth,
+    required this.amounts,
+    required this.color,
+    required this.peak,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs   = Theme.of(context).colorScheme;
+    final yMax = peak <= 0 ? 100.0 : _ceilNice(peak * 1.15);
+
+    final groups = amounts.asMap().entries.map((e) {
+      return BarChartGroupData(
+        x: e.key,
+        barRods: [
+          BarChartRodData(
+            toY:    e.value,
+            width:  byMonth.length <= 3 ? 28 : byMonth.length <= 6 ? 20 : 14,
+            borderRadius: BorderRadius.circular(5),
+            gradient: LinearGradient(
+              colors: [color.withValues(alpha: 0.6), color],
+              begin: Alignment.bottomCenter,
+              end:   Alignment.topCenter,
+            ),
+          ),
+        ],
+      );
+    }).toList();
+
+    return SizedBox(
+      height: 160,
+      child: BarChart(
+        BarChartData(
+          maxY:      yMax,
+          barGroups: groups,
+          alignment: BarChartAlignment.spaceAround,
+          borderData: FlBorderData(show: false),
+          gridData: FlGridData(
+            show: true,
+            drawVerticalLine: false,
+            horizontalInterval: yMax / 4,
+            getDrawingHorizontalLine: (_) => FlLine(
+              color:       cs.outlineVariant.withValues(alpha: 0.4),
+              strokeWidth: 1,
+              dashArray:   [4, 4],
+            ),
+          ),
+          titlesData: FlTitlesData(
+            leftTitles:   AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            rightTitles:  AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            topTitles:    AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles:   true,
+                reservedSize: 24,
+                getTitlesWidget: (value, _) {
+                  final idx = value.toInt();
+                  if (idx < 0 || idx >= byMonth.length) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      DateFormat('MMM').format(byMonth[idx].month),
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11, color: cs.onSurfaceVariant),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          barTouchData: BarTouchData(
+            touchTooltipData: BarTouchTooltipData(
+              getTooltipColor: (_) => cs.surfaceContainerHigh,
+              getTooltipItem: (group, groupIdx, rod, rodIdx) => BarTooltipItem(
+                NumberFormat.currency(symbol: '\$', decimalDigits: 0)
+                    .format(rod.toY),
+                GoogleFonts.plusJakartaSans(
+                    fontSize: 11, fontWeight: FontWeight.w600,
+                    color: cs.onSurface),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static double _ceilNice(double v) {
+    if (v <= 0) return 100;
+    final step = v < 500 ? 50.0 : v < 2000 ? 100.0 : 500.0;
+    return ((v / step).ceil() * step).toDouble();
+  }
+}
+
+class _DeepDiveStat extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color  color;
+  const _DeepDiveStat({required this.label, required this.value, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Expanded(
+      child: Column(
+        children: [
+          Text(value,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 15, fontWeight: FontWeight.w800, color: color)),
+          const SizedBox(height: 2),
+          Text(label,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 10, color: cs.onSurfaceVariant),
+              textAlign: TextAlign.center),
         ],
       ),
     );
@@ -659,8 +1039,8 @@ class _TrendSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs    = Theme.of(context).colorScheme;
-    final fmt   = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final cs      = Theme.of(context).colorScheme;
+    final fmt     = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
     final byMonth = data.byMonth;
     if (byMonth.isEmpty) return const SizedBox.shrink();
 
@@ -701,7 +1081,6 @@ class _TrendSection extends StatelessWidget {
       );
     }).toList();
 
-    // Fixed width per group so it scrolls on narrow screens
     final chartW = (months * 56.0).clamp(
         MediaQuery.sizeOf(context).width - 32, double.infinity);
 
@@ -710,7 +1089,6 @@ class _TrendSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Legend
           Row(
             children: [
               _BarLegend(color: cs.tertiary, label: 'Income'),
@@ -741,30 +1119,28 @@ class _TrendSection extends StatelessWidget {
                     ),
                   ),
                   titlesData: FlTitlesData(
-                    leftTitles:   AxisTitles(
-                        sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 48,
-                      interval: yStep,
-                      getTitlesWidget: (value, meta) {
-                        if (value == 0) return const SizedBox.shrink();
-                        final label = value >= 1000
-                            ? '\$${(value / 1000).toStringAsFixed(0)}k'
-                            : '\$${value.toStringAsFixed(0)}';
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 4),
-                          child: Text(label,
-                              textAlign: TextAlign.right,
-                              style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 10,
-                                  color: cs.onSurfaceVariant)),
-                        );
-                      },
-                    )),
-                    rightTitles: AxisTitles(
-                        sideTitles: SideTitles(showTitles: false)),
-                    topTitles:   AxisTitles(
-                        sideTitles: SideTitles(showTitles: false)),
+                    leftTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles:   true,
+                        reservedSize: 48,
+                        interval:     yStep,
+                        getTitlesWidget: (value, meta) {
+                          if (value == 0) return const SizedBox.shrink();
+                          final label = value >= 1000
+                              ? '\$${(value / 1000).toStringAsFixed(0)}k'
+                              : '\$${value.toStringAsFixed(0)}';
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: Text(label,
+                                textAlign: TextAlign.right,
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 10, color: cs.onSurfaceVariant)),
+                          );
+                        },
+                      ),
+                    ),
+                    rightTitles:  AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    topTitles:    AxisTitles(sideTitles: SideTitles(showTitles: false)),
                     bottomTitles: AxisTitles(
                       sideTitles: SideTitles(
                         showTitles:   true,
@@ -777,11 +1153,9 @@ class _TrendSection extends StatelessWidget {
                           return Padding(
                             padding: const EdgeInsets.only(top: 6),
                             child: Text(
-                              DateFormat(months <= 3 ? 'MMM' : 'MMM')
-                                  .format(byMonth[idx].month),
+                              DateFormat('MMM').format(byMonth[idx].month),
                               style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 11,
-                                  color: cs.onSurfaceVariant),
+                                  fontSize: 11, color: cs.onSurfaceVariant),
                             ),
                           );
                         },
@@ -796,8 +1170,7 @@ class _TrendSection extends StatelessWidget {
                         return BarTooltipItem(
                           '$label\n${fmt.format(rod.toY)}',
                           GoogleFonts.plusJakartaSans(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
+                              fontSize: 11, fontWeight: FontWeight.w600,
                               color: cs.onSurface),
                         );
                       },
@@ -814,8 +1187,7 @@ class _TrendSection extends StatelessWidget {
 
   static double _ceilNice(double v) {
     if (v <= 0) return 100;
-    final mag = (v / 4).ceil();
-    // Round up to nearest 50 or 500
+    final mag  = (v / 4).ceil();
     final step = v < 1000 ? 50.0 : 500.0;
     return ((mag / step).ceil() * step * 4).toDouble();
   }
@@ -842,6 +1214,198 @@ class _BarLegend extends StatelessWidget {
                 fontSize: 12,
                 color: Theme.of(context).colorScheme.onSurfaceVariant)),
       ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Savings rate trend — line chart
+// ---------------------------------------------------------------------------
+
+class _SavingsRateTrendSection extends StatelessWidget {
+  final ReportsState data;
+  const _SavingsRateTrendSection({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs      = Theme.of(context).colorScheme;
+    final byMonth = data.byMonth;
+    if (byMonth.isEmpty) return const SizedBox.shrink();
+
+    final rates = byMonth
+        .map((m) => m.income > 0 ? m.savingsRate * 100 : 0.0)
+        .toList();
+
+    final minRate = rates.reduce(min);
+    final maxRate = rates.reduce(max);
+    final yMin    = min(minRate - 10, -5.0).clamp(-100.0, 0.0).toDouble();
+    final yMax    = max(maxRate + 10, 35.0);
+
+    final spots = rates.asMap().entries
+        .map((e) => FlSpot(e.key.toDouble(), e.value))
+        .toList();
+
+    final avgRate = rates.reduce((a, b) => a + b) / rates.length;
+    final lineColor = avgRate >= 0 ? cs.tertiary : cs.error;
+
+    return _Section(
+      label: 'SAVINGS RATE TREND',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Avg badge
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: lineColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  'Avg ${avgRate.toStringAsFixed(1)}%',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: lineColor),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text('20% = healthy target',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11, color: cs.onSurfaceVariant)),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          SizedBox(
+            height: 180,
+            child: LineChart(
+              LineChartData(
+                minY: yMin,
+                maxY: yMax,
+                clipData: FlClipData.all(),
+                lineBarsData: [
+                  LineChartBarData(
+                    spots: spots,
+                    isCurved: true,
+                    curveSmoothness: 0.3,
+                    color: lineColor,
+                    barWidth: 2.5,
+                    dotData: FlDotData(
+                      show: true,
+                      getDotPainter: (spot, pct, bar, idx) => FlDotCirclePainter(
+                        radius: 4,
+                        color: lineColor,
+                        strokeWidth: 2,
+                        strokeColor: cs.surface,
+                      ),
+                    ),
+                    belowBarData: BarAreaData(
+                      show: true,
+                      gradient: LinearGradient(
+                        colors: [
+                          lineColor.withValues(alpha: 0.2),
+                          lineColor.withValues(alpha: 0.0),
+                        ],
+                        begin: Alignment.topCenter,
+                        end:   Alignment.bottomCenter,
+                      ),
+                    ),
+                  ),
+                ],
+                extraLinesData: ExtraLinesData(
+                  horizontalLines: [
+                    HorizontalLine(
+                      y: 20,
+                      color: const Color(0xFFFFCA28).withValues(alpha: 0.8),
+                      strokeWidth: 1.5,
+                      dashArray: [6, 4],
+                      label: HorizontalLineLabel(
+                        show: true,
+                        alignment: Alignment.topRight,
+                        labelResolver: (_) => '20%',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFFFFCA28),
+                        ),
+                      ),
+                    ),
+                    if (yMin < 0)
+                      HorizontalLine(
+                        y: 0,
+                        color: cs.outlineVariant,
+                        strokeWidth: 1,
+                      ),
+                  ],
+                ),
+                borderData: FlBorderData(show: false),
+                gridData: FlGridData(
+                  show: true,
+                  drawVerticalLine: false,
+                  horizontalInterval: (yMax - yMin) / 4,
+                  getDrawingHorizontalLine: (_) => FlLine(
+                    color:       cs.outlineVariant.withValues(alpha: 0.3),
+                    strokeWidth: 1,
+                    dashArray:   [4, 4],
+                  ),
+                ),
+                titlesData: FlTitlesData(
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles:   true,
+                      reservedSize: 40,
+                      interval:     (yMax - yMin) / 4,
+                      getTitlesWidget: (value, _) => Padding(
+                        padding: const EdgeInsets.only(right: 4),
+                        child: Text(
+                          '${value.toStringAsFixed(0)}%',
+                          textAlign: TextAlign.right,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 10, color: cs.onSurfaceVariant),
+                        ),
+                      ),
+                    ),
+                  ),
+                  rightTitles:  AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  topTitles:    AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles:   true,
+                      reservedSize: 24,
+                      getTitlesWidget: (value, _) {
+                        final idx = value.toInt();
+                        if (idx < 0 || idx >= byMonth.length) return const SizedBox.shrink();
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            DateFormat('MMM').format(byMonth[idx].month),
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 11, color: cs.onSurfaceVariant),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                lineTouchData: LineTouchData(
+                  touchTooltipData: LineTouchTooltipData(
+                    getTooltipColor: (_) => cs.surfaceContainerHigh,
+                    getTooltipItems: (spots) => spots.map((s) => LineTooltipItem(
+                      '${s.y.toStringAsFixed(1)}%',
+                      GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: lineColor),
+                    )).toList(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -879,16 +1443,14 @@ class _PayeesSection extends StatelessWidget {
                     Expanded(
                       child: Text(p.name,
                           style: GoogleFonts.plusJakartaSans(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
+                              fontSize: 13, fontWeight: FontWeight.w500,
                               color: cs.onSurface),
                           overflow: TextOverflow.ellipsis),
                     ),
                     const SizedBox(width: 8),
                     Text(fmt.format(p.amount),
                         style: GoogleFonts.plusJakartaSans(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
+                            fontSize: 13, fontWeight: FontWeight.w700,
                             color: cs.onSurface)),
                   ],
                 ),
@@ -901,8 +1463,7 @@ class _PayeesSection extends StatelessWidget {
                       width: constraints.maxWidth,
                       child: Stack(
                         children: [
-                          Container(
-                              color: cs.surfaceContainerHighest),
+                          Container(color: cs.surfaceContainerHighest),
                           FractionallySizedBox(
                             widthFactor: ratio,
                             child: Container(
