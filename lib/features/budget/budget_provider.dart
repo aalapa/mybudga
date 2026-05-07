@@ -162,7 +162,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
 
     final targetMonths = List.generate(monthCount, (i) {
       final m = DateTime(baseMonth.year, baseMonth.month + i);
-      return '${m.year}-${m.month.toString().padLeft(2, '0')}';
+      return '${m.year}-${m.month.toString().padLeft(2, '0')}-01';
     });
 
     // ── Amounts per category ──────────────────────────────────────────────
