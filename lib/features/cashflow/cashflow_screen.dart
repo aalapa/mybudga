@@ -1047,6 +1047,10 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
     final budgetAccounts = accounts
         .where((a) => !a.isTracking && a.type != AccountType.investment && a.type != AccountType.loan)
         .toList();
+    // Transfer destination: any non-tracking account except the selected FROM account.
+    final toAccounts = accounts
+        .where((a) => !a.isTracking && a.id != _accountId)
+        .toList();
 
     if (_accountId == null && !_accountTbd && budgetAccounts.isNotEmpty) {
       _accountId = budgetAccounts.first.id;
@@ -1190,7 +1194,7 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
                             helperText: 'The account receiving the money (e.g. credit card)',
                           ),
                           dropdownColor: cs.surfaceContainerHighest,
-                          items: budgetAccounts.map((a) => DropdownMenuItem(
+                          items: toAccounts.map((a) => DropdownMenuItem(
                             value: a.id,
                             child: Text(a.displayName,
                                 style: GoogleFonts.plusJakartaSans(fontSize: 14)),
