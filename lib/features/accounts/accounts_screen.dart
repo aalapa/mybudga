@@ -1938,8 +1938,9 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
               0.0) *
           100).round() /
           100.0;
-      final isCc = _type == AccountType.creditCard ||
-                   _type == AccountType.lineOfCredit;
+      final isCc        = _type == AccountType.creditCard ||
+                         _type == AccountType.lineOfCredit;
+      final isLiability = isCc || _type == AccountType.loan;
 
       await widget.widgetRef.read(accountsProvider.notifier).addAccount(
         name:            _nameCtrl.text.trim(),
@@ -1947,7 +1948,7 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
         type:            _type,
         isTracking:      _isTracking,
         lastFour:        isCc ? _lastFourCtrl.text.trim() : null,
-        startingBalance: isCc ? -balance.abs() : balance,
+        startingBalance: isLiability ? -balance.abs() : balance,
         startDate:       _startDate,
       );
       if (mounted) Navigator.pop(context);
@@ -1967,8 +1968,9 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
   Widget build(BuildContext context) {
     final cs   = Theme.of(context).colorScheme;
     final fmt  = DateFormat('MMM d, yyyy');
-    final isCc = _type == AccountType.creditCard ||
-                 _type == AccountType.lineOfCredit;
+    final isCc        = _type == AccountType.creditCard ||
+                       _type == AccountType.lineOfCredit;
+    final isLiability = isCc || _type == AccountType.loan;
 
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
@@ -2078,7 +2080,7 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
                   _TwoDecimalInputFormatter(),
                 ],
                 decoration: InputDecoration(
-                  labelText: isCc ? 'Current balance owed' : 'Starting balance',
+                  labelText: isLiability ? 'Current balance owed' : 'Starting balance',
                   prefixText: '\$ ',
                   hintText: '0.00',
                 ),
