@@ -127,11 +127,17 @@ class _BottomBar extends StatelessWidget {
               children: [
                 // ── 5 nav tabs ─────────────────────────────────────────────
                 ...List.generate(tabs.length, (i) => Expanded(
-                  child: _NavItem(
-                    item: tabs[i],
-                    isSelected: i == selectedIndex,
-                    onTap: () => onTabSelected(i),
-                  ),
+                  child: i == tabs.length ~/ 2
+                      ? _CenterNavItem(
+                          item: tabs[i],
+                          isSelected: i == selectedIndex,
+                          onTap: () => onTabSelected(i),
+                        )
+                      : _NavItem(
+                          item: tabs[i],
+                          isSelected: i == selectedIndex,
+                          onTap: () => onTabSelected(i),
+                        ),
                 )),
                 // ── hairline separator ─────────────────────────────────────
                 VerticalDivider(
@@ -174,6 +180,63 @@ class _BottomBar extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _CenterNavItem extends StatelessWidget {
+  final _TabItem item;
+  final bool isSelected;
+  final VoidCallback onTap;
+  const _CenterNavItem({required this.item, required this.isSelected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final bg = isSelected ? cs.primary : cs.primaryContainer;
+    final fg = isSelected ? cs.onPrimary : cs.onPrimaryContainer;
+
+    return InkWell(
+      onTap: onTap,
+      splashColor: cs.primary.withValues(alpha: 0.08),
+      highlightColor: cs.primary.withValues(alpha: 0.04),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 56,
+            height: 34,
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(17),
+              boxShadow: [
+                BoxShadow(
+                  color: cs.shadow.withValues(alpha: 0.18),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Center(
+              child: Icon(
+                isSelected ? item.activeIcon : item.icon,
+                size: 20,
+                color: fg,
+              ),
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            item.label,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+              color: isSelected ? cs.primary : cs.onSurfaceVariant,
+              letterSpacing: 0.15,
+            ),
+          ),
+        ],
       ),
     );
   }
