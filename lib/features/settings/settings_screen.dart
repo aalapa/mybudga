@@ -12,6 +12,8 @@ import 'package:share_plus/share_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/sms/sms_service.dart';
 import '../../core/theme/theme_provider.dart';
+import '../../shared/models/account.dart';
+import '../../shared/models/scheduled_transaction.dart';
 import '../../shared/providers/categories_provider.dart';
 import '../../shared/providers/household_provider.dart';
 import '../../shared/providers/payees_provider.dart';
@@ -604,6 +606,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 24),
 
+          _sectionLabel(context, 'SCHEDULED TRANSACTIONS'),
+          const SizedBox(height: 8),
+          const _ScheduledSection(),
+          const SizedBox(height: 24),
+
           _sectionLabel(context, 'DATA'),
           const SizedBox(height: 8),
           _SettingsCard(
@@ -865,6 +872,178 @@ class _ColorSwatch extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled transactions section
+// ---------------------------------------------------------------------------
+
+class _ScheduledSection extends ConsumerWidget {
+  const _ScheduledSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs       = Theme.of(context).colorScheme;
+    final cfAsync  = ref.watch(cashflowProvider);
+    final accounts = ref.watch(accountsProvider).valueOrNull ?? [];
+
+    if (cfAsync.isLoading) {
+      return const Center(child: Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: CircularProgressIndicator(),
+      ));
+    }
+
+    final scheduled = [...(cfAsync.valueOrNull?.scheduled ?? [])]
+      ..sort((a, b) => a.nextDate.compareTo(b.nextDate));
+
+    if (scheduled.isEmpty) {
+      return _SettingsCard(children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(children: [
+            Icon(Icons.calendar_today_outlined,
+                size: 18, color: cs.onSurfaceVariant),
+            const SizedBox(width: 12),
+            Text('No scheduled transactions',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 14, color: cs.onSurfaceVariant)),
+          ]),
+        ),
+      ]);
+    }
+
+    return _SettingsCard(
+      children: [
+        for (int i = 0; i < scheduled.length; i++) ...[
+          if (i > 0)
+            Divider(height: 1, indent: 52,
+                color: cs.outlineVariant.withValues(alpha: 0.4)),
+          _ScheduledTile(
+            tx:       scheduled[i],
+            accounts: accounts,
+            isFirst:  i == 0,
+            isLast:   i == scheduled.length - 1,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ScheduledTile extends ConsumerWidget {
+  final ScheduledTransaction tx;
+  final List<Account> accounts;
+  final bool isFirst;
+  final bool isLast;
+
+  const _ScheduledTile({
+    required this.tx,
+    required this.accounts,
+    required this.isFirst,
+    required this.isLast,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs      = Theme.of(context).colorScheme;
+    final fmt     = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final dateFmt = DateFormat('MMM d');
+
+    final toAccount = tx.transferToAccountId != null
+        ? accounts.where((a) => a.id == tx.transferToAccountId).firstOrNull
+        : null;
+
+    final title = tx.isTransfer
+        ? 'Transfer${toAccount != null ? ' → ${toAccount.displayName}' : ''}'
+        : (tx.payeeName?.isNotEmpty == true
+            ? tx.payeeName!
+            : (tx.memo ?? 'Unnamed'));
+
+    final fromPart = tx.accountName != null ? ' · from ${tx.accountName}' : '';
+    final subtitle = '${tx.frequency.label} · Next ${dateFmt.format(tx.nextDate)}$fromPart';
+
+    final isIncome   = !tx.isTransfer && tx.amount > 0;
+    final isExpense  = !tx.isTransfer && tx.amount < 0;
+    final iconColor  = tx.isTransfer
+        ? cs.primary
+        : (isIncome ? cs.tertiary : cs.error);
+    final icon = tx.isTransfer
+        ? Icons.swap_horiz_rounded
+        : (isIncome
+            ? Icons.arrow_downward_rounded
+            : Icons.arrow_upward_rounded);
+
+    final amountStr = tx.isTransfer
+        ? fmt.format(tx.amount.abs())
+        : (isExpense
+            ? '-${fmt.format(tx.amount.abs())}'
+            : '+${fmt.format(tx.amount)}');
+
+    return ListTile(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top:    isFirst ? const Radius.circular(16) : Radius.zero,
+          bottom: isLast  ? const Radius.circular(16) : Radius.zero,
+        ),
+      ),
+      leading: Container(
+        width: 36, height: 36,
+        decoration: BoxDecoration(
+          color: iconColor.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, size: 16, color: iconColor),
+      ),
+      title: Text(title,
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
+      subtitle: Text(subtitle,
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 11, color: cs.onSurfaceVariant)),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(amountStr,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13, fontWeight: FontWeight.w700, color: iconColor)),
+          IconButton(
+            icon: Icon(Icons.delete_outline, size: 18, color: cs.error),
+            tooltip: 'Delete',
+            onPressed: () => _confirmDelete(context, ref),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          title: Text('Delete scheduled transaction?',
+              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+          content: Text('This cannot be undone.',
+              style: GoogleFonts.plusJakartaSans()),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: cs.error),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !context.mounted) return;
+    await ref.read(cashflowProvider.notifier).deleteScheduled(tx.id);
   }
 }
 
