@@ -878,6 +878,18 @@ class _ColorSwatch extends StatelessWidget {
 // Scheduled transactions section
 // ---------------------------------------------------------------------------
 
+/// Returns the next occurrence date on or after [today], advancing past
+/// any overdue occurrences so the list always shows upcoming dates.
+DateTime _nextUpcoming(ScheduledTransaction tx, DateTime today) {
+  var d = tx.nextDate;
+  while (d.isBefore(today)) {
+    final next = tx.frequency.advance(d);
+    if (next == null) return d; // 'once' — show as-is even if past
+    d = next;
+  }
+  return d;
+}
+
 class _ScheduledSection extends ConsumerWidget {
   const _ScheduledSection();
 
@@ -887,8 +899,9 @@ class _ScheduledSection extends ConsumerWidget {
     final cfAsync  = ref.watch(cashflowProvider);
     final accounts = ref.watch(accountsProvider).valueOrNull ?? [];
 
+    final today = DateTime.now();
     final scheduled = [...(cfAsync.valueOrNull?.scheduled ?? [])]
-      ..sort((a, b) => a.nextDate.compareTo(b.nextDate));
+      ..sort((a, b) => _nextUpcoming(a, today).compareTo(_nextUpcoming(b, today)));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -956,10 +969,11 @@ class _ScheduledSection extends ConsumerWidget {
                   Divider(height: 1, indent: 52,
                       color: cs.outlineVariant.withValues(alpha: 0.4)),
                 _ScheduledTile(
-                  tx:      scheduled[i],
-                  accounts: accounts,
-                  isFirst: i == 0,
-                  isLast:  i == scheduled.length - 1,
+                  tx:          scheduled[i],
+                  nextDate:    _nextUpcoming(scheduled[i], today),
+                  accounts:    accounts,
+                  isFirst:     i == 0,
+                  isLast:      i == scheduled.length - 1,
                 ),
               ],
             ],
@@ -971,12 +985,14 @@ class _ScheduledSection extends ConsumerWidget {
 
 class _ScheduledTile extends ConsumerWidget {
   final ScheduledTransaction tx;
+  final DateTime nextDate;
   final List<Account> accounts;
   final bool isFirst;
   final bool isLast;
 
   const _ScheduledTile({
     required this.tx,
+    required this.nextDate,
     required this.accounts,
     required this.isFirst,
     required this.isLast,
@@ -999,7 +1015,7 @@ class _ScheduledTile extends ConsumerWidget {
             : (tx.memo ?? 'Unnamed'));
 
     final fromPart = tx.accountName != null ? ' · from ${tx.accountName}' : '';
-    final subtitle = '${tx.frequency.label} · Next ${dateFmt.format(tx.nextDate)}$fromPart';
+    final subtitle = '${tx.frequency.label} · Next ${dateFmt.format(nextDate)}$fromPart';
 
     final isIncome   = !tx.isTransfer && tx.amount > 0;
     final isExpense  = !tx.isTransfer && tx.amount < 0;
