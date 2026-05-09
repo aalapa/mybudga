@@ -482,6 +482,7 @@ class _AccountTile extends ConsumerWidget {
     return InkWell(
       onTap: () => _showAccountDetail(context, ref, account),
       onLongPress: () => _showReconcileSheet(context, account, ref),
+      onSecondaryTap: () => _showAccountContextMenu(context, ref, account),
       borderRadius: isLast
           ? const BorderRadius.vertical(bottom: Radius.circular(16))
           : BorderRadius.zero,
@@ -975,6 +976,40 @@ void _showAccountDetail(BuildContext context, WidgetRef ref, Account account) {
     useSafeArea: true,
     builder: (_) => _AccountDetailSheet(account: account, widgetRef: ref),
   );
+}
+
+void _showAccountContextMenu(BuildContext context, WidgetRef ref, Account account) {
+  final box  = context.findRenderObject()! as RenderBox;
+  final pos  = box.localToGlobal(Offset(box.size.width, box.size.height / 2));
+  final size = MediaQuery.sizeOf(context);
+  showMenu<String>(
+    context:  context,
+    position: RelativeRect.fromLTRB(
+        pos.dx - 180, pos.dy, size.width - pos.dx, size.height - pos.dy),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    items: [
+      PopupMenuItem(
+        value: 'edit',
+        child: Row(children: [
+          const Icon(Icons.edit_outlined, size: 16),
+          const SizedBox(width: 10),
+          const Text('Edit account'),
+        ]),
+      ),
+      PopupMenuItem(
+        value: 'reconcile',
+        child: Row(children: [
+          const Icon(Icons.check_circle_outline, size: 16),
+          const SizedBox(width: 10),
+          const Text('Reconcile'),
+        ]),
+      ),
+    ],
+  ).then((value) {
+    if (!context.mounted) return;
+    if (value == 'edit')      _showEditAccountSheet(context, account, ref);
+    if (value == 'reconcile') _showReconcileSheet(context, account, ref);
+  });
 }
 
 class _AccountDetailSheet extends ConsumerStatefulWidget {
