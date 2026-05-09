@@ -565,7 +565,8 @@ class _TransactionTile extends StatelessWidget {
 
     return InkWell(
       onTap: () => _showAddTransactionSheet(context, ref, prefill: tx),
-      onLongPress: tx.isTransfer ? null : () => _showTransactionActions(context, ref, tx),
+      onLongPress:    tx.isTransfer ? null : () => _showTransactionActions(context, ref, tx),
+      onSecondaryTap: tx.isTransfer ? null : () => _showTransactionActions(context, ref, tx),
       borderRadius: isLast
           ? const BorderRadius.vertical(bottom: Radius.circular(16))
           : BorderRadius.zero,
