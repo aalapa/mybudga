@@ -25,9 +25,12 @@ class TransactionsScreen extends ConsumerStatefulWidget {
   ConsumerState<TransactionsScreen> createState() => _TransactionsScreenState();
 }
 
+enum _SearchFilter { all, payee, category, account }
+
 class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   final _searchCtrl = TextEditingController();
   String _search = '';
+  _SearchFilter _searchFilter = _SearchFilter.all;
 
   @override
   void initState() {
@@ -90,12 +93,40 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                           onPressed: () => setState(() {
                             _search = '';
                             _searchCtrl.clear();
+                            _searchFilter = _SearchFilter.all;
                           }),
                         )
                       : null,
                 ),
               ),
             ),
+            if (_search.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: _SearchFilter.values.map((f) {
+                      final selected = _searchFilter == f;
+                      final label = switch (f) {
+                        _SearchFilter.all      => 'All',
+                        _SearchFilter.payee    => 'Payee',
+                        _SearchFilter.category => 'Category',
+                        _SearchFilter.account  => 'Account',
+                      };
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: FilterChip(
+                          label: Text(label),
+                          selected: selected,
+                          onSelected: (_) => setState(() => _searchFilter = f),
+                          showCheckmark: false,
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
             Expanded(
               child: txAsync.when(
                 loading: () => const Center(child: CircularProgressIndicator()),
@@ -115,9 +146,10 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                   ),
                 ),
                 data: (all) => _TransactionsList(
-                  all:    all,
-                  search: _search,
-                  ref:    ref,
+                  all:          all,
+                  search:       _search,
+                  searchFilter: _searchFilter,
+                  ref:          ref,
                 ),
               ),
             ),
@@ -157,24 +189,36 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
 class _TransactionsList extends StatelessWidget {
   final List<Transaction> all;
   final String search;
+  final _SearchFilter searchFilter;
   final WidgetRef ref;
 
   const _TransactionsList({
     required this.all,
     required this.search,
+    required this.searchFilter,
     required this.ref,
   });
 
   List<Transaction> get _pending =>
       all.where((t) => t.isPendingReview).toList();
 
-  List<Transaction> get _confirmed => all
-      .where((t) =>
-          !t.isPendingReview &&
-          (search.isEmpty ||
-              t.displayPayee.toLowerCase().contains(search.toLowerCase()) ||
-              (t.categoryName ?? '').toLowerCase().contains(search.toLowerCase())))
-      .toList();
+  List<Transaction> get _confirmed {
+    if (search.isEmpty) {
+      return all.where((t) => !t.isPendingReview).toList();
+    }
+    final q = search.toLowerCase();
+    return all.where((t) {
+      if (t.isPendingReview) return false;
+      return switch (searchFilter) {
+        _SearchFilter.all      => t.displayPayee.toLowerCase().contains(q) ||
+                                  (t.categoryName ?? '').toLowerCase().contains(q) ||
+                                  (t.account?.displayName ?? '').toLowerCase().contains(q),
+        _SearchFilter.payee    => t.displayPayee.toLowerCase().contains(q),
+        _SearchFilter.category => (t.categoryName ?? '').toLowerCase().contains(q),
+        _SearchFilter.account  => (t.account?.displayName ?? '').toLowerCase().contains(q),
+      };
+    }).toList();
+  }
 
   Map<String, List<Transaction>> get _grouped {
     final map = <String, List<Transaction>>{};
