@@ -44,7 +44,7 @@ class _CashflowScreenState extends ConsumerState<CashflowScreen> {
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => _showAddScheduledSheet(context, ref, prefill: null),
+        onPressed: () => showAddScheduledSheet(context, ref, prefill: null),
         backgroundColor: cs.primary,
         child: Icon(Icons.add, color: cs.onPrimary),
       ),
@@ -415,7 +415,7 @@ class _CashflowTile extends ConsumerWidget {
         .contains(entry.scheduledTx.id);
 
     return InkWell(
-      onTap: () => _showAddScheduledSheet(context, ref, prefill: entry.scheduledTx),
+      onTap: () => showAddScheduledSheet(context, ref, prefill: entry.scheduledTx),
       onLongPress: () => _showTileActions(context, ref, entry),
       borderRadius: BorderRadius.circular(12),
       child: Container(
@@ -912,7 +912,7 @@ void _showTileActions(
                 style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
             onTap: () {
               Navigator.pop(ctx);
-              _showAddScheduledSheet(context, ref, prefill: st);
+              showAddScheduledSheet(context, ref, prefill: st);
             },
           ),
           const SizedBox(height: 8),
@@ -926,7 +926,7 @@ void _showTileActions(
 // Add scheduled transaction sheet
 // ---------------------------------------------------------------------------
 
-void _showAddScheduledSheet(
+void showAddScheduledSheet(
   BuildContext context,
   WidgetRef ref, {
   ScheduledTransaction? prefill,
@@ -1188,7 +1188,7 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
                       // Transfer: TO account picker
                       if (_isTransfer) ...[
                         DropdownButtonFormField<String>(
-                          value: _toAccountId,
+                          initialValue: _toAccountId,
                           decoration: const InputDecoration(
                             labelText: 'To account',
                             helperText: 'The account receiving the money (e.g. credit card)',
@@ -1263,7 +1263,7 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
                         const SizedBox(height: 8),
                         DropdownButtonFormField<String>(
                           key: const ValueKey('account_picker'),
-                          value: _accountId,
+                          initialValue: _accountId,
                           decoration: const InputDecoration(labelText: 'Account'),
                           dropdownColor: cs.surfaceContainerHighest,
                           items: budgetAccounts.map((a) => DropdownMenuItem(
@@ -1452,77 +1452,144 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => DraggableScrollableSheet(
-        initialChildSize: 0.7,
-        minChildSize:     0.4,
-        maxChildSize:     0.9,
-        builder: (ctx, scrollCtrl) => Container(
-          decoration: BoxDecoration(
-            color: cs.surfaceContainerLow,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          child: Column(
-            children: [
-              Container(
-                margin: const EdgeInsets.only(top: 10),
-                width: 36, height: 4,
-                decoration: BoxDecoration(
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text('Select Category',
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 16, fontWeight: FontWeight.w700)),
-              ),
-              Expanded(
-                child: ListView(
-                  controller: scrollCtrl,
-                  children: [
-                    ListTile(
-                      title: Text('No category',
-                          style: GoogleFonts.plusJakartaSans(fontSize: 14)),
-                      onTap: () {
-                        setState(() { _categoryId = null; _categoryName = null; });
-                        Navigator.pop(ctx);
-                      },
-                    ),
-                    for (final g in groups) ...[
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                        child: Text(
-                          g.name.toUpperCase(),
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 10, fontWeight: FontWeight.w700,
-                            color: cs.onSurfaceVariant, letterSpacing: 1.0,
-                          ),
+      builder: (_) => StatefulBuilder(
+        builder: (sheetCtx, setLocal) {
+          var query = '';
+          return StatefulBuilder(
+            builder: (_, setSearch) {
+              final filtered = query.isEmpty
+                  ? groups
+                  : groups
+                      .map((g) {
+                        final cats = g.categories
+                            .where((c) => c.name.toLowerCase()
+                                .contains(query.toLowerCase()))
+                            .toList();
+                        return cats.isEmpty ? null : (group: g, cats: cats);
+                      })
+                      .whereType<({dynamic group, List<dynamic> cats})>()
+                      .map((x) => x.group)
+                      .toList();
+
+              return DraggableScrollableSheet(
+                initialChildSize: 0.7,
+                minChildSize:     0.4,
+                maxChildSize:     0.9,
+                builder: (ctx, scrollCtrl) => Container(
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainerLow,
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(20)),
+                  ),
+                  child: Column(
+                    children: [
+                      Container(
+                        margin: const EdgeInsets.only(top: 10),
+                        width: 36, height: 4,
+                        decoration: BoxDecoration(
+                          color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(2),
                         ),
                       ),
-                      for (final cat in g.categories)
-                        ListTile(
-                          dense: true,
-                          title: Text(cat.name,
-                              style: GoogleFonts.plusJakartaSans(fontSize: 14)),
-                          trailing: _categoryId == cat.id
-                              ? Icon(Icons.check, color: cs.primary, size: 18)
-                              : null,
-                          onTap: () {
-                            setState(() {
-                              _categoryId   = cat.id;
-                              _categoryName = cat.name;
-                            });
-                            Navigator.pop(ctx);
-                          },
+                      Padding(
+                        padding:
+                            const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Select Category',
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700)),
+                            const SizedBox(height: 10),
+                            TextField(
+                              autofocus: true,
+                              onChanged: (v) =>
+                                  setSearch(() => query = v),
+                              decoration: InputDecoration(
+                                hintText: 'Search categories…',
+                                prefixIcon: const Icon(
+                                    Icons.search, size: 18),
+                                suffixIcon: query.isNotEmpty
+                                    ? IconButton(
+                                        icon: const Icon(
+                                            Icons.close, size: 16),
+                                        onPressed: () =>
+                                            setSearch(() => query = ''),
+                                      )
+                                    : null,
+                                isDense: true,
+                                border: OutlineInputBorder(
+                                    borderRadius:
+                                        BorderRadius.circular(12)),
+                              ),
+                            ),
+                          ],
                         ),
+                      ),
+                      Expanded(
+                        child: ListView(
+                          controller: scrollCtrl,
+                          children: [
+                            if (query.isEmpty)
+                              ListTile(
+                                title: Text('No category',
+                                    style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 14)),
+                                onTap: () {
+                                  setState(() {
+                                    _categoryId   = null;
+                                    _categoryName = null;
+                                  });
+                                  Navigator.pop(ctx);
+                                },
+                              ),
+                            for (final g in filtered) ...[
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                    16, 12, 16, 4),
+                                child: Text(
+                                  g.name.toUpperCase(),
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    color: cs.onSurfaceVariant,
+                                    letterSpacing: 1.0,
+                                  ),
+                                ),
+                              ),
+                              for (final cat in g.categories
+                                  .where((c) => query.isEmpty ||
+                                      c.name.toLowerCase().contains(
+                                          query.toLowerCase())))
+                                ListTile(
+                                  dense: true,
+                                  title: Text(cat.name,
+                                      style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 14)),
+                                  trailing: _categoryId == cat.id
+                                      ? Icon(Icons.check,
+                                          color: cs.primary, size: 18)
+                                      : null,
+                                  onTap: () {
+                                    setState(() {
+                                      _categoryId   = cat.id;
+                                      _categoryName = cat.name;
+                                    });
+                                    Navigator.pop(ctx);
+                                  },
+                                ),
+                            ],
+                          ],
+                        ),
+                      ),
                     ],
-                  ],
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ),
+              );
+            },
+          );
+        },
       ),
     );
   }
@@ -1728,7 +1795,7 @@ class _ConfirmPaymentSheetState extends ConsumerState<_ConfirmPaymentSheet> {
 
             // FROM account picker
             DropdownButtonFormField<String>(
-              value: _accountId,
+              initialValue: _accountId,
               decoration: InputDecoration(
                 labelText: st.isTransfer ? 'Pay from account' : 'Account',
               ),

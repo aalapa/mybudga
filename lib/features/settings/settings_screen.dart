@@ -20,6 +20,7 @@ import '../../shared/providers/payees_provider.dart';
 import '../accounts/accounts_provider.dart';
 import '../budget/budget_provider.dart';
 import '../cashflow/cashflow_provider.dart';
+import '../cashflow/cashflow_screen.dart';
 import '../transactions/transactions_provider.dart';
 import 'ynab_import_service.dart';
 
@@ -606,8 +607,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 24),
 
-          _sectionLabel(context, 'SCHEDULED TRANSACTIONS'),
-          const SizedBox(height: 8),
           const _ScheduledSection(),
           const SizedBox(height: 24),
 
@@ -888,45 +887,83 @@ class _ScheduledSection extends ConsumerWidget {
     final cfAsync  = ref.watch(cashflowProvider);
     final accounts = ref.watch(accountsProvider).valueOrNull ?? [];
 
-    if (cfAsync.isLoading) {
-      return const Center(child: Padding(
-        padding: EdgeInsets.symmetric(vertical: 16),
-        child: CircularProgressIndicator(),
-      ));
-    }
-
     final scheduled = [...(cfAsync.valueOrNull?.scheduled ?? [])]
       ..sort((a, b) => a.nextDate.compareTo(b.nextDate));
 
-    if (scheduled.isEmpty) {
-      return _SettingsCard(children: [
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(children: [
-            Icon(Icons.calendar_today_outlined,
-                size: 18, color: cs.onSurfaceVariant),
-            const SizedBox(width: 12),
-            Text('No scheduled transactions',
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 14, color: cs.onSurfaceVariant)),
-          ]),
-        ),
-      ]);
-    }
-
-    return _SettingsCard(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (int i = 0; i < scheduled.length; i++) ...[
-          if (i > 0)
-            Divider(height: 1, indent: 52,
-                color: cs.outlineVariant.withValues(alpha: 0.4)),
-          _ScheduledTile(
-            tx:       scheduled[i],
-            accounts: accounts,
-            isFirst:  i == 0,
-            isLast:   i == scheduled.length - 1,
+        // Section header with Add button
+        Padding(
+          padding: const EdgeInsets.only(left: 4),
+          child: Row(
+            children: [
+              Text(
+                'SCHEDULED TRANSACTIONS',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11, fontWeight: FontWeight.w700,
+                    color: cs.onSurfaceVariant, letterSpacing: 0.8),
+              ),
+              const Spacer(),
+              InkWell(
+                onTap: () => showAddScheduledSheet(context, ref),
+                borderRadius: BorderRadius.circular(20),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.add, size: 16, color: cs.primary),
+                      const SizedBox(width: 4),
+                      Text('Add',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12, fontWeight: FontWeight.w700,
+                              color: cs.primary)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
+        const SizedBox(height: 8),
+
+        if (cfAsync.isLoading)
+          const Center(child: Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: CircularProgressIndicator(),
+          ))
+        else if (scheduled.isEmpty)
+          _SettingsCard(children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(children: [
+                Icon(Icons.calendar_today_outlined,
+                    size: 18, color: cs.onSurfaceVariant),
+                const SizedBox(width: 12),
+                Text('No scheduled transactions',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14, color: cs.onSurfaceVariant)),
+              ]),
+            ),
+          ])
+        else
+          _SettingsCard(
+            children: [
+              for (int i = 0; i < scheduled.length; i++) ...[
+                if (i > 0)
+                  Divider(height: 1, indent: 52,
+                      color: cs.outlineVariant.withValues(alpha: 0.4)),
+                _ScheduledTile(
+                  tx:      scheduled[i],
+                  accounts: accounts,
+                  isFirst: i == 0,
+                  isLast:  i == scheduled.length - 1,
+                ),
+              ],
+            ],
+          ),
       ],
     );
   }

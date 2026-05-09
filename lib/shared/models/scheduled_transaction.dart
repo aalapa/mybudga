@@ -4,34 +4,50 @@ enum ScheduledFrequency {
   once,
   weekly,
   biweekly,
+  bimonthly,
   monthly,
+  quarterly,
+  halfYearly,
   yearly;
 
   static ScheduledFrequency fromString(String s) => switch (s) {
-    'once'     => ScheduledFrequency.once,
-    'weekly'   => ScheduledFrequency.weekly,
-    'biweekly' => ScheduledFrequency.biweekly,
-    'monthly'  => ScheduledFrequency.monthly,
-    'yearly'   => ScheduledFrequency.yearly,
-    _          => ScheduledFrequency.monthly,
+    'once'       => ScheduledFrequency.once,
+    'weekly'     => ScheduledFrequency.weekly,
+    'biweekly'   => ScheduledFrequency.biweekly,
+    'bimonthly'  => ScheduledFrequency.bimonthly,
+    'monthly'    => ScheduledFrequency.monthly,
+    'quarterly'  => ScheduledFrequency.quarterly,
+    'halfYearly' => ScheduledFrequency.halfYearly,
+    'yearly'     => ScheduledFrequency.yearly,
+    _            => ScheduledFrequency.monthly,
   };
 
   String get toDb => name;
 
   String get label => switch (this) {
-    ScheduledFrequency.once     => 'Once',
-    ScheduledFrequency.weekly   => 'Weekly',
-    ScheduledFrequency.biweekly => 'Bi-weekly',
-    ScheduledFrequency.monthly  => 'Monthly',
-    ScheduledFrequency.yearly   => 'Yearly',
+    ScheduledFrequency.once       => 'Once',
+    ScheduledFrequency.weekly     => 'Weekly',
+    ScheduledFrequency.biweekly   => 'Bi-weekly',
+    ScheduledFrequency.bimonthly  => 'Bi-monthly (twice/month)',
+    ScheduledFrequency.monthly    => 'Monthly',
+    ScheduledFrequency.quarterly  => 'Quarterly',
+    ScheduledFrequency.halfYearly => 'Half-yearly',
+    ScheduledFrequency.yearly     => 'Yearly',
   };
 
+  // Bi-monthly cycles between the 1st and 15th of each month.
+  // Quarterly/half-yearly use Dart's month overflow normalisation.
   DateTime? advance(DateTime from) => switch (this) {
-    ScheduledFrequency.once     => null,
-    ScheduledFrequency.weekly   => from.add(const Duration(days: 7)),
-    ScheduledFrequency.biweekly => from.add(const Duration(days: 14)),
-    ScheduledFrequency.monthly  => DateTime(from.year, from.month + 1, from.day),
-    ScheduledFrequency.yearly   => DateTime(from.year + 1, from.month, from.day),
+    ScheduledFrequency.once       => null,
+    ScheduledFrequency.weekly     => from.add(const Duration(days: 7)),
+    ScheduledFrequency.biweekly   => from.add(const Duration(days: 14)),
+    ScheduledFrequency.bimonthly  => from.day < 15
+        ? DateTime(from.year, from.month, 15)
+        : DateTime(from.year, from.month + 1, 1),
+    ScheduledFrequency.monthly    => DateTime(from.year, from.month + 1, from.day),
+    ScheduledFrequency.quarterly  => DateTime(from.year, from.month + 3, from.day),
+    ScheduledFrequency.halfYearly => DateTime(from.year, from.month + 6, from.day),
+    ScheduledFrequency.yearly     => DateTime(from.year + 1, from.month, from.day),
   };
 }
 
