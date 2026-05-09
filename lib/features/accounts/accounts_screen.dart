@@ -118,6 +118,18 @@ class _AccountsBody extends StatelessWidget {
     }
     final unclaimed = budget.where((a) => !claimed.contains(a.id)).toList();
 
+    // Apply the same labels to tracking accounts independently.
+    final trackingClaimed = <String>{};
+    final trackingLabeledSections = <({AccountLabel label, List<Account> accounts})>[];
+    for (final label in labels) {
+      final matched = _tracking.where((a) => !trackingClaimed.contains(a.id) && label.matches(a)).toList();
+      if (matched.isNotEmpty) {
+        for (final a in matched) trackingClaimed.add(a.id);
+        trackingLabeledSections.add((label: label, accounts: matched));
+      }
+    }
+    final unclaimedTracking = _tracking.where((a) => !trackingClaimed.contains(a.id)).toList();
+
     return SafeArea(
       child: CustomScrollView(
         slivers: [
@@ -165,7 +177,25 @@ class _AccountsBody extends StatelessWidget {
                     total: _tracking.fold(0.0, (s, a) => s + a.balance),
                   ),
                   const SizedBox(height: 8),
-                  _AccountGroup(accounts: _tracking),
+                  for (final sec in trackingLabeledSections) ...[
+                    _SectionHeader(
+                      label: sec.label.name.toUpperCase(),
+                      total: sec.accounts.fold(0.0, (s, a) => s + a.balance),
+                    ),
+                    const SizedBox(height: 6),
+                    _AccountGroup(accounts: sec.accounts),
+                    const SizedBox(height: 16),
+                  ],
+                  if (unclaimedTracking.isNotEmpty) ...[
+                    if (trackingLabeledSections.isNotEmpty) ...[
+                      _SectionHeader(
+                        label: 'OTHER',
+                        total: unclaimedTracking.fold(0.0, (s, a) => s + a.balance),
+                      ),
+                      const SizedBox(height: 6),
+                    ],
+                    _AccountGroup(accounts: unclaimedTracking),
+                  ],
                 ],
               ]),
             ),
