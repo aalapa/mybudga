@@ -1731,7 +1731,8 @@ class _ReconcileSheetState extends ConsumerState<_ReconcileSheet> {
     final val = double.tryParse(_ctrl.text.replaceAll(',', ''));
     if (val == null) return;
     setState(() => _saving = true);
-    final newBalance = widget.account.isCreditCard ? -val.abs() : val;
+    final isLiability = widget.account.isCreditCard || widget.account.type == AccountType.loan;
+    final newBalance   = isLiability ? -val.abs() : val;
     try {
       await widget.widgetRef.read(accountsProvider.notifier).updateBalance(
         widget.account.id, newBalance,
