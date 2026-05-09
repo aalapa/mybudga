@@ -878,14 +878,18 @@ class _ColorSwatch extends StatelessWidget {
 // Scheduled transactions section
 // ---------------------------------------------------------------------------
 
-/// Returns the next occurrence date on or after [today], advancing past
-/// any overdue occurrences so the list always shows upcoming dates.
-DateTime _nextUpcoming(ScheduledTransaction tx, DateTime today) {
-  var d = tx.nextDate;
+/// Returns the next occurrence date on or after today.
+/// Normalises both sides to local midnight (date-only) so UTC-stored
+/// nextDate values never compare as "before today" due to time components.
+DateTime _nextUpcoming(ScheduledTransaction tx) {
+  final now   = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final raw   = tx.nextDate.toLocal();
+  var d = DateTime(raw.year, raw.month, raw.day);
   while (d.isBefore(today)) {
     final next = tx.frequency.advance(d);
     if (next == null) return d; // 'once' — show as-is even if past
-    d = next;
+    d = DateTime(next.year, next.month, next.day);
   }
   return d;
 }
@@ -899,9 +903,8 @@ class _ScheduledSection extends ConsumerWidget {
     final cfAsync  = ref.watch(cashflowProvider);
     final accounts = ref.watch(accountsProvider).valueOrNull ?? [];
 
-    final today = DateTime.now();
     final scheduled = [...(cfAsync.valueOrNull?.scheduled ?? [])]
-      ..sort((a, b) => _nextUpcoming(a, today).compareTo(_nextUpcoming(b, today)));
+      ..sort((a, b) => _nextUpcoming(a).compareTo(_nextUpcoming(b)));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -970,7 +973,7 @@ class _ScheduledSection extends ConsumerWidget {
                       color: cs.outlineVariant.withValues(alpha: 0.4)),
                 _ScheduledTile(
                   tx:          scheduled[i],
-                  nextDate:    _nextUpcoming(scheduled[i], today),
+                  nextDate:    _nextUpcoming(scheduled[i]),
                   accounts:    accounts,
                   isFirst:     i == 0,
                   isLast:      i == scheduled.length - 1,
