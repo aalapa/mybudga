@@ -1731,7 +1731,9 @@ class _ReconcileSheetState extends ConsumerState<_ReconcileSheet> {
     final val = double.tryParse(_ctrl.text.replaceAll(',', ''));
     if (val == null) return;
     setState(() => _saving = true);
-    final isLiability = widget.account.isCreditCard || widget.account.type == AccountType.loan;
+    final isLiability = widget.account.isCreditCard ||
+        widget.account.type == AccountType.loan ||
+        widget.account.type == AccountType.mortgage;
     final newBalance   = isLiability ? -val.abs() : val;
     try {
       await widget.widgetRef.read(accountsProvider.notifier).updateBalance(
@@ -1947,7 +1949,7 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
           100.0;
       final isCc        = _type == AccountType.creditCard ||
                          _type == AccountType.lineOfCredit;
-      final isLiability = isCc || _type == AccountType.loan;
+      final isLiability = isCc || _type == AccountType.loan || _type == AccountType.mortgage;
 
       await widget.widgetRef.read(accountsProvider.notifier).addAccount(
         name:            _nameCtrl.text.trim(),
@@ -1977,7 +1979,7 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
     final fmt  = DateFormat('MMM d, yyyy');
     final isCc        = _type == AccountType.creditCard ||
                        _type == AccountType.lineOfCredit;
-    final isLiability = isCc || _type == AccountType.loan;
+    final isLiability = isCc || _type == AccountType.loan || _type == AccountType.mortgage;
 
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
