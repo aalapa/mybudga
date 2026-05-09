@@ -354,6 +354,141 @@ class _PendingTile extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
+// Transaction long-press actions
+// ---------------------------------------------------------------------------
+
+void _showTransactionActions(BuildContext context, WidgetRef ref, Transaction tx) {
+  final cs = Theme.of(context).colorScheme;
+  showModalBottomSheet<void>(
+    context:     context,
+    useSafeArea: true,
+    builder: (ctx) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 12),
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          ListTile(
+            leading: Icon(Icons.swap_horiz_rounded, color: cs.primary),
+            title: Text(
+              'Move to account',
+              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600),
+            ),
+            subtitle: Text(
+              'Reassign this transaction to a different account',
+              style: GoogleFonts.plusJakartaSans(fontSize: 12, color: cs.onSurfaceVariant),
+            ),
+            onTap: () {
+              Navigator.pop(ctx);
+              _showMoveToAccountSheet(context, ref, tx);
+            },
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    ),
+  );
+}
+
+void _showMoveToAccountSheet(BuildContext context, WidgetRef ref, Transaction tx) {
+  final cs       = Theme.of(context).colorScheme;
+  final accounts = ref.read(accountsProvider).valueOrNull ?? [];
+  final others   = accounts.where((a) => a.id != tx.accountId).toList();
+
+  showModalBottomSheet<void>(
+    context:     context,
+    useSafeArea: true,
+    isScrollControlled: true,
+    builder: (ctx) => DraggableScrollableSheet(
+      expand:          false,
+      initialChildSize: 0.5,
+      minChildSize:     0.35,
+      maxChildSize:     0.85,
+      builder: (_, scrollCtrl) => Container(
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerLow,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
+            Center(
+              child: Container(
+                width: 36, height: 4,
+                decoration: BoxDecoration(
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Move to account',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 17, fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  Text(
+                    'Currently in: ${tx.account?.displayName ?? 'Unknown'}',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, color: cs.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView.builder(
+                controller: scrollCtrl,
+                itemCount:  others.length,
+                itemBuilder: (_, i) {
+                  final a = others[i];
+                  return ListTile(
+                    leading: Icon(a.type.icon, color: cs.onSurfaceVariant, size: 20),
+                    title: Text(
+                      a.displayName,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14, fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      await ref.read(transactionsProvider.notifier).updateTransaction(
+                        tx.id,
+                        accountId:  a.id,
+                        amount:     tx.amount,
+                        date:       tx.date,
+                        payeeName:  tx.payeeName ?? '',
+                        categoryId: tx.categoryId,
+                        memo:       tx.memo,
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Date header
 // ---------------------------------------------------------------------------
 
@@ -430,6 +565,7 @@ class _TransactionTile extends StatelessWidget {
 
     return InkWell(
       onTap: () => _showAddTransactionSheet(context, ref, prefill: tx),
+      onLongPress: tx.isTransfer ? null : () => _showTransactionActions(context, ref, tx),
       borderRadius: isLast
           ? const BorderRadius.vertical(bottom: Radius.circular(16))
           : BorderRadius.zero,
