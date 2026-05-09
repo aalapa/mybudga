@@ -216,9 +216,18 @@ class _TransactionsList extends StatelessWidget {
       );
     }
 
+    final confirmed = _confirmed;
+    final searchTotal = search.isNotEmpty
+        ? confirmed.fold<double>(0, (sum, t) => sum + t.amount)
+        : 0.0;
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
       children: [
+        if (search.isNotEmpty && confirmed.isNotEmpty) ...[
+          _SearchSummaryBar(count: confirmed.length, total: searchTotal),
+          const SizedBox(height: 8),
+        ],
         if (pending.isNotEmpty) ...[
           _PendingReviewSection(transactions: pending, ref: ref),
           const SizedBox(height: 16),
@@ -230,6 +239,48 @@ class _TransactionsList extends StatelessWidget {
           const SizedBox(height: 12),
         ],
       ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Search summary bar
+
+class _SearchSummaryBar extends StatelessWidget {
+  final int count;
+  final double total;
+  const _SearchSummaryBar({required this.count, required this.total});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final isPositive = total >= 0;
+    final totalColor = isPositive ? cs.tertiary : cs.error;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Text(
+            '$count ${count == 1 ? 'transaction' : 'transactions'}',
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 13, color: cs.onSurfaceVariant),
+          ),
+          const Spacer(),
+          Text(
+            fmt.format(total.abs()),
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: totalColor),
+          ),
+        ],
+      ),
     );
   }
 }
