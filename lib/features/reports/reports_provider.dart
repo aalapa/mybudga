@@ -119,6 +119,7 @@ final reportsProvider = FutureProvider.autoDispose
   final startDate = DateTime(now.year, now.month - months + 1, 1);
   final startStr  = '${startDate.year}-'
       '${startDate.month.toString().padLeft(2, '0')}-01';
+  final endStr    = '${now.year}-${now.month.toString().padLeft(2, '0')}-01';
 
   // ── Fetch transactions + budget months in parallel ───────────────────────
   final results = await Future.wait([
@@ -133,7 +134,8 @@ final reportsProvider = FutureProvider.autoDispose
         .from('budget_months')
         .select('category_id, budgeted, categories(name)')
         .eq('household_id', householdId)
-        .gte('month', startStr),
+        .gte('month', startStr)
+        .lte('month', endStr),
   ]);
 
   final res       = results[0] as List;

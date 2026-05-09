@@ -17,8 +17,9 @@ class ReportsScreen extends ConsumerStatefulWidget {
 }
 
 class _ReportsScreenState extends ConsumerState<ReportsScreen> {
-  int _months     = 1;
-  int _touchedIdx = -1;
+  int          _months          = 1;
+  int          _touchedIdx      = -1;
+  Set<String>  _excludedCats    = {};
 
   void _showDeepDive(
       BuildContext context, ReportsState data, CategorySpend cat, Color color) {
@@ -65,9 +66,17 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
             data:       data,
             months:     _months,
             touchedIdx: _touchedIdx,
-            onMonthsChanged:     (m) => setState(() { _months = m; _touchedIdx = -1; }),
+            onMonthsChanged:     (m) => setState(() { _months = m; _touchedIdx = -1; _excludedCats = {}; }),
             onTouchedIdxChanged: (i) => setState(() => _touchedIdx = i),
-            onDrillDown: (cat, color) => _showDeepDive(context, data, cat, color),
+            onDrillDown:         (cat, color) => _showDeepDive(context, data, cat, color),
+            excludedCats:        _excludedCats,
+            onExclude:           (name) => setState(() {
+              if (_excludedCats.contains(name)) {
+                _excludedCats = {..._excludedCats}..remove(name);
+              } else {
+                _excludedCats = {..._excludedCats, name};
+              }
+            }),
           ),
         ),
       ),
@@ -83,17 +92,21 @@ class _ReportsBody extends StatelessWidget {
   final ReportsState data;
   final int months;
   final int touchedIdx;
+  final Set<String> excludedCats;
   final ValueChanged<int> onMonthsChanged;
   final ValueChanged<int> onTouchedIdxChanged;
   final void Function(CategorySpend, Color) onDrillDown;
+  final void Function(String) onExclude;
 
   const _ReportsBody({
     required this.data,
     required this.months,
     required this.touchedIdx,
+    required this.excludedCats,
     required this.onMonthsChanged,
     required this.onTouchedIdxChanged,
     required this.onDrillDown,
+    required this.onExclude,
   });
 
   @override
@@ -140,10 +153,12 @@ class _ReportsBody extends StatelessWidget {
                   message: 'No expense transactions in this period',
                 )
               : _SpendingSection(
-                  data:       data,
-                  touchedIdx: touchedIdx,
-                  onTouch:    onTouchedIdxChanged,
-                  onDrillDown: onDrillDown,
+                  data:         data,
+                  touchedIdx:   touchedIdx,
+                  excludedCats: excludedCats,
+                  onTouch:      onTouchedIdxChanged,
+                  onDrillDown:  onDrillDown,
+                  onExclude:    onExclude,
                 ),
         ),
 
@@ -584,14 +599,18 @@ class _BudgetVsActualSection extends StatelessWidget {
 class _SpendingSection extends StatelessWidget {
   final ReportsState data;
   final int touchedIdx;
+  final Set<String> excludedCats;
   final ValueChanged<int> onTouch;
   final void Function(CategorySpend, Color) onDrillDown;
+  final void Function(String) onExclude;
 
   const _SpendingSection({
     required this.data,
     required this.touchedIdx,
+    required this.excludedCats,
     required this.onTouch,
     required this.onDrillDown,
+    required this.onExclude,
   });
 
   @override
@@ -609,14 +628,25 @@ class _SpendingSection extends StatelessWidget {
       if (other > 0) CategorySpend(name: 'Other', amount: other),
     ];
 
-    final sections = allSlices.asMap().entries.map((e) {
-      final i     = e.key;
+    // Pie uses only non-excluded slices; percentages recalculate accordingly
+    final visibleSlices = allSlices
+        .where((c) => !excludedCats.contains(c.name))
+        .toList();
+    final visibleTotal = visibleSlices.fold(0.0, (s, c) => s + c.amount);
+
+    // Map visible index back to original palette index for consistent colours
+    final visibleOriginalIndices = allSlices.asMap().entries
+        .where((e) => !excludedCats.contains(e.value.name))
+        .map((e) => e.key)
+        .toList();
+
+    final sections = visibleSlices.asMap().entries.map((e) {
+      final vi    = e.key;
       final cat   = e.value;
-      final pct   = data.totalExpenses > 0
-          ? cat.amount / data.totalExpenses * 100
-          : 0.0;
-      final color = chartPalette[i % chartPalette.length];
-      final isSel = touchedIdx == i;
+      final origI = visibleOriginalIndices[vi];
+      final pct   = visibleTotal > 0 ? cat.amount / visibleTotal * 100 : 0.0;
+      final color = chartPalette[origI % chartPalette.length];
+      final isSel = touchedIdx == origI;
 
       return PieChartSectionData(
         color:  color,
@@ -676,14 +706,14 @@ class _SpendingSection extends StatelessWidget {
                     Text(
                       selCat != null
                           ? fmt.format(selCat.amount)
-                          : fmt.format(data.totalExpenses),
+                          : fmt.format(visibleTotal),
                       style: GoogleFonts.plusJakartaSans(
                           fontSize: 18, fontWeight: FontWeight.w800,
                           color: cs.onSurface),
                     ),
-                    if (selCat != null)
+                    if (selCat != null && visibleTotal > 0)
                       Text(
-                        '${(selCat.amount / data.totalExpenses * 100).toStringAsFixed(1)}%',
+                        '${(selCat.amount / visibleTotal * 100).toStringAsFixed(1)}%',
                         style: GoogleFonts.plusJakartaSans(
                             fontSize: 11, color: cs.onSurfaceVariant),
                       ),
@@ -694,94 +724,126 @@ class _SpendingSection extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // Legend rows — tap colour dot to select, chart icon to deep-dive
+          // Legend rows — tap to drill down, swipe left to exclude/restore
+          if (excludedCats.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Icon(Icons.visibility_off_outlined,
+                      size: 13, color: cs.onSurfaceVariant),
+                  const SizedBox(width: 4),
+                  Text('${excludedCats.length} hidden · tap grayed row to restore',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11, color: cs.onSurfaceVariant)),
+                ],
+              ),
+            ),
           ...allSlices.asMap().entries.map((e) {
-            final i      = e.key;
-            final cat    = e.value;
-            final pct    = data.totalExpenses > 0
-                ? cat.amount / data.totalExpenses * 100
+            final i          = e.key;
+            final cat        = e.value;
+            final isExcluded = excludedCats.contains(cat.name);
+            final color      = chartPalette[i % chartPalette.length];
+            final isSel      = touchedIdx == i;
+            final canDrill   = cat.categoryId != null;
+
+            // Percentages relative to visible total
+            final pct     = visibleTotal > 0 && !isExcluded
+                ? cat.amount / visibleTotal * 100
                 : 0.0;
-            final barFrac = data.totalExpenses > 0
-                ? cat.amount / data.totalExpenses
+            final barFrac = visibleTotal > 0 && !isExcluded
+                ? cat.amount / visibleTotal
                 : 0.0;
-            final color  = chartPalette[i % chartPalette.length];
-            final isSel  = touchedIdx == i;
-            final canDrill = cat.categoryId != null;
 
             return GestureDetector(
-              onTap: () => onTouch(isSel ? -1 : i),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                margin: const EdgeInsets.only(bottom: 6),
-                padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
-                decoration: BoxDecoration(
-                  color: isSel
-                      ? color.withValues(alpha: 0.1)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 10, height: 10,
-                      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(cat.name,
-                          style: GoogleFonts.plusJakartaSans(
-                              fontSize: 13,
-                              fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
-                              color: cs.onSurface)),
-                    ),
-                    const SizedBox(width: 8),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(3),
-                      child: SizedBox(
-                        width: 80, height: 4,
-                        child: LinearProgressIndicator(
-                          value: barFrac,
-                          backgroundColor: cs.surfaceContainerHighest,
-                          valueColor: AlwaysStoppedAnimation(color),
+              onTap: () {
+                if (isExcluded) {
+                  onExclude(cat.name); // restore
+                } else if (canDrill) {
+                  onDrillDown(cat, color);
+                }
+              },
+              onHorizontalDragEnd: (details) {
+                if ((details.primaryVelocity ?? 0) < -250) {
+                  onExclude(cat.name); // toggle exclude
+                }
+              },
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 200),
+                opacity: isExcluded ? 0.35 : 1.0,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  margin: const EdgeInsets.only(bottom: 6),
+                  padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
+                  decoration: BoxDecoration(
+                    color: isSel && !isExcluded
+                        ? color.withValues(alpha: 0.1)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 10, height: 10,
+                        decoration: BoxDecoration(
+                          color: isExcluded ? cs.onSurfaceVariant : color,
+                          shape: BoxShape.circle,
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 44,
-                      child: Text(
-                        '${pct.toStringAsFixed(0)}%',
-                        textAlign: TextAlign.right,
-                        style: GoogleFonts.plusJakartaSans(
-                            fontSize: 11, color: cs.onSurfaceVariant),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(cat.name,
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: cs.onSurface)),
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                    SizedBox(
-                      width: 64,
-                      child: Text(
-                        fmt.format(cat.amount),
-                        textAlign: TextAlign.right,
-                        style: GoogleFonts.plusJakartaSans(
-                            fontSize: 13, fontWeight: FontWeight.w700,
-                            color: cs.onSurface),
+                      const SizedBox(width: 8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(3),
+                        child: SizedBox(
+                          width: 80, height: 4,
+                          child: LinearProgressIndicator(
+                            value: barFrac,
+                            backgroundColor: cs.surfaceContainerHighest,
+                            valueColor: AlwaysStoppedAnimation(color),
+                          ),
+                        ),
                       ),
-                    ),
-                    if (canDrill)
-                      GestureDetector(
-                        onTap: () => onDrillDown(cat, color),
-                        child: Padding(
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 44,
+                        child: Text(
+                          isExcluded ? '—' : '${pct.toStringAsFixed(0)}%',
+                          textAlign: TextAlign.right,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11, color: cs.onSurfaceVariant),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      SizedBox(
+                        width: 64,
+                        child: Text(
+                          fmt.format(cat.amount),
+                          textAlign: TextAlign.right,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13, fontWeight: FontWeight.w700,
+                              color: cs.onSurface),
+                        ),
+                      ),
+                      if (canDrill && !isExcluded)
+                        Padding(
                           padding: const EdgeInsets.only(left: 4),
                           child: Icon(
                             Icons.show_chart_rounded,
                             size: 18,
-                            color: isSel ? color : cs.onSurfaceVariant.withValues(alpha: 0.5),
+                            color: cs.onSurfaceVariant.withValues(alpha: 0.5),
                           ),
-                        ),
-                      )
-                    else
-                      const SizedBox(width: 22),
-                  ],
+                        )
+                      else
+                        const SizedBox(width: 22),
+                    ],
+                  ),
                 ),
               ),
             );
