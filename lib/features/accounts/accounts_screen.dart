@@ -1016,8 +1016,8 @@ class _AccountDetailSheetState extends ConsumerState<_AccountDetailSheet> {
                         Expanded(
                           child: FilledButton.tonal(
                             onPressed: () =>
-                                _showRenameAccountDialog(context, ref, account),
-                            child: Text('Rename',
+                                _showEditAccountSheet(context, account, widget.widgetRef),
+                            child: Text('Edit',
                                 style: GoogleFonts.plusJakartaSans(
                                     fontWeight: FontWeight.w700)),
                           ),
@@ -1578,103 +1578,184 @@ void _showDeleteAccountDialog(
 // Rename account dialog
 // ---------------------------------------------------------------------------
 
-void _showRenameAccountDialog(
-    BuildContext context, WidgetRef ref, Account account) {
-  final ctrl = TextEditingController(
-      text: account.nickname?.isNotEmpty == true
-          ? account.nickname
-          : account.name);
-
-  showDialog<void>(
-    context: context,
-    builder: (ctx) {
-      final cs = Theme.of(ctx).colorScheme;
-      bool saving = false;
-
-      return StatefulBuilder(builder: (ctx, setDlgState) {
-        Future<void> save() async {
-          final name = ctrl.text.trim();
-          if (name.isEmpty) return;
-          setDlgState(() => saving = true);
-          try {
-            await ref.read(accountsProvider.notifier)
-                .renameAccount(account.id, name);
-            if (ctx.mounted) Navigator.pop(ctx);
-          } catch (e) {
-            if (ctx.mounted) {
-              setDlgState(() => saving = false);
-              ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                content: Text('Could not rename: $e'),
-                behavior: SnackBarBehavior.floating,
-              ));
-            }
-          }
-        }
-
-        return AlertDialog(
-          title: Text('Rename account',
-              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(
-                controller:      ctrl,
-                autofocus:       true,
-                textCapitalization: TextCapitalization.words,
-                onSubmitted:     (_) => save(),
-                decoration: InputDecoration(
-                  labelText: 'Display name',
-                  hintText:  account.name,
-                ),
-              ),
-              if (account.nickname?.isNotEmpty == true) ...[
-                const SizedBox(height: 8),
-                Text('Bank name: ${account.name}',
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 12, color: cs.onSurfaceVariant)),
-              ],
-              const SizedBox(height: 4),
-              Text('Leave blank to use the original bank name.',
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 12, color: cs.onSurfaceVariant)),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: saving ? null : () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            // Clear nickname → revert to bank name
-            if (account.nickname?.isNotEmpty == true)
-              TextButton(
-                onPressed: saving
-                    ? null
-                    : () async {
-                        setDlgState(() => saving = true);
-                        await ref
-                            .read(accountsProvider.notifier)
-                            .renameAccount(account.id, '');
-                        if (ctx.mounted) Navigator.pop(ctx);
-                      },
-                child: Text('Reset',
-                    style: TextStyle(color: cs.onSurfaceVariant)),
-              ),
-            FilledButton(
-              onPressed: saving ? null : save,
-              child: saving
-                  ? const SizedBox(
-                      width: 16, height: 16,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
-                  : const Text('Save'),
-            ),
-          ],
-        );
-      });
-    },
+void _showEditAccountSheet(BuildContext context, Account account, WidgetRef ref) {
+  showModalBottomSheet(
+    context:            context,
+    isScrollControlled: true,
+    backgroundColor:    Colors.transparent,
+    builder: (_) => _EditAccountSheet(account: account, widgetRef: ref),
   );
 }
+
+class _EditAccountSheet extends StatefulWidget {
+  final Account account;
+  final WidgetRef widgetRef;
+  const _EditAccountSheet({required this.account, required this.widgetRef});
+
+  @override
+  State<_EditAccountSheet> createState() => _EditAccountSheetState();
+}
+
+class _EditAccountSheetState extends State<_EditAccountSheet> {
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _nicknameCtrl;
+  late final TextEditingController _lastFourCtrl;
+  late final TextEditingController _balanceCtrl;
+  final _balanceFocus = FocusNode();
+  bool _saving = false;
+
+  bool get _isLiability =>
+      widget.account.type == AccountType.creditCard ||
+      widget.account.type == AccountType.lineOfCredit ||
+      widget.account.type == AccountType.mortgage ||
+      widget.account.type == AccountType.loan;
+
+  bool get _showLastFour =>
+      widget.account.type == AccountType.creditCard ||
+      widget.account.type == AccountType.lineOfCredit;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl     = TextEditingController(text: widget.account.name);
+    _nicknameCtrl = TextEditingController(text: widget.account.nickname ?? '');
+    _lastFourCtrl = TextEditingController(text: widget.account.lastFour ?? '');
+    _balanceCtrl  = TextEditingController(
+        text: widget.account.balance.abs().toStringAsFixed(2));
+    _balanceFocus.addListener(() {
+      if (!_balanceFocus.hasFocus && _balanceCtrl.text.isNotEmpty) {
+        final v = double.tryParse(_balanceCtrl.text.replaceAll(',', '')) ?? 0.0;
+        _balanceCtrl.text = v.toStringAsFixed(2);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose(); _nicknameCtrl.dispose();
+    _lastFourCtrl.dispose(); _balanceCtrl.dispose();
+    _balanceFocus.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_nameCtrl.text.trim().isEmpty || _saving) return;
+    setState(() => _saving = true);
+    try {
+      final raw     = double.tryParse(_balanceCtrl.text.replaceAll(',', '')) ?? 0.0;
+      final balance = _isLiability ? -raw.abs() : raw.abs();
+      await widget.widgetRef.read(accountsProvider.notifier).updateAccount(
+        widget.account.id,
+        name:     _nameCtrl.text.trim(),
+        nickname: _nicknameCtrl.text.trim(),
+        lastFour: _showLastFour ? _lastFourCtrl.text.trim() : null,
+        balance:  balance,
+      );
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Could not save: $e'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+          behavior: SnackBarBehavior.floating,
+        ));
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: Container(
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHigh,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text('Edit Account',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 22, fontWeight: FontWeight.w800, color: cs.onSurface)),
+              const SizedBox(height: 20),
+              TextField(
+                controller: _nameCtrl,
+                textCapitalization: TextCapitalization.words,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(labelText: 'Account name'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _nicknameCtrl,
+                textCapitalization: TextCapitalization.words,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  labelText: 'Nickname (optional)',
+                  hintText:  'e.g. Primary, Sapphire',
+                ),
+              ),
+              if (_showLastFour) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _lastFourCtrl,
+                  keyboardType: TextInputType.number,
+                  maxLength: 4,
+                  textInputAction: TextInputAction.next,
+                  decoration: const InputDecoration(
+                    labelText: 'Last 4 digits',
+                    counterText: '',
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              TextField(
+                controller:      _balanceCtrl,
+                focusNode:       _balanceFocus,
+                keyboardType:    const TextInputType.numberWithOptions(decimal: true),
+                textInputAction: TextInputAction.done,
+                onSubmitted:     (_) => _save(),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+                  _TwoDecimalInputFormatter(),
+                ],
+                decoration: InputDecoration(
+                  labelText: _isLiability ? 'Current balance owed' : 'Current balance',
+                  prefixText: '\$ ',
+                  hintText:   '0.00',
+                ),
+              ),
+              const SizedBox(height: 24),
+              FilledButton(
+                onPressed: _saving ? null : _save,
+                child: _saving
+                    ? const SizedBox(height: 18, width: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : Text('Save', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 

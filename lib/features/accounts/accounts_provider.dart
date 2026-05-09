@@ -80,6 +80,19 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
     //     TBB. The CC-payment budget category handles the debt separately,
     //     and the DB trigger would double-count by adding the transaction
     //     amount on top of the current_balance we already set.
+    // For liability accounts, re-apply the negative balance after insert.
+    // A DB trigger may recalculate current_balance on account creation;
+    // this explicit UPDATE ensures the correct sign survives.
+    final isLiability = type == AccountType.creditCard ||
+        type == AccountType.lineOfCredit ||
+        type == AccountType.mortgage ||
+        type == AccountType.loan;
+    if (isLiability && startingBalance != 0) {
+      await client.from('accounts')
+          .update({'current_balance': startingBalance, 'starting_balance': startingBalance})
+          .eq('id', res['id'] as String);
+    }
+
     final isCcType = type == AccountType.creditCard ||
                      type == AccountType.lineOfCredit;
     if (!isTracking && !isCcType && startingBalance != 0) {
@@ -109,6 +122,24 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
         .from('accounts')
         .update({'current_balance': newBalance})
         .eq('id', id);
+    ref.invalidateSelf();
+  }
+
+  Future<void> updateAccount(
+    String id, {
+    required String name,
+    String? nickname,
+    String? lastFour,
+    required double balance,
+  }) async {
+    final client = ref.read(supabaseProvider);
+    await client.from('accounts').update({
+      'name':            name,
+      'nickname':        nickname?.isNotEmpty == true ? nickname : null,
+      'last_four':       lastFour?.isNotEmpty == true ? lastFour : null,
+      'current_balance': balance,
+      'starting_balance': balance,
+    }).eq('id', id);
     ref.invalidateSelf();
   }
 
