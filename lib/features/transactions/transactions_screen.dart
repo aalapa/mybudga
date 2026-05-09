@@ -168,13 +168,12 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
             child: const Icon(Icons.swap_horiz),
           ),
           const SizedBox(height: 12),
-          FloatingActionButton.extended(
+          FloatingActionButton(
             heroTag: 'add',
             onPressed: () => _showAddTransactionSheet(context, ref),
-            icon: const Icon(Icons.add),
-            label: Text('Add', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
             backgroundColor: cs.primary,
             foregroundColor: cs.onPrimary,
+            child: const Icon(Icons.add),
           ),
         ],
       ),
