@@ -10,6 +10,7 @@ import '../../shared/models/account.dart';
 import '../../shared/models/transaction.dart';
 import 'account_labels_provider.dart';
 import 'accounts_provider.dart';
+import '../transactions/transactions_provider.dart';
 
 class AccountsScreen extends ConsumerStatefulWidget {
   const AccountsScreen({super.key});
@@ -1185,6 +1186,7 @@ class _AccountDetailSheetState extends ConsumerState<_AccountDetailSheet> {
                           dateLabel:    entry.key,
                           transactions: entry.value,
                           fmt:          fmt,
+                          ref:          ref,
                           onClearToggle: (txId, nowCleared) async {
                             await Supabase.instance.client
                                 .from('transactions')
@@ -1226,12 +1228,14 @@ class _TxGroup extends StatelessWidget {
   final String label;
   final List<Transaction> transactions;
   final NumberFormat fmt;
+  final WidgetRef ref;
   final Future<void> Function(String txId, bool nowCleared)? onClearToggle;
 
   const _TxGroup({
     required String dateLabel,
     required this.transactions,
     required this.fmt,
+    required this.ref,
     this.onClearToggle,
   }) : label = dateLabel;
 
@@ -1273,6 +1277,8 @@ class _TxGroup extends StatelessWidget {
                       ? const BorderRadius.vertical(bottom: Radius.circular(14))
                       : BorderRadius.zero,
                   onTap: () {},
+                  onLongPress:    tx.isTransfer ? null : () => _showMoveToAccountSheet(context, ref, tx),
+                  onSecondaryTap: tx.isTransfer ? null : () => _showMoveToAccountSheet(context, ref, tx),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 14, vertical: 12),
@@ -2197,4 +2203,88 @@ class _TwoDecimalInputFormatter extends TextInputFormatter {
     if (RegExp(r'^\d*\.?\d{0,2}$').hasMatch(text)) return newValue;
     return oldValue; // revert to previous valid value
   }
+}
+
+// ---------------------------------------------------------------------------
+// Move transaction to a different account (long-press / right-click)
+// ---------------------------------------------------------------------------
+
+void _showMoveToAccountSheet(BuildContext context, WidgetRef ref, Transaction tx) {
+  final cs      = Theme.of(context).colorScheme;
+  final accounts = ref.read(accountsProvider).valueOrNull ?? [];
+  final others   = accounts.where((a) => a.id != tx.accountId).toList();
+
+  showModalBottomSheet<void>(
+    context:            context,
+    useSafeArea:        true,
+    isScrollControlled: true,
+    builder: (ctx) => DraggableScrollableSheet(
+      expand:           false,
+      initialChildSize: 0.5,
+      minChildSize:     0.35,
+      maxChildSize:     0.85,
+      builder: (_, scrollCtrl) => Container(
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerLow,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
+            Center(
+              child: Container(
+                width: 36, height: 4,
+                decoration: BoxDecoration(
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Move to account',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 17, fontWeight: FontWeight.w800)),
+                  Text('Currently in: ${tx.account?.displayName ?? 'Unknown'}',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12, color: cs.onSurfaceVariant)),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView.builder(
+                controller: scrollCtrl,
+                itemCount:  others.length,
+                itemBuilder: (_, i) {
+                  final a = others[i];
+                  return ListTile(
+                    leading: Icon(a.type.icon, color: cs.onSurfaceVariant, size: 20),
+                    title: Text(a.displayName,
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 14, fontWeight: FontWeight.w600)),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      await ref.read(transactionsProvider.notifier).updateTransaction(
+                        tx.id,
+                        accountId:  a.id,
+                        amount:     tx.amount,
+                        date:       tx.date,
+                        payeeName:  tx.payeeName ?? '',
+                        categoryId: tx.categoryId,
+                        memo:       tx.memo,
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
