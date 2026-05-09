@@ -50,6 +50,7 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
     String? lastFour,
     required double startingBalance,
     DateTime? startDate,
+    int? dueDay,
   }) async {
     final householdId = await ref.read(householdIdProvider.future);
     final client      = ref.read(supabaseProvider);
@@ -68,6 +69,7 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
         'start_date': '${startDate.year}-'
             '${startDate.month.toString().padLeft(2, '0')}-'
             '${startDate.day.toString().padLeft(2, '0')}',
+      if (dueDay != null) 'due_day': dueDay,
     }).select('id').single();
 
     // For budget (non-tracking) accounts with a non-zero opening balance,
@@ -131,14 +133,16 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
     String? nickname,
     String? lastFour,
     required double balance,
+    int? dueDay,
   }) async {
     final client = ref.read(supabaseProvider);
     await client.from('accounts').update({
-      'name':            name,
-      'nickname':        nickname?.isNotEmpty == true ? nickname : null,
-      'last_four':       lastFour?.isNotEmpty == true ? lastFour : null,
-      'current_balance': balance,
+      'name':             name,
+      'nickname':         nickname?.isNotEmpty == true ? nickname : null,
+      'last_four':        lastFour?.isNotEmpty == true ? lastFour : null,
+      'current_balance':  balance,
       'starting_balance': balance,
+      'due_day':          dueDay,
     }).eq('id', id);
     ref.invalidateSelf();
   }

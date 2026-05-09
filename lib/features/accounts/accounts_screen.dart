@@ -12,6 +12,35 @@ import 'account_labels_provider.dart';
 import 'accounts_provider.dart';
 import '../transactions/transactions_provider.dart';
 
+// ---------------------------------------------------------------------------
+// Due-day helpers
+// ---------------------------------------------------------------------------
+
+int _daysUntilDue(int? dueDay) {
+  if (dueDay == null) return 999;
+  final today = DateTime.now().day;
+  if (dueDay >= today) return dueDay - today;
+  final now = DateTime.now();
+  final daysInMonth = DateTime(now.year, now.month + 1, 0).day;
+  return (daysInMonth - today) + dueDay;
+}
+
+String _ordinal(int n) {
+  if (n >= 11 && n <= 13) return '${n}th';
+  return switch (n % 10) {
+    1 => '${n}st',
+    2 => '${n}nd',
+    3 => '${n}rd',
+    _ => '${n}th',
+  };
+}
+
+List<Account> _sortByDueDay(List<Account> accounts) {
+  final sorted = [...accounts];
+  sorted.sort((a, b) => _daysUntilDue(a.dueDay).compareTo(_daysUntilDue(b.dueDay)));
+  return sorted;
+}
+
 class AccountsScreen extends ConsumerStatefulWidget {
   const AccountsScreen({super.key});
 
@@ -154,7 +183,7 @@ class _AccountsBody extends StatelessWidget {
                     isDebt: sec.accounts.every((a) => a.isCreditCard),
                   ),
                   const SizedBox(height: 8),
-                  _AccountGroup(accounts: sec.accounts),
+                  _AccountGroup(accounts: _sortByDueDay(sec.accounts)),
                   const SizedBox(height: 20),
                 ],
 
@@ -166,7 +195,7 @@ class _AccountsBody extends StatelessWidget {
                     isDebt: unclaimed.every((a) => a.isCreditCard),
                   ),
                   const SizedBox(height: 8),
-                  _AccountGroup(accounts: unclaimed),
+                  _AccountGroup(accounts: _sortByDueDay(unclaimed)),
                   const SizedBox(height: 20),
                 ],
 
@@ -183,7 +212,7 @@ class _AccountsBody extends StatelessWidget {
                       total: sec.accounts.fold(0.0, (s, a) => s + a.balance),
                     ),
                     const SizedBox(height: 6),
-                    _AccountGroup(accounts: sec.accounts),
+                    _AccountGroup(accounts: _sortByDueDay(sec.accounts)),
                     const SizedBox(height: 16),
                   ],
                   if (unclaimedTracking.isNotEmpty) ...[
@@ -194,7 +223,7 @@ class _AccountsBody extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                     ],
-                    _AccountGroup(accounts: unclaimedTracking),
+                    _AccountGroup(accounts: _sortByDueDay(unclaimedTracking)),
                   ],
                 ],
               ]),
@@ -476,9 +505,13 @@ class _AccountTile extends ConsumerWidget {
                   Text(account.displayName,
                       style: GoogleFonts.plusJakartaSans(
                           fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-                  Text(account.type.typeName,
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 12, color: cs.onSurfaceVariant)),
+                  Text(
+                    account.dueDay != null
+                        ? '${account.type.typeName} · Due ${_ordinal(account.dueDay!)}'
+                        : account.type.typeName,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, color: cs.onSurfaceVariant),
+                  ),
                 ],
               ),
             ),
@@ -1632,6 +1665,7 @@ class _EditAccountSheetState extends State<_EditAccountSheet> {
   late final TextEditingController _lastFourCtrl;
   late final TextEditingController _balanceCtrl;
   final _balanceFocus = FocusNode();
+  int?  _dueDay;
   bool _saving = false;
 
   bool get _isLiability =>
@@ -1652,6 +1686,7 @@ class _EditAccountSheetState extends State<_EditAccountSheet> {
     _lastFourCtrl = TextEditingController(text: widget.account.lastFour ?? '');
     _balanceCtrl  = TextEditingController(
         text: widget.account.balance.abs().toStringAsFixed(2));
+    _dueDay = widget.account.dueDay;
     _balanceFocus.addListener(() {
       if (!_balanceFocus.hasFocus && _balanceCtrl.text.isNotEmpty) {
         final v = double.tryParse(_balanceCtrl.text.replaceAll(',', '')) ?? 0.0;
@@ -1680,6 +1715,7 @@ class _EditAccountSheetState extends State<_EditAccountSheet> {
         nickname: _nicknameCtrl.text.trim(),
         lastFour: _showLastFour ? _lastFourCtrl.text.trim() : null,
         balance:  balance,
+        dueDay:   _isLiability ? _dueDay : null,
       );
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -1770,6 +1806,38 @@ class _EditAccountSheetState extends State<_EditAccountSheet> {
                   hintText:   '0.00',
                 ),
               ),
+              if (_isLiability) ...[
+                const SizedBox(height: 12),
+                DropdownButtonFormField<int?>(
+                  initialValue: _dueDay,
+                  decoration: InputDecoration(
+                    labelText: 'Payment due day (optional)',
+                    prefixIcon: const Icon(Icons.event_outlined, size: 18),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                            color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.4))),
+                  ),
+                  items: [
+                    DropdownMenuItem<int?>(
+                      value: null,
+                      child: Text('No due date',
+                          style: GoogleFonts.plusJakartaSans(fontSize: 14)),
+                    ),
+                    ...List.generate(
+                      31,
+                      (i) => DropdownMenuItem<int?>(
+                        value: i + 1,
+                        child: Text(_ordinal(i + 1),
+                            style: GoogleFonts.plusJakartaSans(fontSize: 14)),
+                      ),
+                    ),
+                  ],
+                  onChanged: (v) => setState(() => _dueDay = v),
+                ),
+              ],
               const SizedBox(height: 24),
               FilledButton(
                 onPressed: _saving ? null : _save,
@@ -2012,6 +2080,7 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
   AccountType _type       = AccountType.checking;
   bool        _isTracking = false;
   DateTime?   _startDate;
+  int?        _dueDay;
   bool        _saving     = false;
 
   @override
@@ -2070,6 +2139,7 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
         lastFour:        isCc ? _lastFourCtrl.text.trim() : null,
         startingBalance: isLiability ? -balance.abs() : balance,
         startDate:       _startDate,
+        dueDay:          isLiability ? _dueDay : null,
       );
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -2253,6 +2323,39 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
                 ),
               ),
               const SizedBox(height: 16),
+
+              if (isLiability) ...[
+                DropdownButtonFormField<int?>(
+                  initialValue: _dueDay,
+                  decoration: InputDecoration(
+                    labelText: 'Payment due day (optional)',
+                    prefixIcon: const Icon(Icons.event_outlined, size: 18),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                            color: cs.outline.withValues(alpha: 0.4))),
+                  ),
+                  items: [
+                    DropdownMenuItem<int?>(
+                      value: null,
+                      child: Text('No due date',
+                          style: GoogleFonts.plusJakartaSans(fontSize: 14)),
+                    ),
+                    ...List.generate(
+                      31,
+                      (i) => DropdownMenuItem<int?>(
+                        value: i + 1,
+                        child: Text(_ordinal(i + 1),
+                            style: GoogleFonts.plusJakartaSans(fontSize: 14)),
+                      ),
+                    ),
+                  ],
+                  onChanged: (v) => setState(() => _dueDay = v),
+                ),
+                const SizedBox(height: 16),
+              ],
 
               Container(
                 decoration: BoxDecoration(

@@ -87,6 +87,7 @@ class Account {
   final double balance;
   final bool isActive;
   final DateTime? startDate;
+  final int? dueDay;
 
   const Account({
     required this.id,
@@ -99,6 +100,7 @@ class Account {
     required this.balance,
     this.isActive = true,
     this.startDate,
+    this.dueDay,
   });
 
   factory Account.fromJson(Map<String, dynamic> json) => Account(
@@ -114,6 +116,7 @@ class Account {
     startDate:   json['start_date'] != null
                    ? DateTime.tryParse(json['start_date'] as String)
                    : null,
+    dueDay:      json['due_day'] as int?,
   );
 
   bool get isCreditCard => type == AccountType.creditCard;
@@ -123,9 +126,10 @@ class Account {
     return lastFour != null ? '$n · $lastFour' : n;
   }
 
-  Account copyWith({double? balance}) => Account(
+  Account copyWith({double? balance, int? dueDay}) => Account(
     id: id, householdId: householdId, name: name, nickname: nickname,
     type: type, isTracking: isTracking, lastFour: lastFour,
     balance: balance ?? this.balance, isActive: isActive, startDate: startDate,
+    dueDay: dueDay ?? this.dueDay,
   );
 }
