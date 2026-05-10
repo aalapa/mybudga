@@ -205,16 +205,22 @@ class _TransactionsList extends StatelessWidget {
     if (search.isEmpty) {
       return all.where((t) => !t.isPendingReview).toList();
     }
-    final q = search.toLowerCase();
+    final q    = search.toLowerCase();
+    final byId = {for (final t in all) t.id: t};
+    String _partnerAccount(Transaction t) => t.transferId != null
+        ? (byId[t.transferId]?.account?.displayName ?? '').toLowerCase()
+        : '';
     return all.where((t) {
       if (t.isPendingReview) return false;
       return switch (searchFilter) {
         _SearchFilter.all      => t.displayPayee.toLowerCase().contains(q) ||
                                   (t.categoryName ?? '').toLowerCase().contains(q) ||
-                                  (t.account?.displayName ?? '').toLowerCase().contains(q),
+                                  (t.account?.displayName ?? '').toLowerCase().contains(q) ||
+                                  _partnerAccount(t).contains(q),
         _SearchFilter.payee    => t.displayPayee.toLowerCase().contains(q),
         _SearchFilter.category => (t.categoryName ?? '').toLowerCase().contains(q),
-        _SearchFilter.account  => (t.account?.displayName ?? '').toLowerCase().contains(q),
+        _SearchFilter.account  => (t.account?.displayName ?? '').toLowerCase().contains(q) ||
+                                  _partnerAccount(t).contains(q),
       };
     }).toList();
   }

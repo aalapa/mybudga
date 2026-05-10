@@ -141,7 +141,18 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
     final client      = ref.read(supabaseProvider);
     final memoValue   = memo?.isNotEmpty == true ? memo : null;
 
-    // Both legs know each other's ID upfront — no SELECT or UPDATE needed.
+    // Insert credit first (no FK reference yet), then debit referencing credit,
+    // then link credit back. This avoids a self-referential FK violation.
+    await client.from('transactions').insert({
+      'id':           creditId,
+      'household_id': householdId,
+      'account_id':   toAccountId,
+      'amount':       amount.abs(),
+      'date':         _toDateString(date),
+      'memo':         memoValue,
+      'status':       'confirmed',
+    });
+
     await client.from('transactions').insert({
       'id':           debitId,
       'household_id': householdId,
@@ -153,16 +164,9 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
       'transfer_id':  creditId,
     });
 
-    await client.from('transactions').insert({
-      'id':           creditId,
-      'household_id': householdId,
-      'account_id':   toAccountId,
-      'amount':       amount.abs(),
-      'date':         _toDateString(date),
-      'memo':         memoValue,
-      'status':       'confirmed',
-      'transfer_id':  debitId,
-    });
+    await client.from('transactions')
+        .update({'transfer_id': debitId})
+        .eq('id', creditId);
 
     ref.invalidateSelf();
     ref.invalidate(accountsProvider);
