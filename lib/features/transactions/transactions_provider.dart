@@ -42,6 +42,20 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
         ),
         callback: (_) => ref.invalidateSelf(),
       )
+      // Proxy: account balances update whenever a transaction is added from
+      // any session (DB trigger). This ensures cross-device sync even if the
+      // transactions Realtime subscription doesn't fire.
+      ..onPostgresChanges(
+        event:  PostgresChangeEvent.update,
+        schema: 'public',
+        table:  'accounts',
+        filter: PostgresChangeFilter(
+          type:   PostgresChangeFilterType.eq,
+          column: 'household_id',
+          value:  householdId,
+        ),
+        callback: (_) => ref.invalidateSelf(),
+      )
       ..subscribe();
 
     ref.onDispose(() => client.removeChannel(channel));
