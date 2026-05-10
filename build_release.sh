@@ -22,4 +22,6 @@ echo "▶ Building MyBudga ${MAJOR}.${MINOR}.${PATCH} (build ${BUILD_NUM})"
 
 flutter build apk --release
 
-echo "✓ APK: build/app/outputs/flutter-apk/MyBudga-${MAJOR}.${MINOR}.${PATCH}.apk"
+APK_NAME="MyBudga-${MAJOR}.${MINOR}.${PATCH}.apk"
+cp build/app/outputs/flutter-apk/app-release.apk "build/app/outputs/flutter-apk/${APK_NAME}"
+echo "✓ APK: build/app/outputs/flutter-apk/${APK_NAME}"
