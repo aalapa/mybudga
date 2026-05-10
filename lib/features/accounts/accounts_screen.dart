@@ -1911,144 +1911,195 @@ class _ReconcileSheet extends ConsumerStatefulWidget {
 }
 
 class _ReconcileSheetState extends ConsumerState<_ReconcileSheet> {
-  late final TextEditingController _ctrl;
-  bool   _saving       = false;
-  double? _clearedTotal;
+  late final TextEditingController _statementCtrl;
+  List<Map<String, dynamic>> _txns         = [];
+  Map<String, bool>          _localCleared = {};
+  bool _loading = true;
+  bool _saving  = false;
 
   @override
   void initState() {
     super.initState();
-    _ctrl = TextEditingController(
+    _statementCtrl = TextEditingController(
       text: widget.account.balance.abs().toStringAsFixed(2),
     );
-    _loadClearedTotal();
-  }
-
-  Future<void> _loadClearedTotal() async {
-    try {
-      final rows = await Supabase.instance.client
-          .from('transactions')
-          .select('amount')
-          .eq('account_id', widget.account.id)
-          .eq('cleared', true)
-          .isFilter('deleted_at', null);
-      final total = (rows as List)
-          .fold(0.0, (s, r) => s + (r['amount'] as num).toDouble());
-      if (mounted) setState(() => _clearedTotal = total);
-    } catch (_) {}
+    _loadTransactions();
   }
 
   @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
+  void dispose() { _statementCtrl.dispose(); super.dispose(); }
 
-  Future<void> _save() async {
-    final val = double.tryParse(_ctrl.text.replaceAll(',', ''));
-    if (val == null) return;
-    setState(() => _saving = true);
+  Future<void> _loadTransactions() async {
+    try {
+      final rows = await Supabase.instance.client
+          .from('transactions')
+          .select('id, date, amount, cleared, payees(name)')
+          .eq('account_id', widget.account.id)
+          .isFilter('reconciled_at', null)
+          .isFilter('deleted_at', null)
+          .order('date', ascending: false);
+      if (mounted) setState(() {
+        _txns = (rows as List).cast<Map<String, dynamic>>();
+        _localCleared = {
+          for (final tx in _txns)
+            tx['id'] as String: tx['cleared'] as bool? ?? false,
+        };
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  double get _clearedBalance => _txns.fold(0.0, (sum, tx) {
+    final id = tx['id'] as String;
+    return sum + ((_localCleared[id] ?? false)
+        ? (tx['amount'] as num).toDouble()
+        : 0.0);
+  });
+
+  double get _statementValue {
+    final raw = double.tryParse(_statementCtrl.text.replaceAll(',', '')) ?? 0.0;
     final isLiability = widget.account.isCreditCard ||
         widget.account.type == AccountType.loan ||
         widget.account.type == AccountType.mortgage;
-    final newBalance   = isLiability ? -val.abs() : val;
+    return isLiability ? -raw.abs() : raw;
+  }
+
+  double get _diff => _statementValue - _clearedBalance;
+  bool get _isMatch => _diff.abs() < 0.005;
+  bool get _canFinish => !_loading && !_saving && _isMatch;
+
+  void _toggleCleared(String id) =>
+      setState(() => _localCleared[id] = !(_localCleared[id] ?? false));
+
+  Future<void> _finish() async {
+    setState(() => _saving = true);
     try {
-      await widget.widgetRef.read(accountsProvider.notifier).updateBalance(
-        widget.account.id, newBalance,
-      );
+      final client = Supabase.instance.client;
+      final now    = DateTime.now().toIso8601String();
+
+      // Sync any toggled cleared states back to DB
+      for (final tx in _txns) {
+        final id        = tx['id'] as String;
+        final dbCleared = tx['cleared'] as bool? ?? false;
+        final local     = _localCleared[id] ?? dbCleared;
+        if (local != dbCleared) {
+          await client.from('transactions')
+              .update({'cleared': local})
+              .eq('id', id);
+        }
+      }
+
+      // Lock all cleared transactions for this account
+      await client.from('transactions')
+          .update({'reconciled_at': now})
+          .eq('account_id', widget.account.id)
+          .eq('cleared', true)
+          .isFilter('reconciled_at', null)
+          .isFilter('deleted_at', null);
+
+      widget.widgetRef.invalidate(transactionsProvider);
+      widget.widgetRef.invalidate(accountsProvider);
       if (mounted) Navigator.pop(context);
-      if (mounted) Navigator.pop(context); // close detail sheet too
     } catch (e) {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+          behavior: SnackBarBehavior.floating,
+        ));
+        setState(() => _saving = false);
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-      child: Container(
-        decoration: BoxDecoration(
-          color: cs.surfaceContainerHigh,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        ),
-        padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Center(
-              child: Container(
-                width: 40, height: 4,
-                decoration: BoxDecoration(
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(2),
+    final cs     = Theme.of(context).colorScheme;
+    final fmt    = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final diff   = _diff;
+    final isMatch = _isMatch;
+    final clearedBalance = _clearedBalance;
+    final clearedCount = _localCleared.values.where((v) => v).length;
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.88,
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHigh,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: Column(
+        children: [
+          // ── Drag handle ──
+          const SizedBox(height: 12),
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // ── Header ──
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.lock_outline, size: 20, color: cs.primary),
+                    const SizedBox(width: 8),
+                    Text('Reconcile',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 22, fontWeight: FontWeight.w800,
+                            color: cs.onSurface)),
+                  ],
                 ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text('Reconcile Account',
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 22, fontWeight: FontWeight.w800, color: cs.onSurface)),
-            const SizedBox(height: 6),
-            Text('Enter the balance from your bank statement. '
-                'Mark transactions as cleared to track what matches.',
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 13, color: cs.onSurfaceVariant)),
-            const SizedBox(height: 24),
-            TextField(
-              controller: _ctrl,
-              autofocus: true,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              textInputAction: TextInputAction.done,
-              onChanged: (_) => setState(() {}),
-              onSubmitted: (_) => _save(),
-              style: GoogleFonts.plusJakartaSans(
-                  fontSize: 28, fontWeight: FontWeight.w800, color: cs.onSurface),
-              decoration: InputDecoration(
-                labelText: 'Bank statement balance',
-                prefixText: '\$ ',
-                prefixStyle: GoogleFonts.plusJakartaSans(
-                    fontSize: 28, fontWeight: FontWeight.w800,
-                    color: cs.onSurfaceVariant),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Cleared balance summary
-            if (_clearedTotal != null) ...[
-              Builder(builder: (context) {
-                final fmt           = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
-                final statement     = double.tryParse(
-                    _ctrl.text.replaceAll(',', '')) ?? 0.0;
-                final clearedAbs    = widget.account.isCreditCard
-                    ? -_clearedTotal!.abs()
-                    : _clearedTotal!;
-                final diff          = statement - clearedAbs.abs();
-                final isMatch       = diff.abs() < 0.005;
-                return Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 12),
+                Text(widget.account.displayName,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13, color: cs.onSurfaceVariant)),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _statementCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (_) => setState(() {}),
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 22, fontWeight: FontWeight.w700,
+                      color: cs.onSurface),
+                  decoration: const InputDecoration(
+                    labelText: 'Bank statement balance',
+                    prefixText: '\$ ',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // Summary bar
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   decoration: BoxDecoration(
                     color: isMatch
                         ? const Color(0xFF4CAF50).withValues(alpha: 0.12)
                         : cs.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: Row(
                     children: [
                       Icon(
-                        isMatch
-                            ? Icons.check_circle_rounded
-                            : Icons.info_outline,
+                        isMatch ? Icons.check_circle_rounded : Icons.adjust_outlined,
                         size: 16,
-                        color: isMatch
-                            ? const Color(0xFF4CAF50)
-                            : cs.onSurfaceVariant,
+                        color: isMatch ? const Color(0xFF4CAF50) : cs.onSurfaceVariant,
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           isMatch
-                              ? 'Cleared balance matches statement!'
-                              : 'Cleared balance: ${fmt.format(_clearedTotal!.abs())}',
+                              ? 'Cleared balance matches! ($clearedCount transactions)'
+                              : 'Cleared: ${fmt.format(clearedBalance.abs())}',
                           style: GoogleFonts.plusJakartaSans(
                               fontSize: 13, fontWeight: FontWeight.w600,
                               color: isMatch
@@ -2060,25 +2111,121 @@ class _ReconcileSheetState extends ConsumerState<_ReconcileSheet> {
                         Text(
                           'Diff: ${fmt.format(diff.abs())}',
                           style: GoogleFonts.plusJakartaSans(
-                              fontSize: 12, color: cs.onSurfaceVariant),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: cs.error),
                         ),
                     ],
                   ),
-                );
-              }),
-              const SizedBox(height: 16),
-            ],
-            FilledButton(
-              onPressed: _saving ? null : _save,
-              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-              child: _saving
-                  ? SizedBox(height: 20, width: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: cs.onPrimary))
-                  : Text('Save Balance',
-                      style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+                ),
+                const SizedBox(height: 12),
+                Text('UNRECONCILED TRANSACTIONS',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11, fontWeight: FontWeight.w700,
+                        color: cs.onSurfaceVariant, letterSpacing: 0.8)),
+              ],
             ),
-          ],
-        ),
+          ),
+
+          // ── Transaction list ──
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _txns.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.check_circle_outline,
+                                size: 48, color: const Color(0xFF4CAF50)),
+                            const SizedBox(height: 12),
+                            Text('All transactions reconciled',
+                                style: GoogleFonts.plusJakartaSans(
+                                    color: cs.onSurfaceVariant)),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                        itemCount: _txns.length,
+                        itemBuilder: (_, i) {
+                          final tx       = _txns[i];
+                          final id       = tx['id'] as String;
+                          final isCleared = _localCleared[id] ?? false;
+                          final amount   = (tx['amount'] as num).toDouble();
+                          final payeeName = (tx['payees']
+                              as Map<String, dynamic>?)?['name'] as String? ?? '—';
+                          final date     = DateTime.parse(tx['date'] as String);
+                          return InkWell(
+                            onTap: () => _toggleCleared(id),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 10),
+                              child: Row(
+                                children: [
+                                  Checkbox(
+                                    value: isCleared,
+                                    onChanged: (_) => _toggleCleared(id),
+                                    materialTapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(payeeName,
+                                            style: GoogleFonts.plusJakartaSans(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w500,
+                                                color: cs.onSurface)),
+                                        Text(DateFormat('MMM d').format(date),
+                                            style: GoogleFonts.plusJakartaSans(
+                                                fontSize: 11,
+                                                color: cs.onSurfaceVariant)),
+                                      ],
+                                    ),
+                                  ),
+                                  Text(
+                                    fmt.format(amount),
+                                    style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: amount >= 0
+                                            ? cs.tertiary
+                                            : cs.onSurface),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+          ),
+
+          // ── Finish button ──
+          Padding(
+            padding: EdgeInsets.fromLTRB(24, 8, 24,
+                MediaQuery.viewInsetsOf(context).bottom + 24),
+            child: FilledButton(
+              onPressed: _canFinish ? _finish : null,
+              style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(52)),
+              child: _saving
+                  ? const SizedBox(
+                      width: 20, height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : Text(
+                      isMatch
+                          ? 'Finish Reconciliation'
+                          : 'Check off cleared transactions',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ],
       ),
     );
   }

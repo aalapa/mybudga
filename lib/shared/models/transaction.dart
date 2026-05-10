@@ -29,6 +29,7 @@ class Transaction {
   final bool cleared;
   final TransactionStatus status;
   final String? transferId;
+  final DateTime? reconciledAt;
 
   const Transaction({
     required this.id,
@@ -46,6 +47,7 @@ class Transaction {
     this.cleared = false,
     this.status = TransactionStatus.confirmed,
     this.transferId,
+    this.reconciledAt,
   });
 
   factory Transaction.fromJson(Map<String, dynamic> json) {
@@ -69,12 +71,16 @@ class Transaction {
       cleared:      json['cleared'] as bool? ?? false,
       status:       TransactionStatus.fromString(json['status'] as String? ?? 'confirmed'),
       transferId:   json['transfer_id'] as String?,
+      reconciledAt: json['reconciled_at'] != null
+          ? DateTime.parse(json['reconciled_at'] as String)
+          : null,
     );
   }
 
   bool get isPendingReview => status == TransactionStatus.pendingReview;
   bool get isIncome => amount > 0;
   bool get isTransfer => transferId != null;
+  bool get isReconciled => reconciledAt != null;
 
   String get displayPayee => payeeName ?? '';
 }

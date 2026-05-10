@@ -610,6 +610,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const _ScheduledSection(),
           const SizedBox(height: 24),
 
+          _sectionLabel(context, 'AUTOMATION'),
+          const SizedBox(height: 8),
+          _SettingsCard(
+            children: [
+              ListTile(
+                leading: Icon(Icons.rule_outlined, size: 20, color: cs.onSurfaceVariant),
+                title: Text('Payee rules',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w600, color: cs.onSurface)),
+                subtitle: Text('Auto-categorize transactions by payee',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, color: cs.onSurfaceVariant)),
+                trailing: const Icon(Icons.chevron_right, size: 18),
+                onTap: () => showModalBottomSheet(
+                  context: context,
+                  isScrollControlled: true,
+                  useSafeArea: true,
+                  builder: (_) => _PayeeRulesSheet(widgetRef: ref),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+
           _sectionLabel(context, 'DATA'),
           const SizedBox(height: 8),
           _SettingsCard(
@@ -1730,6 +1754,205 @@ class _ResultRow extends StatelessWidget {
           Text(value, style: GoogleFonts.plusJakartaSans(
               fontSize: 13, fontWeight: FontWeight.w700, color: cs.onSurface)),
         ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Payee Rules sheet
+// ---------------------------------------------------------------------------
+
+class _PayeeRulesSheet extends ConsumerWidget {
+  final WidgetRef widgetRef;
+  const _PayeeRulesSheet({required this.widgetRef});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs      = Theme.of(context).colorScheme;
+    final payees  = ref.watch(payeesProvider);
+    final catGroups = ref.watch(categoriesProvider).valueOrNull ?? [];
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.82,
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHigh,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: Column(
+        children: [
+          const SizedBox(height: 12),
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Row(
+              children: [
+                Icon(Icons.rule_outlined, size: 20, color: cs.primary),
+                const SizedBox(width: 8),
+                Text('Payee Rules',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 22, fontWeight: FontWeight.w800,
+                        color: cs.onSurface)),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 4, 24, 12),
+            child: Text('Tap a payee to set its default category.',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13, color: cs.onSurfaceVariant)),
+          ),
+          Expanded(
+            child: payees.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (_, __) => const Center(child: Text('Could not load payees')),
+              data: (list) => list.isEmpty
+                  ? Center(
+                      child: Text('No payees yet — they appear as you add transactions.',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.plusJakartaSans(
+                              color: cs.onSurfaceVariant)))
+                  : ListView.separated(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: list.length,
+                      separatorBuilder: (_, __) => Divider(
+                          height: 1, indent: 52,
+                          color: cs.outlineVariant.withValues(alpha: 0.35)),
+                      itemBuilder: (ctx, i) {
+                        final payee = list[i];
+                        return ListTile(
+                          leading: CircleAvatar(
+                            radius: 18,
+                            backgroundColor: cs.primaryContainer,
+                            child: Text(
+                              payee.name.isNotEmpty
+                                  ? payee.name[0].toUpperCase()
+                                  : '?',
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: cs.onPrimaryContainer),
+                            ),
+                          ),
+                          title: Text(payee.name,
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 14, fontWeight: FontWeight.w500,
+                                  color: cs.onSurface)),
+                          subtitle: payee.defaultCategoryName != null
+                              ? Text(payee.defaultCategoryName!,
+                                  style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 12, color: cs.primary))
+                              : Text('No default category',
+                                  style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 12,
+                                      color: cs.onSurfaceVariant)),
+                          trailing: const Icon(Icons.chevron_right, size: 18),
+                          onTap: () => _pickCategory(ctx, ref, payee.id, catGroups),
+                        );
+                      },
+                    ),
+            ),
+          ),
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickCategory(
+    BuildContext context,
+    WidgetRef ref,
+    String payeeId,
+    List catGroups,
+  ) async {
+    final cs = Theme.of(context).colorScheme;
+    final picked = await showModalBottomSheet<({String id, String name})>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _CategoryPickerSheet(catGroups: catGroups),
+    );
+    if (picked == null) return;
+    await Supabase.instance.client
+        .from('payees')
+        .update({'default_category_id': picked.id})
+        .eq('id', payeeId);
+    ref.invalidate(payeesProvider);
+  }
+}
+
+class _CategoryPickerSheet extends StatelessWidget {
+  final List catGroups;
+  const _CategoryPickerSheet({required this.catGroups});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return DraggableScrollableSheet(
+      initialChildSize: 0.6,
+      maxChildSize: 0.9,
+      minChildSize: 0.4,
+      expand: false,
+      builder: (_, ctrl) => Container(
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHigh,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+              child: Text('Pick Category',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 18, fontWeight: FontWeight.w800,
+                      color: cs.onSurface)),
+            ),
+            Expanded(
+              child: ListView(
+                controller: ctrl,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                children: [
+                  for (final g in catGroups) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 12, 4, 4),
+                      child: Text(g.name.toUpperCase(),
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11, fontWeight: FontWeight.w700,
+                              color: cs.onSurfaceVariant, letterSpacing: 0.8)),
+                    ),
+                    for (final cat in g.categories)
+                      ListTile(
+                        dense: true,
+                        title: Text(cat.name,
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 14, color: cs.onSurface)),
+                        onTap: () => Navigator.pop(
+                            context, (id: cat.id, name: cat.name)),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

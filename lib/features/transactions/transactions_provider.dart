@@ -173,6 +173,14 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
     ref.invalidate(cashflowProvider);
   }
 
+  Future<void> markCleared(String id, bool cleared) async {
+    final client = ref.read(supabaseProvider);
+    await client.from('transactions')
+        .update({'cleared': cleared})
+        .eq('id', id);
+    ref.invalidateSelf();
+  }
+
   Future<void> updateTransaction(
     String id, {
     required String accountId,
@@ -182,8 +190,18 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
     String? categoryId,
     String? memo,
   }) async {
+    final client = ref.read(supabaseProvider);
+
+    final row = await client
+        .from('transactions')
+        .select('reconciled_at')
+        .eq('id', id)
+        .maybeSingle();
+    if (row?['reconciled_at'] != null) {
+      throw Exception('Cannot edit a reconciled transaction.');
+    }
+
     final householdId = await ref.read(householdIdProvider.future);
-    final client      = ref.read(supabaseProvider);
 
     String? payeeId;
     if (payeeName.trim().isNotEmpty) {
@@ -228,12 +246,14 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
   Future<void> deleteTransaction(String id) async {
     final client = ref.read(supabaseProvider);
 
-    // Fetch the transfer partner (if any) before deleting.
     final row = await client
         .from('transactions')
-        .select('transfer_id')
+        .select('transfer_id, reconciled_at')
         .eq('id', id)
         .maybeSingle();
+    if (row?['reconciled_at'] != null) {
+      throw Exception('Cannot delete a reconciled transaction.');
+    }
     final partnerId = row?['transfer_id'] as String?;
 
     final deletedAt = DateTime.now().toIso8601String();
