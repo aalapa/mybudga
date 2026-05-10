@@ -478,9 +478,17 @@ class _MetricCard extends StatelessWidget {
 // Budget vs Actual
 // ---------------------------------------------------------------------------
 
-class _BudgetVsActualSection extends StatelessWidget {
+class _BudgetVsActualSection extends StatefulWidget {
   final ReportsState data;
   const _BudgetVsActualSection({required this.data});
+
+  @override
+  State<_BudgetVsActualSection> createState() => _BudgetVsActualSectionState();
+}
+
+class _BudgetVsActualSectionState extends State<_BudgetVsActualSection> {
+  static const _pageSize = 10;
+  bool _showAll = false;
 
   Color _barColor(BudgetVsActualEntry e, ColorScheme cs) {
     if (e.budgeted == 0) return cs.primary;
@@ -492,13 +500,17 @@ class _BudgetVsActualSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs  = Theme.of(context).colorScheme;
-    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final cs        = Theme.of(context).colorScheme;
+    final fmt       = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final all       = widget.data.budgetVsActual;
+    final visible   = _showAll ? all : all.take(_pageSize).toList();
+    final remaining = all.length - _pageSize;
 
     return _Section(
       label: 'BUDGET VS ACTUAL',
       child: Column(
-        children: data.budgetVsActual.map((e) {
+        children: [
+          ...visible.map((e) {
           final color      = _barColor(e, cs);
           final fillRatio  = e.budgeted > 0
               ? (e.spent / e.budgeted).clamp(0.0, 1.0)
@@ -586,7 +598,14 @@ class _BudgetVsActualSection extends StatelessWidget {
               ],
             ),
           );
-        }).toList(),
+          }),
+          if (!_showAll && all.length > _pageSize)
+            TextButton(
+              onPressed: () => setState(() => _showAll = true),
+              child: Text('Show $remaining more',
+                  style: GoogleFonts.plusJakartaSans(fontSize: 13)),
+            ),
+        ],
       ),
     );
   }

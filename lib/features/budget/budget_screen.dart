@@ -1345,13 +1345,18 @@ class _CategoryTableRow extends ConsumerWidget {
           ),
         ),
         // ── Expanded transactions panel ───────────────────────
-        if (isExpanded)
-          _CategoryTxPanel(
-            entry:     entry,
-            month:     month,
-            monthKey:  _monthKey,
-            onEditTap: () => onDetailTap(entry, month),
-          ),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeInOut,
+          child: isExpanded
+              ? _CategoryTxPanel(
+                  entry:     entry,
+                  month:     month,
+                  monthKey:  _monthKey,
+                  onEditTap: () => onDetailTap(entry, month),
+                )
+              : const SizedBox.shrink(),
+        ),
         Divider(
           height: 1,
           indent: 20,
