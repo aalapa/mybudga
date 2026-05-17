@@ -27,12 +27,15 @@ class CashflowState {
 // ---------------------------------------------------------------------------
 
 class CashflowNotifier extends AsyncNotifier<CashflowState> {
-  // Disambiguate the accounts join: two FKs point to accounts, so we must
-  // specify which one. TO account name is resolved in the UI from accountsProvider.
+  // Disambiguate all joins that have more than one FK path.
+  // accounts: two FKs (account_id, transfer_to_account_id) → must specify.
+  // payees / categories: specify FK column defensively to avoid ambiguity if
+  //   the schema gains a reverse reference in future.
   static const _joinClause =
       '*, '
       'from_account:accounts!account_id(id, name, nickname, last_four, account_type), '
-      'payees(id, name), categories(id, name)';
+      'payees!payee_id(id, name), '
+      'categories!category_id(id, name)';
 
   @override
   Future<CashflowState> build() async {
