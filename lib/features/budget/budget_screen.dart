@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../shared/models/budget_entry.dart';
+import '../../shared/models/transaction.dart';
 import '../insights/insights_provider.dart';
+import '../transactions/transactions_provider.dart';
 import '../insights/payee_pattern.dart';
 import 'budget_provider.dart';
 import 'category_icons.dart';
@@ -57,13 +59,15 @@ class BudgetScreen extends ConsumerWidget {
         ),
         data: (state) => isThreeCol
             ? _ThreeColumnBudget(state: state)
-            : _BudgetBody(
-                state:         state,
-                onCategoryTap: onCategoryTap,
-              ),
+            : wideEnough
+                ? _BudgetSplitView(state: state)
+                : _BudgetBody(
+                    state:         state,
+                    onCategoryTap: onCategoryTap,
+                  ),
       ),
-      // FAB only in single-column mode — 3-col uses group [+] buttons
-      floatingActionButton: isThreeCol ? null : FloatingActionButton(
+      // FAB only on mobile — desktop uses group [+] buttons or split view
+      floatingActionButton: (isThreeCol || wideEnough) ? null : FloatingActionButton(
         onPressed: () => _showAddCategorySheet(context, ref),
         backgroundColor: cs.primary,
         foregroundColor: cs.onPrimary,
@@ -129,8 +133,8 @@ class _ThreeColumnBudget extends ConsumerWidget {
               const SizedBox(width: 8),
               // ── Layout toggle ────────────────────────────────────────────
               IconButton(
-                tooltip: 'Single column view',
-                icon: const Icon(Icons.view_agenda_outlined, size: 18),
+                tooltip: 'Budget + Transactions split view',
+                icon: const Icon(Icons.vertical_split_outlined, size: 18),
                 onPressed: () => ref
                     .read(budgetThreeColPrefProvider.notifier)
                     .state = false,
@@ -607,8 +611,15 @@ Widget _proxyDecorator(Widget child, int index, Animation<double> animation) {
 class _BudgetBody extends ConsumerStatefulWidget {
   final BudgetState state;
   final void Function(BudgetEntry, DateTime) onCategoryTap;
+  /// When non-null the body is in split-view mode: category taps call this
+  /// instead of toggling inline expansion.
+  final ValueChanged<BudgetEntry?>? onCategorySelect;
 
-  const _BudgetBody({required this.state, required this.onCategoryTap});
+  const _BudgetBody({
+    required this.state,
+    required this.onCategoryTap,
+    this.onCategorySelect,
+  });
 
   @override
   ConsumerState<_BudgetBody> createState() => _BudgetBodyState();
@@ -640,11 +651,21 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
         }
       });
 
-  /// Toggles a category's expansion, closing any previously open one.
-  void _toggleCategory(String categoryId) => setState(() {
-        _expandedCategoryId =
-            _expandedCategoryId == categoryId ? null : categoryId;
-      });
+  /// Toggles a category's expansion, or notifies the split panel.
+  void _toggleCategory(String categoryId) {
+    if (widget.onCategorySelect != null) {
+      final entry = widget.state.groups
+          .expand((g) => g.entries)
+          .where((e) => e.categoryId == categoryId)
+          .firstOrNull;
+      widget.onCategorySelect!(entry);
+      return;
+    }
+    setState(() {
+      _expandedCategoryId =
+          _expandedCategoryId == categoryId ? null : categoryId;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -741,7 +762,8 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
               child: _CategoryTableRow(
                 entry:       entry,
                 isWide:      isWide,
-                isExpanded:  _expandedCategoryId == entry.categoryId,
+                isExpanded:  widget.onCategorySelect == null &&
+                             _expandedCategoryId == entry.categoryId,
                 month:       state.month,
                 onToggle:    () => _toggleCategory(entry.categoryId),
                 onDetailTap: (e, m) => widget.onCategoryTap(e, m),
@@ -830,7 +852,7 @@ class _BudgetHeader extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(left: 4),
                   child: IconButton(
-                    tooltip: 'Three-column view',
+                    tooltip: 'Compare 3 months',
                     icon: const Icon(Icons.view_column_outlined, size: 18),
                     onPressed: () => ref
                         .read(budgetThreeColPrefProvider.notifier)
@@ -3781,6 +3803,255 @@ class _StatCell extends StatelessWidget {
           Text(label,
               style: GoogleFonts.plusJakartaSans(
                   fontSize: 11, color: cs.onSurfaceVariant)),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Desktop split view — budget left, category transactions right
+// ---------------------------------------------------------------------------
+
+class _BudgetSplitView extends ConsumerStatefulWidget {
+  final BudgetState state;
+  const _BudgetSplitView({required this.state});
+
+  @override
+  ConsumerState<_BudgetSplitView> createState() => _BudgetSplitViewState();
+}
+
+class _BudgetSplitViewState extends ConsumerState<_BudgetSplitView> {
+  BudgetEntry? _selected;
+
+  void _onSelect(BudgetEntry? entry) => setState(() {
+    // Tap same category again → deselect
+    _selected = _selected?.categoryId == entry?.categoryId ? null : entry;
+  });
+
+  void _onDetailTap(BudgetEntry entry, DateTime month) =>
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        builder: (_) => _CategoryDetailSheet(entry: entry, month: month, ref: ref),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        // Left: budget panel (fixed 520px so the list reads comfortably)
+        SizedBox(
+          width: 520,
+          child: _BudgetBody(
+            state:            widget.state,
+            onCategoryTap:    _onDetailTap,
+            onCategorySelect: _onSelect,
+          ),
+        ),
+        VerticalDivider(
+            width: 1, color: cs.outlineVariant.withValues(alpha: 0.4)),
+        // Right: transaction detail panel
+        Expanded(
+          child: _CategorySplitPanel(
+            entry:        _selected,
+            currentMonth: widget.state.month,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Right-side panel — transactions for the selected category
+// ---------------------------------------------------------------------------
+
+class _CategorySplitPanel extends ConsumerWidget {
+  final BudgetEntry? entry;
+  final DateTime     currentMonth;
+  const _CategorySplitPanel({this.entry, required this.currentMonth});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+
+    if (entry == null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.touch_app_outlined,
+                size: 56,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.25)),
+            const SizedBox(height: 16),
+            Text('Select a category',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 16, fontWeight: FontWeight.w600,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.45))),
+            const SizedBox(height: 4),
+            Text('to see its transactions here',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.35))),
+          ],
+        ),
+      );
+    }
+
+    final allTxns = ref.watch(transactionsProvider).valueOrNull ?? [];
+    final txns    = allTxns.where((t) =>
+        t.categoryId == entry!.categoryId &&
+        t.date.year  == currentMonth.year  &&
+        t.date.month == currentMonth.month &&
+        !t.isPendingReview).toList();
+
+    final pct    = entry!.budgeted > 0
+        ? (entry!.spent / entry!.budgeted).clamp(0.0, 1.0)
+        : 0.0;
+    final isOver = entry!.balance < 0;
+    final barColor = isOver ? cs.error : cs.tertiary;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── Category summary ─────────────────────────────────────────────────
+        Container(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(
+                color: cs.outlineVariant.withValues(alpha: 0.35), width: 0.5)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(entry!.categoryName,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 22, fontWeight: FontWeight.w800,
+                      color: cs.onSurface)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Text(fmt.format(entry!.spent),
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 15, fontWeight: FontWeight.w700,
+                          color: isOver ? cs.error : cs.onSurface)),
+                  Text(' spent of ${fmt.format(entry!.budgeted)}',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13, color: cs.onSurfaceVariant)),
+                  const Spacer(),
+                  Text(
+                    isOver
+                        ? '${fmt.format(entry!.balance.abs())} over'
+                        : '${fmt.format(entry!.balance)} left',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13, fontWeight: FontWeight.w600,
+                        color: isOver ? cs.error : cs.tertiary),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: pct,
+                  minHeight: 6,
+                  backgroundColor: cs.surfaceContainerHighest,
+                  valueColor: AlwaysStoppedAnimation(barColor),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // ── Month label ──────────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+          child: Text(DateFormat('MMMM yyyy').format(currentMonth).toUpperCase(),
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11, fontWeight: FontWeight.w700,
+                  color: cs.onSurfaceVariant, letterSpacing: 0.8)),
+        ),
+        // ── Transaction list ─────────────────────────────────────────────────
+        Expanded(
+          child: txns.isEmpty
+              ? Center(
+                  child: Text(
+                      'No transactions in ${DateFormat('MMMM').format(currentMonth)}',
+                      style: GoogleFonts.plusJakartaSans(
+                          color: cs.onSurfaceVariant)))
+              : ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 20),
+                  itemCount: txns.length,
+                  separatorBuilder: (_, __) => Divider(
+                      height: 1, indent: 52,
+                      color: cs.outlineVariant.withValues(alpha: 0.3)),
+                  itemBuilder: (_, i) => _SplitTxRow(tx: txns[i]),
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SplitTxRow extends StatelessWidget {
+  final Transaction tx;
+  const _SplitTxRow({required this.tx});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+      child: Row(
+        children: [
+          Container(
+            width: 36, height: 36,
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Center(
+              child: Text(
+                (tx.account?.displayName.isNotEmpty == true
+                    ? tx.account!.displayName[0]
+                    : '?').toUpperCase(),
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 14, fontWeight: FontWeight.w700,
+                    color: cs.onSurfaceVariant),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  tx.displayPayee.isNotEmpty
+                      ? tx.displayPayee
+                      : tx.account?.displayName ?? '—',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13, fontWeight: FontWeight.w500,
+                      color: cs.onSurface),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(DateFormat('MMM d').format(tx.date),
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11, color: cs.onSurfaceVariant)),
+              ],
+            ),
+          ),
+          Text(
+            '${tx.amount < 0 ? '-' : '+'}${fmt.format(tx.amount.abs())}',
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 13, fontWeight: FontWeight.w600,
+                color: tx.amount < 0 ? cs.onSurface : cs.tertiary),
+          ),
         ],
       ),
     );

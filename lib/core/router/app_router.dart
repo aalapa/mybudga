@@ -10,6 +10,7 @@ import '../../features/transactions/transactions_screen.dart';
 import '../../features/cashflow/cashflow_screen.dart';
 import '../../features/accounts/accounts_screen.dart';
 import '../../features/reports/reports_screen.dart';
+import '../../features/dashboard/dashboard_screen.dart';
 import '../../features/settings/settings_screen.dart';
 
 /// Global router reference — set once by [routerProvider].
@@ -136,6 +137,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       ShellRoute(
         builder: (context, state, child) => AppShell(child: child),
         routes: [
+          GoRoute(
+            path: '/dashboard',
+            builder: (context, state) => const DashboardScreen(),
+          ),
           GoRoute(
             path: '/budget',
             builder: (context, state) => const BudgetScreen(),

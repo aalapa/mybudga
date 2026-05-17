@@ -8,7 +8,8 @@ class AppShell extends ConsumerWidget {
   final Widget child;
   const AppShell({super.key, required this.child});
 
-  static const _tabs = [
+  // Mobile bottom nav — 5 tabs, no dashboard
+  static const _mobileTabs = [
     _TabItem(path: '/budget',       label: 'Budget',   icon: Icons.account_balance_wallet_outlined, activeIcon: Icons.account_balance_wallet),
     _TabItem(path: '/accounts',     label: 'Accounts', icon: Icons.credit_card_outlined,            activeIcon: Icons.credit_card),
     _TabItem(path: '/transactions', label: 'Txns',     icon: Icons.receipt_long_outlined,           activeIcon: Icons.receipt_long),
@@ -16,17 +17,28 @@ class AppShell extends ConsumerWidget {
     _TabItem(path: '/reports',      label: 'Reports',  icon: Icons.bar_chart_outlined,              activeIcon: Icons.bar_chart),
   ];
 
-  int _selectedIndex(BuildContext context) {
+  // Desktop nav rail — Dashboard added as first item
+  static const _desktopTabs = [
+    _TabItem(path: '/dashboard',    label: 'Home',     icon: Icons.home_outlined,                   activeIcon: Icons.home),
+    _TabItem(path: '/budget',       label: 'Budget',   icon: Icons.account_balance_wallet_outlined, activeIcon: Icons.account_balance_wallet),
+    _TabItem(path: '/accounts',     label: 'Accounts', icon: Icons.credit_card_outlined,            activeIcon: Icons.credit_card),
+    _TabItem(path: '/transactions', label: 'Txns',     icon: Icons.receipt_long_outlined,           activeIcon: Icons.receipt_long),
+    _TabItem(path: '/cashflow',     label: 'Cashflow', icon: Icons.waterfall_chart_outlined,        activeIcon: Icons.waterfall_chart),
+    _TabItem(path: '/reports',      label: 'Reports',  icon: Icons.bar_chart_outlined,              activeIcon: Icons.bar_chart),
+  ];
+
+  int _selectedIndex(BuildContext context, bool isWide) {
     final location = GoRouterState.of(context).uri.path;
-    final idx = _tabs.indexWhere((t) => location.startsWith(t.path));
+    final tabs = isWide ? _desktopTabs : _mobileTabs;
+    final idx = tabs.indexWhere((t) => location.startsWith(t.path));
     return idx < 0 ? 0 : idx;
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cs            = Theme.of(context).colorScheme;
-    final selectedIndex = _selectedIndex(context);
     final isWide        = MediaQuery.sizeOf(context).width >= 600;
+    final selectedIndex = _selectedIndex(context, isWide);
 
     // Path B — schedule notifications whenever established patterns update
     ref.listen(notificationPatternsProvider, (_, next) {
@@ -40,7 +52,7 @@ class AppShell extends ConsumerWidget {
           children: [
             NavigationRail(
               selectedIndex: selectedIndex,
-              onDestinationSelected: (i) => context.go(_tabs[i].path),
+              onDestinationSelected: (i) => context.go(_desktopTabs[i].path),
               trailing: Expanded(
                 child: Align(
                   alignment: Alignment.bottomCenter,
@@ -54,7 +66,7 @@ class AppShell extends ConsumerWidget {
                   ),
                 ),
               ),
-              destinations: _tabs.map((t) => NavigationRailDestination(
+              destinations: _desktopTabs.map((t) => NavigationRailDestination(
                 icon: Icon(t.icon),
                 selectedIcon: Icon(t.activeIcon),
                 label: Text(t.label),
@@ -72,9 +84,9 @@ class AppShell extends ConsumerWidget {
       // SafeArea here consumes top insets once, so child screens don't double-pad
       body: SafeArea(bottom: false, child: child),
       bottomNavigationBar: _BottomBar(
-        tabs: _tabs,
+        tabs: _mobileTabs,
         selectedIndex: selectedIndex,
-        onTabSelected: (i) => context.go(_tabs[i].path),
+        onTabSelected: (i) => context.go(_mobileTabs[i].path),
         onSettingsTap: () => context.push('/settings'),
       ),
     );
