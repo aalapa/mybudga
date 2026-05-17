@@ -473,11 +473,16 @@ class _AccountTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cs       = Theme.of(context).colorScheme;
-    final fmt      = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
-    final isNeg    = account.balance < 0;
-    final balColor = isNeg ? cs.error : cs.onSurface;
+    final cs        = Theme.of(context).colorScheme;
+    final fmt       = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final isNeg     = account.balance < 0;
+    final balColor  = isNeg ? cs.error : cs.onSurface;
     final iconColor = _iconColor(cs);
+    final isPortrait =
+        MediaQuery.orientationOf(context) == Orientation.portrait;
+    final containerSize = isPortrait ? 30.0 : 40.0;
+    final iconSize      = isPortrait ? 14.0 : 18.0;
+    final radius        = isPortrait ?  8.0 : 12.0;
 
     return InkWell(
       onTap: () => _showAccountDetail(context, ref, account),
@@ -491,12 +496,12 @@ class _AccountTile extends ConsumerWidget {
         child: Row(
           children: [
             Container(
-              width: 40, height: 40,
+              width: containerSize, height: containerSize,
               decoration: BoxDecoration(
                 color: iconColor.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(radius),
               ),
-              child: Icon(account.type.icon, size: 18, color: iconColor),
+              child: Icon(account.type.icon, size: iconSize, color: iconColor),
             ),
             const SizedBox(width: 12),
             Expanded(
