@@ -791,9 +791,53 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
   final _memoCtrl     = TextEditingController();
   late final FocusNode _numpadFocus;
 
-  // Amount stored as integer cents so digits always land in the cents place.
-  // e.g. press 2,3,4,5  →  2 → 23 → 234 → 2345 cents = $23.45
-  int _cents = 0;
+  // ── Calculator state ──────────────────────────────────────────────────────
+  // Right-hand side of the current expression, typed in cents-shift mode
+  // (each digit shifts existing value left, e.g. 2→3→4 = $0.23→$2.34).
+  int _rightCents = 0;
+  // For × and ÷ the right operand is a plain count (e.g. ×3 means ×3 items),
+  // entered as a regular integer, not cent-shifted.
+  int _rightCount = 0;
+  // Accumulated left-hand value (in dollars) after the first operator press.
+  double _leftDollars = 0;
+  // Pending operator: '+', '−', '×', '÷', or null.
+  String? _pendingOp;
+
+  // True when the right-hand side is money (+ / −); false for count (× / ÷).
+  bool get _isCentsMode =>
+      _pendingOp == null || _pendingOp == '+' || _pendingOp == '−';
+
+  // Evaluate the current expression to a dollar amount.
+  double get _effectiveDollars {
+    if (_pendingOp == null) return _rightCents / 100.0;
+    return _applyOp(_leftDollars,
+        _isCentsMode ? _rightCents / 100.0 : _rightCount.toDouble(),
+        _pendingOp!);
+  }
+
+  double _applyOp(double left, double right, String op) {
+    switch (op) {
+      case '+': return left + right;
+      case '−': return (left - right).clamp(0, double.infinity);
+      case '×': return left * right;
+      case '÷': return right > 0 ? left / right : left;
+      default:  return left;
+    }
+  }
+
+  // Expression string for the secondary display line, e.g. "$10.00 + $5.00".
+  String get _expressionString {
+    if (_pendingOp == null) return '';
+    final mf = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final leftStr = mf.format(_leftDollars);
+    if (_isCentsMode) {
+      if (_rightCents == 0) return '$leftStr ${_pendingOp!}';
+      return '$leftStr ${_pendingOp!} ${mf.format(_rightCents / 100.0)}';
+    } else {
+      if (_rightCount == 0) return '$leftStr ${_pendingOp!}';
+      return '$leftStr ${_pendingOp!} $_rightCount';
+    }
+  }
   String? _selectedCategoryId;
   String? _selectedCategoryName;
   Account? _selectedAccount;
@@ -820,7 +864,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
     final sms = widget.smsData;
 
     if (p != null) {
-      _cents                = (p.amount.abs() * 100).round();
+      _rightCents           = (p.amount.abs() * 100).round();
       _payeeCtrl.text       = p.displayPayee;
       _memoCtrl.text        = p.memo ?? '';
       _categoryCtrl.text    = p.categoryName ?? '';
@@ -838,7 +882,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
           : accounts.isNotEmpty ? accounts.first : null;
       // Override with SMS-parsed values if present
       if (sms != null) {
-        _cents = (sms.amount.abs() * 100).round();
+        _rightCents = (sms.amount.abs() * 100).round();
         if (sms.payee?.isNotEmpty == true) _payeeCtrl.text = sms.payee!;
         _isIncome = !sms.isDebit;
         if (sms.accountLastFour != null) {
@@ -862,17 +906,47 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
 
   void _onNumpad(String key) {
     setState(() {
-      if (key == '⌫') {
-        _cents = _cents ~/ 10;
-      } else if (key == '00') {
-        // Double-zero: shift two decimal places (e.g. $1 → $100)
-        final next = _cents * 100;
-        if (next <= 9999999) _cents = next;
+      if (_isCentsMode) {
+        if (key == '⌫') {
+          _rightCents = _rightCents ~/ 10;
+        } else if (key == '00') {
+          final next = _rightCents * 100;
+          if (next <= 999999999) _rightCents = next;
+        } else {
+          final next = _rightCents * 10 + int.parse(key);
+          if (next <= 999999999) _rightCents = next; // cap at $9,999,999.99
+        }
       } else {
-        final digit = int.parse(key);
-        final next  = _cents * 10 + digit;
-        if (next <= 9999999) _cents = next; // cap at $99,999.99
+        // ×/÷ mode: right side is a plain integer count
+        if (key == '⌫') {
+          _rightCount = _rightCount ~/ 10;
+        } else if (key == '00') {
+          final next = _rightCount * 100;
+          if (next <= 99999) _rightCount = next;
+        } else {
+          final next = _rightCount * 10 + int.parse(key);
+          if (next <= 99999) _rightCount = next;
+        }
       }
+    });
+  }
+
+  void _onOperator(String op) {
+    setState(() {
+      if (_pendingOp == null) {
+        // First operator: capture current value as left side.
+        _leftDollars = _rightCents / 100.0;
+      } else {
+        // Chained operator: evaluate what we have so far.
+        _leftDollars = _applyOp(
+          _leftDollars,
+          _isCentsMode ? _rightCents / 100.0 : _rightCount.toDouble(),
+          _pendingOp!,
+        );
+      }
+      _rightCents = 0;
+      _rightCount = 0;
+      _pendingOp  = op;
     });
   }
 
@@ -898,13 +972,13 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
         .toList();
   }
 
-  bool get _canSave => _cents > 0 && _selectedAccount != null && !_saving;
+  bool get _canSave => _effectiveDollars > 0 && _selectedAccount != null && !_saving;
 
   Future<void> _save() async {
     if (!_canSave) return;
     setState(() => _saving = true);
     try {
-      final amt    = _cents / 100.0;
+      final amt    = _effectiveDollars;
       final signed = _isIncome ? amt : -amt;
 
       // "Next month" income: shift date to 1st of next month so
@@ -1112,15 +1186,29 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                 controller: scrollController,
                 padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
                 children: [
-                  // Amount display
+                  // Amount display — expression line + evaluated result
                   Center(
-                    child: Text(
-                      '${_isIncome ? '+' : '-'}${fmt.format(_cents / 100.0)}',
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 48, fontWeight: FontWeight.w800,
-                          color: _cents == 0
-                              ? cs.onSurfaceVariant
-                              : _isIncome ? cs.tertiary : cs.onSurface),
+                    child: Column(
+                      children: [
+                        // Secondary: expression string (e.g. "$10.00 + $5.00")
+                        if (_pendingOp != null)
+                          Text(
+                            _expressionString,
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 22, fontWeight: FontWeight.w500,
+                                color: cs.onSurfaceVariant),
+                          ),
+                        // Primary: evaluated total
+                        Text(
+                          '${_isIncome ? '+' : '−'}${fmt.format(_effectiveDollars)}',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: _pendingOp != null ? 38 : 48,
+                              fontWeight: FontWeight.w800,
+                              color: _effectiveDollars == 0
+                                  ? cs.onSurfaceVariant
+                                  : _isIncome ? cs.tertiary : cs.onSurface),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -1202,14 +1290,19 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                           event is! KeyRepeatEvent) {
                         return KeyEventResult.ignored;
                       }
-                      // Digit characters from main keyboard and numpad
                       final char = event.character;
                       if (char != null && char.length == 1) {
                         final code = char.codeUnitAt(0);
-                        if (code >= 0x30 && code <= 0x39) { // '0'–'9'
+                        // Digit keys '0'–'9'
+                        if (code >= 0x30 && code <= 0x39) {
                           _onNumpad(char);
                           return KeyEventResult.handled;
                         }
+                        // Operator keys
+                        if (char == '+') { _onOperator('+'); return KeyEventResult.handled; }
+                        if (char == '-') { _onOperator('−'); return KeyEventResult.handled; }
+                        if (char == '*') { _onOperator('×'); return KeyEventResult.handled; }
+                        if (char == '/') { _onOperator('÷'); return KeyEventResult.handled; }
                       }
                       // Backspace / Delete
                       final key = event.logicalKey;
@@ -1220,7 +1313,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                       }
                       return KeyEventResult.ignored;
                     },
-                    child: _Numpad(onKey: _onNumpad),
+                    child: _Numpad(onKey: _onNumpad, onOperator: _onOperator),
                   ),
                   const SizedBox(height: 24),
 
@@ -1668,44 +1761,59 @@ class _AccountPickerSheetState extends State<_AccountPickerSheet> {
 
 class _Numpad extends StatelessWidget {
   final ValueChanged<String> onKey;
-  const _Numpad({required this.onKey});
+  final ValueChanged<String> onOperator;
+  const _Numpad({required this.onKey, required this.onOperator});
 
-  static const _keys = [
-    ['7', '8', '9'],
-    ['4', '5', '6'],
-    ['1', '2', '3'],
-    ['00', '0', '⌫'],
+  // 4-column layout: digits left, operators right.
+  // Operators use display symbols; '−'/'×'/'÷' map to dart strings used in state.
+  static const _layout = [
+    ['7', '8', '9', '÷'],
+    ['4', '5', '6', '×'],
+    ['1', '2', '3', '−'],
+    ['00', '0', '⌫', '+'],
   ];
+  static const _ops = {'+', '−', '×', '÷'};
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Column(
-      children: _keys.map((row) => Padding(
+      children: _layout.map((row) => Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Row(
-          children: row.map((key) => Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: TextButton(
-                onPressed: () => onKey(key),
-                style: TextButton.styleFrom(
-                  backgroundColor: key == '⌫'
-                      ? cs.errorContainer.withValues(alpha: 0.4)
-                      : cs.surfaceContainerHighest,
-                  padding: const EdgeInsets.symmetric(vertical: 18),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
+          children: row.map((key) {
+            final isOp  = _ops.contains(key);
+            final isBsp = key == '⌫';
+            return Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: TextButton(
+                  onPressed: () => isOp ? onOperator(key) : onKey(key),
+                  style: TextButton.styleFrom(
+                    backgroundColor: isOp
+                        ? cs.primaryContainer.withValues(alpha: 0.75)
+                        : isBsp
+                            ? cs.errorContainer.withValues(alpha: 0.4)
+                            : cs.surfaceContainerHighest,
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                  ),
+                  child: isBsp
+                      ? Icon(Icons.backspace_outlined, size: 20, color: cs.error)
+                      : Text(
+                          key,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w600,
+                              color: isOp
+                                  ? cs.onPrimaryContainer
+                                  : cs.onSurface),
+                        ),
                 ),
-                child: key == '⌫'
-                    ? Icon(Icons.backspace_outlined, size: 20, color: cs.error)
-                    : Text(key,
-                        style: GoogleFonts.plusJakartaSans(
-                            fontSize: 22, fontWeight: FontWeight.w600,
-                            color: cs.onSurface)),
               ),
-            ),
-          )).toList(),
+            );
+          }).toList(),
         ),
       )).toList(),
     );
