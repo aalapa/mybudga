@@ -18,6 +18,8 @@ import '../../shared/providers/categories_provider.dart';
 import '../../shared/providers/household_provider.dart';
 import '../../shared/providers/payees_provider.dart';
 import '../accounts/accounts_provider.dart';
+import '../auth/app_lock_provider.dart';
+import '../auth/app_lock_screen.dart';
 import '../budget/budget_provider.dart';
 import '../cashflow/cashflow_provider.dart';
 import '../cashflow/cashflow_screen.dart';
@@ -582,6 +584,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ],
           ),
+          const SizedBox(height: 24),
+
+          _sectionLabel(context, 'SECURITY'),
+          const SizedBox(height: 8),
+          _SecurityCard(),
           const SizedBox(height: 24),
 
           _sectionLabel(context, 'FEATURES'),
@@ -1886,6 +1893,108 @@ class _PayeeRulesSheet extends ConsumerWidget {
         .update({'default_category_id': picked.id})
         .eq('id', payeeId);
     ref.invalidate(payeesProvider);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Security card (PIN / biometric lock)
+// ---------------------------------------------------------------------------
+
+class _SecurityCard extends ConsumerWidget {
+  const _SecurityCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs   = Theme.of(context).colorScheme;
+    final lock = ref.watch(appLockProvider);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          // App lock toggle
+          SwitchListTile(
+            secondary: Icon(Icons.lock_outline, size: 20, color: cs.onSurfaceVariant),
+            title: Text('App lock',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
+            subtitle: Text(
+              lock.isEnabled
+                  ? 'Locks after 60 s in background'
+                  : 'Require PIN or biometric to open',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12, color: cs.onSurfaceVariant),
+            ),
+            value: lock.isEnabled,
+            activeThumbColor: cs.primary,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            onChanged: (on) async {
+              if (on) {
+                showPinSetupSheet(context, ref);
+              } else {
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Disable app lock?'),
+                    content: const Text('Your PIN will be removed.'),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          child: const Text('Cancel')),
+                      TextButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          style: TextButton.styleFrom(foregroundColor: cs.error),
+                          child: const Text('Disable')),
+                    ],
+                  ),
+                );
+                if (confirm == true) {
+                  await ref.read(appLockProvider.notifier).disableLock();
+                }
+              }
+            },
+          ),
+
+          if (lock.isEnabled) ...[
+            Divider(height: 1, color: cs.outlineVariant.withValues(alpha: 0.4)),
+
+            // Change PIN
+            ListTile(
+              leading: Icon(Icons.pin_outlined, size: 20, color: cs.onSurfaceVariant),
+              title: Text('Change PIN',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
+              trailing: const Icon(Icons.chevron_right, size: 18),
+              shape: lock.biometricAvailable
+                  ? null
+                  : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              onTap: () => showPinSetupSheet(context, ref, isChange: true),
+            ),
+
+            if (lock.biometricAvailable) ...[
+              Divider(height: 1, color: cs.outlineVariant.withValues(alpha: 0.4)),
+              SwitchListTile(
+                secondary: Icon(Icons.fingerprint, size: 20, color: cs.onSurfaceVariant),
+                title: Text('Face ID / Fingerprint',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
+                subtitle: Text('Use biometrics instead of PIN when available',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, color: cs.onSurfaceVariant)),
+                value: lock.biometricEnabled,
+                activeThumbColor: cs.primary,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                onChanged: (v) =>
+                    ref.read(appLockProvider.notifier).setBiometricEnabled(v),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
   }
 }
 

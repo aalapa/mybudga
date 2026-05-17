@@ -2,7 +2,7 @@ name: mybudga
 description: "Personal finance budgeting app — YNAB4-style envelope budgeting"
 publish_to: 'none'
 
-version: 2.0.0+29
+version: 2.2.13+44
 
 environment:
   sdk: ^3.11.5
@@ -44,6 +44,10 @@ dependencies:
 
   # Charts
   fl_chart: ^0.68.0
+
+  local_auth: ^2.3.0
+  flutter_secure_storage: ^9.2.2
+  crypto: ^3.0.3
 
   # Local notifications (Path B — shopping reminders)
   flutter_local_notifications: ^18.0.1

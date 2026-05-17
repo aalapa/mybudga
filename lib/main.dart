@@ -9,6 +9,8 @@ import 'core/theme/theme_provider.dart';
 import 'core/router/app_router.dart';
 import 'core/sms/sms_service.dart';
 import 'features/insights/notification_service.dart';
+import 'features/auth/app_lock_provider.dart';
+import 'features/auth/app_lock_screen.dart';
 
 void main() async {
   final binding = WidgetsFlutterBinding.ensureInitialized();
@@ -55,12 +57,69 @@ class MyBudgaApp extends ConsumerWidget {
     final router    = ref.watch(routerProvider);
     final themePref = ref.watch(themeProvider);
     return MaterialApp.router(
-      title:      'MyBudga',
-      theme:      AppTheme.light(seedColor: themePref.seedColor),
-      darkTheme:  AppTheme.dark(seedColor: themePref.seedColor),
-      themeMode:  themePref.mode,
+      title:        'MyBudga',
+      theme:        AppTheme.light(seedColor: themePref.seedColor),
+      darkTheme:    AppTheme.dark(seedColor: themePref.seedColor),
+      themeMode:    themePref.mode,
       routerConfig: router,
       debugShowCheckedModeBanner: false,
+      builder: (context, child) =>
+          AppLockOverlay(child: child ?? const SizedBox.shrink()),
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// App lock overlay + background-timer observer
+// ---------------------------------------------------------------------------
+
+class AppLockOverlay extends ConsumerStatefulWidget {
+  final Widget child;
+  const AppLockOverlay({required this.child, super.key});
+
+  @override
+  ConsumerState<AppLockOverlay> createState() => _AppLockOverlayState();
+}
+
+class _AppLockOverlayState extends ConsumerState<AppLockOverlay>
+    with WidgetsBindingObserver {
+  DateTime? _backgroundedAt;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final notifier = ref.read(appLockProvider.notifier);
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+        _backgroundedAt ??= DateTime.now();
+      case AppLifecycleState.resumed:
+        final bg = _backgroundedAt;
+        _backgroundedAt = null;
+        if (bg != null &&
+            DateTime.now().difference(bg).inSeconds >= 60) {
+          notifier.lock();
+        }
+      default:
+        break;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final lock = ref.watch(appLockProvider);
+    if (lock.isLocked) return const AppLockScreen();
+    return widget.child;
   }
 }
