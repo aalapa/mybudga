@@ -564,7 +564,13 @@ class _DueDateBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final month = DateFormat('MMM').format(DateTime.now()).toUpperCase();
+    final now        = DateTime.now();
+    // If the due day has already passed this month, the next occurrence is
+    // next month — show that month instead.
+    final dueDate    = dueDay >= now.day
+        ? DateTime(now.year, now.month, dueDay)
+        : DateTime(now.year, now.month + 1, dueDay);
+    final month      = DateFormat('MMM').format(dueDate).toUpperCase();
     return Container(
       width: 36, height: 40,
       decoration: BoxDecoration(
