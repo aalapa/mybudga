@@ -480,9 +480,28 @@ class _AccountTile extends ConsumerWidget {
     final iconColor = _iconColor(cs);
     final isPortrait =
         MediaQuery.orientationOf(context) == Orientation.portrait;
-    final containerSize = isPortrait ? 30.0 : 40.0;
-    final iconSize      = isPortrait ? 14.0 : 18.0;
-    final radius        = isPortrait ?  8.0 : 12.0;
+
+    // Portrait + due date → mini calendar badge; otherwise → icon pill
+    final showBadge = isPortrait && account.dueDay != null;
+    final Widget leading = showBadge
+        ? _DueDateBadge(dueDay: account.dueDay!, color: iconColor)
+        : Container(
+            width:  isPortrait ? 30.0 : 40.0,
+            height: isPortrait ? 30.0 : 40.0,
+            decoration: BoxDecoration(
+              color: iconColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(isPortrait ? 8.0 : 12.0),
+            ),
+            child: Icon(account.type.icon,
+                size: isPortrait ? 14.0 : 18.0, color: iconColor),
+          );
+
+    // When the badge already shows the due date, drop it from the subtitle
+    final subtitle = showBadge
+        ? account.type.typeName
+        : account.dueDay != null
+            ? '${account.type.typeName} · Due ${_ordinal(account.dueDay!)}'
+            : account.type.typeName;
 
     return InkWell(
       onTap: () => _showAccountDetail(context, ref, account),
@@ -495,14 +514,7 @@ class _AccountTile extends ConsumerWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           children: [
-            Container(
-              width: containerSize, height: containerSize,
-              decoration: BoxDecoration(
-                color: iconColor.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(radius),
-              ),
-              child: Icon(account.type.icon, size: iconSize, color: iconColor),
-            ),
+            leading,
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -510,20 +522,18 @@ class _AccountTile extends ConsumerWidget {
                 children: [
                   Text(account.displayName,
                       style: GoogleFonts.plusJakartaSans(
-                          fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-                  Text(
-                    account.dueDay != null
-                        ? '${account.type.typeName} · Due ${_ordinal(account.dueDay!)}'
-                        : account.type.typeName,
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 12, color: cs.onSurfaceVariant),
-                  ),
+                          fontSize: 14, fontWeight: FontWeight.w600,
+                          color: cs.onSurface)),
+                  Text(subtitle,
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12, color: cs.onSurfaceVariant)),
                 ],
               ),
             ),
             Text(fmt.format(account.balance),
                 style: GoogleFonts.plusJakartaSans(
-                    fontSize: 15, fontWeight: FontWeight.w700, color: balColor)),
+                    fontSize: 15, fontWeight: FontWeight.w700,
+                    color: balColor)),
           ],
         ),
       ),
@@ -541,6 +551,51 @@ class _AccountTile extends ConsumerWidget {
     AccountType.loan         => cs.onSurfaceVariant,
     AccountType.asset        => cs.onSurfaceVariant,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Due-date badge — replaces the icon in portrait when a due day is set
+// ---------------------------------------------------------------------------
+
+class _DueDateBadge extends StatelessWidget {
+  final int   dueDay;
+  final Color color;
+  const _DueDateBadge({required this.dueDay, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final month = DateFormat('MMM').format(DateTime.now()).toUpperCase();
+    return Container(
+      width: 36, height: 40,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            month,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+              color: color.withValues(alpha: 0.75),
+              letterSpacing: 0.6,
+            ),
+          ),
+          Text(
+            '$dueDay',
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 19,
+              fontWeight: FontWeight.w800,
+              color: color,
+              height: 1.05,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
