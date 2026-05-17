@@ -11,6 +11,7 @@ import '../../shared/models/transaction.dart';
 import 'account_labels_provider.dart';
 import 'accounts_provider.dart';
 import '../transactions/transactions_provider.dart';
+import '../transactions/transactions_screen.dart' show showEditTransactionSheet;
 
 // ---------------------------------------------------------------------------
 // Due-day helpers
@@ -1360,6 +1361,11 @@ class _AccountDetailSheetState extends ConsumerState<_AccountDetailSheet> {
                               (accountId: account.id, days: _days),
                             ));
                           },
+                          onEdited: () => ref.invalidate(
+                            accountTransactionsProvider(
+                              (accountId: account.id, days: _days),
+                            ),
+                          ),
                         );
                       },
                       childCount: entries.length,
@@ -1394,6 +1400,7 @@ class _TxGroup extends StatelessWidget {
   final NumberFormat fmt;
   final WidgetRef ref;
   final Future<void> Function(String txId, bool nowCleared)? onClearToggle;
+  final VoidCallback? onEdited;
 
   const _TxGroup({
     required String dateLabel,
@@ -1401,6 +1408,7 @@ class _TxGroup extends StatelessWidget {
     required this.fmt,
     required this.ref,
     this.onClearToggle,
+    this.onEdited,
   }) : label = dateLabel;
 
   @override
@@ -1440,9 +1448,12 @@ class _TxGroup extends StatelessWidget {
                   borderRadius: isLast
                       ? const BorderRadius.vertical(bottom: Radius.circular(14))
                       : BorderRadius.zero,
-                  onTap: () {},
-                  onLongPress:    tx.isTransfer ? null : () => _showMoveToAccountSheet(context, ref, tx),
-                  onSecondaryTap: tx.isTransfer ? null : () => _showMoveToAccountSheet(context, ref, tx),
+                  onTap: () async {
+                    await showEditTransactionSheet(context, ref, prefill: tx);
+                    onEdited?.call();
+                  },
+                  onLongPress:    tx.isReconciled ? null : () => _showTxActions(context, ref, tx, onEdited),
+                  onSecondaryTap: tx.isReconciled ? null : () => _showTxActions(context, ref, tx, onEdited),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 14, vertical: 12),
@@ -2673,6 +2684,86 @@ class _TwoDecimalInputFormatter extends TextInputFormatter {
 // ---------------------------------------------------------------------------
 // Move transaction to a different account (long-press / right-click)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Transaction long-press actions (from account detail view)
+// ---------------------------------------------------------------------------
+
+void _showTxActions(
+  BuildContext context,
+  WidgetRef ref,
+  Transaction tx,
+  VoidCallback? onEdited,
+) {
+  final cs = Theme.of(context).colorScheme;
+  showModalBottomSheet<void>(
+    context:     context,
+    useSafeArea: true,
+    builder: (ctx) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 12),
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          ListTile(
+            leading: Icon(Icons.edit_outlined, color: cs.onSurface),
+            title: Text('Edit transaction',
+                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
+            onTap: () async {
+              Navigator.pop(ctx);
+              await showEditTransactionSheet(context, ref, prefill: tx);
+              onEdited?.call();
+            },
+          ),
+          if (!tx.isTransfer)
+            ListTile(
+              leading: Icon(Icons.swap_horiz, color: cs.onSurface),
+              title: Text('Move to account',
+                  style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showMoveToAccountSheet(context, ref, tx);
+              },
+            ),
+          if (!tx.isTransfer)
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: cs.error),
+              title: Text('Delete',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w600, color: cs.error)),
+              onTap: () async {
+                Navigator.pop(ctx);
+                try {
+                  await ref
+                      .read(transactionsProvider.notifier)
+                      .deleteTransaction(tx.id);
+                  onEdited?.call();
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('$e'),
+                          backgroundColor: cs.error,
+                          behavior: SnackBarBehavior.floating),
+                    );
+                  }
+                }
+              },
+            ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    ),
+  );
+}
 
 void _showMoveToAccountSheet(BuildContext context, WidgetRef ref, Transaction tx) {
   final cs      = Theme.of(context).colorScheme;

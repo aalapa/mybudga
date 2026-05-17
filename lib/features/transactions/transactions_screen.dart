@@ -41,13 +41,13 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
       final notified = pendingSmsNotifier.value;
       if (notified != null && mounted) {
         pendingSmsNotifier.value = null;
-        _showAddTransactionSheet(context, ref, smsData: notified);
+        showEditTransactionSheet(context, ref, smsData: notified);
         return;
       }
       // Handle cold-start pending SMS from SharedPreferences
       final pending = await SmsService.takePending();
       if (pending.isNotEmpty && mounted) {
-        _showAddTransactionSheet(context, ref, smsData: pending.first);
+        showEditTransactionSheet(context, ref, smsData: pending.first);
       }
     });
   }
@@ -63,7 +63,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     final parsed = pendingSmsNotifier.value;
     if (parsed != null && mounted) {
       pendingSmsNotifier.value = null;
-      _showAddTransactionSheet(context, ref, smsData: parsed);
+      showEditTransactionSheet(context, ref, smsData: parsed);
     }
   }
 
@@ -170,7 +170,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
           const SizedBox(height: 12),
           FloatingActionButton(
             heroTag: 'add',
-            onPressed: () => _showAddTransactionSheet(context, ref),
+            onPressed: () => showEditTransactionSheet(context, ref),
             backgroundColor: cs.primary,
             foregroundColor: cs.onPrimary,
             child: const Icon(Icons.add),
@@ -404,7 +404,7 @@ class _PendingTile extends StatelessWidget {
     final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
 
     return InkWell(
-      onTap: () => _showAddTransactionSheet(context, ref, prefill: tx),
+      onTap: () => showEditTransactionSheet(context, ref, prefill: tx),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
@@ -664,7 +664,7 @@ class _TransactionTile extends StatelessWidget {
     final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
 
     return InkWell(
-      onTap: () => _showAddTransactionSheet(context, ref, prefill: tx),
+      onTap: () => showEditTransactionSheet(context, ref, prefill: tx),
       onLongPress:    tx.isTransfer ? null : () => _showTransactionActions(context, ref, tx),
       onSecondaryTap: tx.isTransfer ? null : () => _showTransactionActions(context, ref, tx),
       borderRadius: isLast
@@ -756,13 +756,14 @@ class _PayeeAvatar extends StatelessWidget {
 // Add / Edit Transaction sheet
 // ---------------------------------------------------------------------------
 
-void _showAddTransactionSheet(
+/// Public so the account detail view can open the same edit sheet.
+Future<void> showEditTransactionSheet(
   BuildContext context,
   WidgetRef ref, {
   Transaction? prefill,
   ParsedSms? smsData,
-}) {
-  showModalBottomSheet(
+}) async {
+  await showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
