@@ -14,8 +14,13 @@ class MainFlutterWindow: NSWindow {
     // Restore saved frame; fall back to a generous default on first launch
     let didRestore = self.setFrameUsingName("MainWindow")
     if !didRestore || self.frame.width < 1100 {
-      self.setContentSize(NSSize(width: 1440, height: 900))
-      self.center()
+      // First launch: fill the visible screen area (excludes menu bar + dock)
+      if let screen = NSScreen.main {
+        self.setFrame(screen.visibleFrame, display: true, animate: false)
+      } else {
+        self.setContentSize(NSSize(width: 1440, height: 900))
+        self.center()
+      }
     }
     self.setFrameAutosaveName("MainWindow")
 
