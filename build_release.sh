@@ -25,3 +25,10 @@ flutter build apk --release
 APK_NAME="MyBudga-${MAJOR}.${MINOR}.${PATCH}.apk"
 cp build/app/outputs/flutter-apk/app-release.apk "build/app/outputs/flutter-apk/${APK_NAME}"
 echo "✓ APK: build/app/outputs/flutter-apk/${APK_NAME}"
+
+flutter build macos --release
+
+APP_SRC="build/macos/Build/Products/Release/mybudga.app"
+APP_DST="build/macos/Build/Products/Release/MyBudga-${MAJOR}.${MINOR}.${PATCH}.app"
+cp -R "$APP_SRC" "$APP_DST"
+echo "✓ macOS: $APP_DST"
