@@ -333,3 +333,44 @@ final accountTransactionsProvider = FutureProvider.autoDispose
       .map((r) => Transaction.fromJson(r as Map<String, dynamic>))
       .toList();
 });
+
+// ---------------------------------------------------------------------------
+// Most-recent credit date per account (last 60 days, positive amounts only).
+// Used to detect partial payments on credit cards since the last due date.
+// Refreshes automatically when account balances change (accountsProvider).
+// ---------------------------------------------------------------------------
+
+final recentCreditDatesProvider =
+    FutureProvider.autoDispose<Map<String, DateTime>>((ref) async {
+  // Piggy-back on accountsProvider's Realtime so we refresh after a payment
+  // hits and the account balance updates.
+  ref.watch(accountsProvider);
+
+  final householdId = await ref.watch(householdIdProvider.future);
+  final client      = ref.watch(supabaseProvider);
+
+  final since    = DateTime.now().subtract(const Duration(days: 60));
+  final sinceStr = '${since.year}-'
+      '${since.month.toString().padLeft(2, '0')}-'
+      '${since.day.toString().padLeft(2, '0')}';
+
+  final res = await client
+      .from('transactions')
+      .select('account_id, date')
+      .eq('household_id', householdId)
+      .gte('date', sinceStr)
+      .gt('amount', 0) // credits / payments only
+      .isFilter('deleted_at', null)
+      .order('date', ascending: false);
+
+  // Keep only the most recent credit per account.
+  final map = <String, DateTime>{};
+  for (final r in res as List) {
+    final id   = r['account_id'] as String?;
+    final date = r['date']       as String?;
+    if (id != null && date != null && !map.containsKey(id)) {
+      map[id] = DateTime.parse(date);
+    }
+  }
+  return map;
+});

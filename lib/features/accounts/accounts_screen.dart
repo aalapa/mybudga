@@ -36,9 +36,55 @@ String _ordinal(int n) {
   };
 }
 
-List<Account> _sortByDueDay(List<Account> accounts) {
+/// The most recent past occurrence of [dueDay] in the calendar.
+/// e.g. today = May 17, dueDay = 1  → May 1  (already passed this month)
+///      today = May 17, dueDay = 20 → April 20 (hasn't happened yet this month)
+DateTime _lastDueDate(int dueDay) {
+  final now = DateTime.now();
+  return dueDay <= now.day
+      ? DateTime(now.year, now.month, dueDay)
+      : DateTime(now.year, now.month - 1, dueDay);
+}
+
+// ---------------------------------------------------------------------------
+// Payment status for due-date badge
+// ---------------------------------------------------------------------------
+
+enum _PaymentStatus { unpaid, partiallyPaid, fullyPaid }
+
+_PaymentStatus _paymentStatus(Account a, Map<String, DateTime> creditDates) {
+  if (a.dueDay == null) return _PaymentStatus.unpaid;
+  if (a.balance >= 0)   return _PaymentStatus.fullyPaid;
+  final lastCredit = creditDates[a.id];
+  if (lastCredit != null && !lastCredit.isBefore(_lastDueDate(a.dueDay!))) {
+    return _PaymentStatus.partiallyPaid;
+  }
+  return _PaymentStatus.unpaid;
+}
+
+// ---------------------------------------------------------------------------
+// 3-tier sort: urgent (red) → partially paid (amber) → fully paid (green)
+//              within each tier, sort by days-until-due
+// ---------------------------------------------------------------------------
+
+int _sortTier(Account a, Map<String, DateTime> creditDates) {
+  if (a.dueDay == null) return 3; // no due date — keep natural position
+  return switch (_paymentStatus(a, creditDates)) {
+    _PaymentStatus.unpaid        => 0,
+    _PaymentStatus.partiallyPaid => 1,
+    _PaymentStatus.fullyPaid     => 2,
+  };
+}
+
+List<Account> _sortAccounts(
+    List<Account> accounts, Map<String, DateTime> creditDates) {
   final sorted = [...accounts];
-  sorted.sort((a, b) => _daysUntilDue(a.dueDay).compareTo(_daysUntilDue(b.dueDay)));
+  sorted.sort((a, b) {
+    final ta = _sortTier(a, creditDates);
+    final tb = _sortTier(b, creditDates);
+    if (ta != tb) return ta.compareTo(tb);
+    return _daysUntilDue(a.dueDay).compareTo(_daysUntilDue(b.dueDay));
+  });
   return sorted;
 }
 
@@ -107,7 +153,7 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
 // Body — built only when data is loaded
 // ---------------------------------------------------------------------------
 
-class _AccountsBody extends StatelessWidget {
+class _AccountsBody extends ConsumerWidget {
   final List<Account> accounts;
   final List<AccountLabel> labels;
   final VoidCallback onManageLabels;
@@ -132,7 +178,8 @@ class _AccountsBody extends StatelessWidget {
       .fold(0.0, (s, a) => s + a.balance);
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final creditDates = ref.watch(recentCreditDatesProvider).valueOrNull ?? {};
     final budget = _budgetAccounts;
 
     // Build labeled sections when labels are defined.
@@ -184,7 +231,7 @@ class _AccountsBody extends StatelessWidget {
                     isDebt: sec.accounts.every((a) => a.isCreditCard),
                   ),
                   const SizedBox(height: 8),
-                  _AccountGroup(accounts: _sortByDueDay(sec.accounts)),
+                  _AccountGroup(accounts: _sortAccounts(sec.accounts, creditDates)),
                   const SizedBox(height: 20),
                 ],
 
@@ -196,7 +243,7 @@ class _AccountsBody extends StatelessWidget {
                     isDebt: unclaimed.every((a) => a.isCreditCard),
                   ),
                   const SizedBox(height: 8),
-                  _AccountGroup(accounts: _sortByDueDay(unclaimed)),
+                  _AccountGroup(accounts: _sortAccounts(unclaimed, creditDates)),
                   const SizedBox(height: 20),
                 ],
 
@@ -213,7 +260,7 @@ class _AccountsBody extends StatelessWidget {
                       total: sec.accounts.fold(0.0, (s, a) => s + a.balance),
                     ),
                     const SizedBox(height: 6),
-                    _AccountGroup(accounts: _sortByDueDay(sec.accounts)),
+                    _AccountGroup(accounts: _sortAccounts(sec.accounts, creditDates)),
                     const SizedBox(height: 16),
                   ],
                   if (unclaimedTracking.isNotEmpty) ...[
@@ -224,7 +271,7 @@ class _AccountsBody extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                     ],
-                    _AccountGroup(accounts: _sortByDueDay(unclaimedTracking)),
+                    _AccountGroup(accounts: _sortAccounts(unclaimedTracking, creditDates)),
                   ],
                 ],
               ]),
@@ -474,18 +521,25 @@ class _AccountTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cs        = Theme.of(context).colorScheme;
-    final fmt       = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
-    final isNeg     = account.balance < 0;
-    final balColor  = isNeg ? cs.error : cs.onSurface;
-    final iconColor = _iconColor(cs);
-    final isPortrait =
+    final cs          = Theme.of(context).colorScheme;
+    final fmt         = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final isNeg       = account.balance < 0;
+    final balColor    = isNeg ? cs.error : cs.onSurface;
+    final iconColor   = _iconColor(cs);
+    final isPortrait  =
         MediaQuery.orientationOf(context) == Orientation.portrait;
+    final creditDates =
+        ref.watch(recentCreditDatesProvider).valueOrNull ?? {};
+    final status      = _paymentStatus(account, creditDates);
 
-    // Portrait + due date → mini calendar badge; otherwise → icon pill
+    // Portrait + due date → mini calendar / tick badge; otherwise → icon pill
     final showBadge = isPortrait && account.dueDay != null;
     final Widget leading = showBadge
-        ? _DueDateBadge(dueDay: account.dueDay!, color: iconColor)
+        ? _DueDateBadge(
+            dueDay: account.dueDay!,
+            color:  iconColor,
+            status: status,
+          )
         : Container(
             width:  isPortrait ? 30.0 : 40.0,
             height: isPortrait ? 30.0 : 40.0,
@@ -497,9 +551,14 @@ class _AccountTile extends ConsumerWidget {
                 size: isPortrait ? 14.0 : 18.0, color: iconColor),
           );
 
-    // When the badge already shows the due date, drop it from the subtitle
+    // When the badge already shows the due date, drop it from the subtitle.
+    // For paid/partial states add a short note instead.
     final subtitle = showBadge
-        ? account.type.typeName
+        ? switch (status) {
+            _PaymentStatus.fullyPaid     => '${account.type.typeName} · Paid',
+            _PaymentStatus.partiallyPaid => '${account.type.typeName} · Payment received',
+            _PaymentStatus.unpaid        => account.type.typeName,
+          }
         : account.dueDay != null
             ? '${account.type.typeName} · Due ${_ordinal(account.dueDay!)}'
             : account.type.typeName;
@@ -559,19 +618,45 @@ class _AccountTile extends ConsumerWidget {
 // ---------------------------------------------------------------------------
 
 class _DueDateBadge extends StatelessWidget {
-  final int   dueDay;
-  final Color color;
-  const _DueDateBadge({required this.dueDay, required this.color});
+  final int            dueDay;
+  final Color          color;
+  final _PaymentStatus status;
+
+  const _DueDateBadge({
+    required this.dueDay,
+    required this.color,
+    required this.status,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final now        = DateTime.now();
-    // If the due day has already passed this month, the next occurrence is
-    // next month — show that month instead.
-    final dueDate    = dueDay >= now.day
+    // Tick badges (fully / partially paid)
+    if (status != _PaymentStatus.unpaid) {
+      final isFullyPaid = status == _PaymentStatus.fullyPaid;
+      final tickColor   = isFullyPaid
+          ? const Color(0xFF4CAF50)   // green
+          : const Color(0xFFFFB300);  // amber
+      return Container(
+        width: 36, height: 40,
+        decoration: BoxDecoration(
+          color: tickColor.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(
+          Icons.check_circle_rounded,
+          size: 22,
+          color: tickColor,
+        ),
+      );
+    }
+
+    // Unpaid — show month + day number
+    final now     = DateTime.now();
+    final dueDate = dueDay >= now.day
         ? DateTime(now.year, now.month, dueDay)
         : DateTime(now.year, now.month + 1, dueDay);
-    final month      = DateFormat('MMM').format(dueDate).toUpperCase();
+    final month   = DateFormat('MMM').format(dueDate).toUpperCase();
+
     return Container(
       width: 36, height: 40,
       decoration: BoxDecoration(
