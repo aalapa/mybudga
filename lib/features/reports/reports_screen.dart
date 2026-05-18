@@ -8,6 +8,12 @@ import 'package:intl/intl.dart';
 import 'reports_provider.dart';
 
 // ---------------------------------------------------------------------------
+// Drill-down mode for inline per-category chart
+// ---------------------------------------------------------------------------
+
+enum _DrillMode { weekly, daily }
+
+// ---------------------------------------------------------------------------
 
 class ReportsScreen extends ConsumerStatefulWidget {
   const ReportsScreen({super.key});
@@ -17,25 +23,9 @@ class ReportsScreen extends ConsumerStatefulWidget {
 }
 
 class _ReportsScreenState extends ConsumerState<ReportsScreen> {
-  int          _months          = 1;
-  int          _touchedIdx      = -1;
-  Set<String>  _excludedCats    = {};
-
-  void _showDeepDive(
-      BuildContext context, ReportsState data, CategorySpend cat, Color color) {
-    final monthly = data.categoryMonthlySpend[cat.categoryId] ?? [];
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _CategoryDeepDiveSheet(
-        category:     cat,
-        byMonth:      data.byMonth,
-        monthlySpend: monthly,
-        color:        color,
-      ),
-    );
-  }
+  int         _months       = 1;
+  int         _touchedIdx   = -1;
+  Set<String> _excludedCats = {};
 
   @override
   Widget build(BuildContext context) {
@@ -66,9 +56,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
             data:       data,
             months:     _months,
             touchedIdx: _touchedIdx,
-            onMonthsChanged:     (m) => setState(() { _months = m; _touchedIdx = -1; _excludedCats = {}; }),
+            onMonthsChanged:     (m) => setState(() {
+              _months = m; _touchedIdx = -1; _excludedCats = {};
+            }),
             onTouchedIdxChanged: (i) => setState(() => _touchedIdx = i),
-            onDrillDown:         (cat, color) => _showDeepDive(context, data, cat, color),
             excludedCats:        _excludedCats,
             onExclude:           (name) => setState(() {
               if (_excludedCats.contains(name)) {
@@ -95,7 +86,6 @@ class _ReportsBody extends StatelessWidget {
   final Set<String> excludedCats;
   final ValueChanged<int> onMonthsChanged;
   final ValueChanged<int> onTouchedIdxChanged;
-  final void Function(CategorySpend, Color) onDrillDown;
   final void Function(String) onExclude;
 
   const _ReportsBody({
@@ -105,7 +95,6 @@ class _ReportsBody extends StatelessWidget {
     required this.excludedCats,
     required this.onMonthsChanged,
     required this.onTouchedIdxChanged,
-    required this.onDrillDown,
     required this.onExclude,
   });
 
@@ -138,14 +127,7 @@ class _ReportsBody extends StatelessWidget {
         // ── Summary (income / expenses / saved / rate) ─────────────────────
         SliverToBoxAdapter(child: _SummarySection(data: data, months: months)),
 
-        // ── Budget vs Actual ────────────────────────────────────────────────
-        SliverToBoxAdapter(
-          child: data.budgetVsActual.isEmpty
-              ? const SizedBox.shrink()
-              : _BudgetVsActualSection(data: data),
-        ),
-
-        // ── Spending by category (donut + deep-dive) ───────────────────────
+        // ── Spending by category (donut + inline drill) ────────────────────
         SliverToBoxAdapter(
           child: data.byCategory.isEmpty
               ? _EmptySection(
@@ -157,9 +139,15 @@ class _ReportsBody extends StatelessWidget {
                   touchedIdx:   touchedIdx,
                   excludedCats: excludedCats,
                   onTouch:      onTouchedIdxChanged,
-                  onDrillDown:  onDrillDown,
                   onExclude:    onExclude,
                 ),
+        ),
+
+        // ── Budget vs Actual ────────────────────────────────────────────────
+        SliverToBoxAdapter(
+          child: data.budgetVsActual.isEmpty
+              ? const SizedBox.shrink()
+              : _BudgetVsActualSection(data: data),
         ),
 
         // ── Monthly income vs expenses trend ────────────────────────────────
@@ -612,15 +600,14 @@ class _BudgetVsActualSectionState extends State<_BudgetVsActualSection> {
 }
 
 // ---------------------------------------------------------------------------
-// Spending by category — donut chart with deep-dive
+// Spending by category — donut chart + inline weekly/daily drill
 // ---------------------------------------------------------------------------
 
-class _SpendingSection extends StatelessWidget {
+class _SpendingSection extends StatefulWidget {
   final ReportsState data;
   final int touchedIdx;
   final Set<String> excludedCats;
   final ValueChanged<int> onTouch;
-  final void Function(CategorySpend, Color) onDrillDown;
   final void Function(String) onExclude;
 
   const _SpendingSection({
@@ -628,16 +615,43 @@ class _SpendingSection extends StatelessWidget {
     required this.touchedIdx,
     required this.excludedCats,
     required this.onTouch,
-    required this.onDrillDown,
     required this.onExclude,
   });
+
+  @override
+  State<_SpendingSection> createState() => _SpendingSectionState();
+}
+
+class _SpendingSectionState extends State<_SpendingSection> {
+  String?    _drillCatId;
+  Color?     _drillColor;
+  _DrillMode _drillMode = _DrillMode.weekly;
+
+  void _onCategoryTap(CategorySpend cat, Color color) {
+    if (cat.categoryId == null) return;
+    setState(() {
+      if (_drillCatId != cat.categoryId) {
+        // New category → open in weekly mode
+        _drillCatId = cat.categoryId;
+        _drillColor = color;
+        _drillMode  = _DrillMode.weekly;
+      } else if (_drillMode == _DrillMode.weekly) {
+        // Same category, weekly → switch to daily
+        _drillMode = _DrillMode.daily;
+      } else {
+        // Same category, daily → dismiss
+        _drillCatId = null;
+        _drillColor = null;
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final cs  = Theme.of(context).colorScheme;
     final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
 
-    final cats  = data.byCategory;
+    final cats  = widget.data.byCategory;
     final shown = cats.take(9).toList();
     final other = cats.length > 9
         ? cats.skip(9).fold(0.0, (s, c) => s + c.amount)
@@ -649,13 +663,13 @@ class _SpendingSection extends StatelessWidget {
 
     // Pie uses only non-excluded slices; percentages recalculate accordingly
     final visibleSlices = allSlices
-        .where((c) => !excludedCats.contains(c.name))
+        .where((c) => !widget.excludedCats.contains(c.name))
         .toList();
     final visibleTotal = visibleSlices.fold(0.0, (s, c) => s + c.amount);
 
     // Map visible index back to original palette index for consistent colours
     final visibleOriginalIndices = allSlices.asMap().entries
-        .where((e) => !excludedCats.contains(e.value.name))
+        .where((e) => !widget.excludedCats.contains(e.value.name))
         .map((e) => e.key)
         .toList();
 
@@ -665,7 +679,7 @@ class _SpendingSection extends StatelessWidget {
       final origI = visibleOriginalIndices[vi];
       final pct   = visibleTotal > 0 ? cat.amount / visibleTotal * 100 : 0.0;
       final color = chartPalette[origI % chartPalette.length];
-      final isSel = touchedIdx == origI;
+      final isSel = widget.touchedIdx == origI;
 
       return PieChartSectionData(
         color:  color,
@@ -678,8 +692,8 @@ class _SpendingSection extends StatelessWidget {
       );
     }).toList();
 
-    final selCat = (touchedIdx >= 0 && touchedIdx < allSlices.length)
-        ? allSlices[touchedIdx]
+    final selCat = (widget.touchedIdx >= 0 && widget.touchedIdx < allSlices.length)
+        ? allSlices[widget.touchedIdx]
         : null;
 
     return _Section(
@@ -703,9 +717,10 @@ class _SpendingSection extends StatelessWidget {
                       touchCallback: (FlTouchEvent event, PieTouchResponse? response) {
                         if (!event.isInterestedForInteractions ||
                             response?.touchedSection == null) {
-                          onTouch(-1);
+                          widget.onTouch(-1);
                         } else {
-                          onTouch(response!.touchedSection!.touchedSectionIndex);
+                          widget.onTouch(
+                              response!.touchedSection!.touchedSectionIndex);
                         }
                       },
                     ),
@@ -743,8 +758,8 @@ class _SpendingSection extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // Legend rows — tap to drill down, swipe left to exclude/restore
-          if (excludedCats.isNotEmpty)
+          // Legend rows — tap to drill (weekly→daily→dismiss), swipe left to exclude
+          if (widget.excludedCats.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Row(
@@ -752,7 +767,7 @@ class _SpendingSection extends StatelessWidget {
                   Icon(Icons.visibility_off_outlined,
                       size: 13, color: cs.onSurfaceVariant),
                   const SizedBox(width: 4),
-                  Text('${excludedCats.length} hidden · tap grayed row to restore',
+                  Text('${widget.excludedCats.length} hidden · tap grayed row to restore',
                       style: GoogleFonts.plusJakartaSans(
                           fontSize: 11, color: cs.onSurfaceVariant)),
                 ],
@@ -761,12 +776,11 @@ class _SpendingSection extends StatelessWidget {
           ...allSlices.asMap().entries.map((e) {
             final i          = e.key;
             final cat        = e.value;
-            final isExcluded = excludedCats.contains(cat.name);
+            final isExcluded = widget.excludedCats.contains(cat.name);
             final color      = chartPalette[i % chartPalette.length];
-            final isSel      = touchedIdx == i;
-            final canDrill   = cat.categoryId != null;
+            final isSel      = widget.touchedIdx == i;
+            final isDrilled  = _drillCatId == cat.categoryId && cat.categoryId != null;
 
-            // Percentages relative to visible total
             final pct     = visibleTotal > 0 && !isExcluded
                 ? cat.amount / visibleTotal * 100
                 : 0.0;
@@ -777,14 +791,14 @@ class _SpendingSection extends StatelessWidget {
             return GestureDetector(
               onTap: () {
                 if (isExcluded) {
-                  onExclude(cat.name); // restore
-                } else if (canDrill) {
-                  onDrillDown(cat, color);
+                  widget.onExclude(cat.name);
+                } else {
+                  _onCategoryTap(cat, color);
                 }
               },
               onHorizontalDragEnd: (details) {
                 if ((details.primaryVelocity ?? 0) < -250) {
-                  onExclude(cat.name); // toggle exclude
+                  widget.onExclude(cat.name);
                 }
               },
               child: AnimatedOpacity(
@@ -795,7 +809,7 @@ class _SpendingSection extends StatelessWidget {
                   margin: const EdgeInsets.only(bottom: 6),
                   padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
                   decoration: BoxDecoration(
-                    color: isSel && !isExcluded
+                    color: (isSel && !isExcluded) || isDrilled
                         ? color.withValues(alpha: 0.1)
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(10),
@@ -850,13 +864,20 @@ class _SpendingSection extends StatelessWidget {
                               color: cs.onSurface),
                         ),
                       ),
-                      if (canDrill && !isExcluded)
+                      // Drill icon — shows current drill state for active row
+                      if (cat.categoryId != null && !isExcluded)
                         Padding(
                           padding: const EdgeInsets.only(left: 4),
                           child: Icon(
-                            Icons.show_chart_rounded,
+                            isDrilled
+                                ? (_drillMode == _DrillMode.weekly
+                                    ? Icons.bar_chart_rounded
+                                    : Icons.view_day_rounded)
+                                : Icons.show_chart_rounded,
                             size: 18,
-                            color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                            color: isDrilled
+                                ? color
+                                : cs.onSurfaceVariant.withValues(alpha: 0.5),
                           ),
                         )
                       else
@@ -867,213 +888,74 @@ class _SpendingSection extends StatelessWidget {
               ),
             );
           }),
-        ],
-      ),
-    );
-  }
-}
 
-// ---------------------------------------------------------------------------
-// Category deep-dive bottom sheet
-// ---------------------------------------------------------------------------
-
-class _CategoryDeepDiveSheet extends StatelessWidget {
-  final CategorySpend     category;
-  final List<MonthData>   byMonth;
-  final List<double>      monthlySpend;
-  final Color             color;
-
-  const _CategoryDeepDiveSheet({
-    required this.category,
-    required this.byMonth,
-    required this.monthlySpend,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs  = Theme.of(context).colorScheme;
-    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
-
-    // Pad monthlySpend to match byMonth length (fills zeros for months with no spend)
-    final amounts = List<double>.generate(
-      byMonth.length,
-      (i) => i < monthlySpend.length ? monthlySpend[i] : 0.0,
-    );
-
-    final nonZero = amounts.where((a) => a > 0);
-    final avg     = nonZero.isEmpty ? 0.0 : nonZero.reduce((a, b) => a + b) / nonZero.length;
-    final peak    = amounts.isEmpty ? 0.0 : amounts.reduce(max);
-
-    return Container(
-      decoration: BoxDecoration(
-        color: cs.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Drag handle
-          Center(
-            child: Container(
-              width: 36, height: 4,
-              decoration: BoxDecoration(
-                color: cs.outlineVariant,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Header
-          Row(
-            children: [
-              Container(
-                width: 12, height: 12,
-                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(category.name,
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 18, fontWeight: FontWeight.w800,
-                        color: cs.onSurface)),
-              ),
-              Text(fmt.format(category.amount),
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 16, fontWeight: FontWeight.w700,
-                      color: cs.onSurface)),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text('Monthly spending trend',
-              style: GoogleFonts.plusJakartaSans(
-                  fontSize: 12, color: cs.onSurfaceVariant)),
-          const SizedBox(height: 20),
-
-          // Bar chart
-          if (byMonth.isEmpty)
-            Center(
-              child: Text('No data for this period',
-                  style: GoogleFonts.plusJakartaSans(color: cs.onSurfaceVariant)),
-            )
-          else
-            _DeepDiveChart(
-              byMonth:  byMonth,
-              amounts:  amounts,
-              color:    color,
-              peak:     peak,
-            ),
-          const SizedBox(height: 20),
-
-          // Stats row
-          Row(
-            children: [
-              _DeepDiveStat(label: 'Monthly avg', value: fmt.format(avg), color: color),
-              _DeepDiveStat(label: 'Peak month',  value: fmt.format(peak), color: color),
-              _DeepDiveStat(label: 'Total',        value: fmt.format(category.amount), color: color),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DeepDiveChart extends StatelessWidget {
-  final List<MonthData> byMonth;
-  final List<double>    amounts;
-  final Color           color;
-  final double          peak;
-
-  const _DeepDiveChart({
-    required this.byMonth,
-    required this.amounts,
-    required this.color,
-    required this.peak,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs   = Theme.of(context).colorScheme;
-    final yMax = peak <= 0 ? 100.0 : _ceilNice(peak * 1.15);
-
-    final groups = amounts.asMap().entries.map((e) {
-      return BarChartGroupData(
-        x: e.key,
-        barRods: [
-          BarChartRodData(
-            toY:    e.value,
-            width:  byMonth.length <= 3 ? 28 : byMonth.length <= 6 ? 20 : 14,
-            borderRadius: BorderRadius.circular(5),
-            gradient: LinearGradient(
-              colors: [color.withValues(alpha: 0.6), color],
-              begin: Alignment.bottomCenter,
-              end:   Alignment.topCenter,
-            ),
-          ),
-        ],
-      );
-    }).toList();
-
-    return SizedBox(
-      height: 160,
-      child: BarChart(
-        BarChartData(
-          maxY:      yMax,
-          barGroups: groups,
-          alignment: BarChartAlignment.spaceAround,
-          borderData: FlBorderData(show: false),
-          gridData: FlGridData(
-            show: true,
-            drawVerticalLine: false,
-            horizontalInterval: yMax / 4,
-            getDrawingHorizontalLine: (_) => FlLine(
-              color:       cs.outlineVariant.withValues(alpha: 0.4),
-              strokeWidth: 1,
-              dashArray:   [4, 4],
-            ),
-          ),
-          titlesData: FlTitlesData(
-            leftTitles:   AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            rightTitles:  AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            topTitles:    AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            bottomTitles: AxisTitles(
-              sideTitles: SideTitles(
-                showTitles:   true,
-                reservedSize: 24,
-                getTitlesWidget: (value, _) {
-                  final idx = value.toInt();
-                  if (idx < 0 || idx >= byMonth.length) return const SizedBox.shrink();
-                  return Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      DateFormat('MMM').format(byMonth[idx].month),
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 11, color: cs.onSurfaceVariant),
+          // ── Inline drill-down chart (weekly or daily) ──────────────────
+          AnimatedSize(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+            child: _drillCatId == null
+                ? const SizedBox.shrink()
+                : AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 250),
+                    child: _InlineDrillChart(
+                      key: ValueKey('${_drillCatId}_${_drillMode.name}'),
+                      dailySpend: widget.data.categoryDailySpend[_drillCatId!] ?? {},
+                      drillMode:  _drillMode,
+                      color:      _drillColor ?? cs.primary,
                     ),
-                  );
-                },
-              ),
-            ),
+                  ),
           ),
-          barTouchData: BarTouchData(
-            touchTooltipData: BarTouchTooltipData(
-              getTooltipColor: (_) => cs.surfaceContainerHigh,
-              getTooltipItem: (group, groupIdx, rod, rodIdx) => BarTooltipItem(
-                NumberFormat.currency(symbol: '\$', decimalDigits: 0)
-                    .format(rod.toY),
-                GoogleFonts.plusJakartaSans(
-                    fontSize: 11, fontWeight: FontWeight.w600,
-                    color: cs.onSurface),
-              ),
-            ),
-          ),
-        ),
+        ],
       ),
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Inline drill-down bar chart (weekly or daily) — no bottom sheet
+// ---------------------------------------------------------------------------
+
+class _InlineDrillChart extends StatelessWidget {
+  /// 'yyyy-MM-dd' → spending amount for the selected category.
+  final Map<String, double> dailySpend;
+  final _DrillMode drillMode;
+  final Color      color;
+
+  const _InlineDrillChart({
+    super.key,
+    required this.dailySpend,
+    required this.drillMode,
+    required this.color,
+  });
+
+  // ── Bucket builders ────────────────────────────────────────────────────────
+
+  List<({String label, double amount})> _weeklyBuckets() {
+    final Map<String, double>   weekAmt  = {};
+    final Map<String, DateTime> weekDate = {};
+    for (final e in dailySpend.entries) {
+      final date = DateTime.parse(e.key);
+      // Snap to Monday (ISO week start)
+      final mon = date.subtract(Duration(days: date.weekday - 1));
+      final key = '${mon.year}-${mon.month.toString().padLeft(2, '0')}'
+                  '-${mon.day.toString().padLeft(2, '0')}';
+      weekAmt.update(key, (v) => v + e.value, ifAbsent: () => e.value);
+      weekDate.putIfAbsent(key, () => mon);
+    }
+    final keys = weekAmt.keys.toList()..sort();
+    return keys.map((k) => (
+      label:  DateFormat('MMM d').format(weekDate[k]!),
+      amount: weekAmt[k]!,
+    )).toList();
+  }
+
+  List<({String label, double amount})> _dailyBuckets() {
+    final sorted = dailySpend.entries.toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+    return sorted.map((e) => (
+      label:  DateFormat('d').format(DateTime.parse(e.key)),
+      amount: e.value,
+    )).toList();
   }
 
   static double _ceilNice(double v) {
@@ -1081,13 +963,191 @@ class _DeepDiveChart extends StatelessWidget {
     final step = v < 500 ? 50.0 : v < 2000 ? 100.0 : 500.0;
     return ((v / step).ceil() * step).toDouble();
   }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+
+    final buckets = drillMode == _DrillMode.weekly
+        ? _weeklyBuckets()
+        : _dailyBuckets();
+
+    if (buckets.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+          child: Text('No data for this period',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13, color: cs.onSurfaceVariant)),
+        ),
+      );
+    }
+
+    final peak  = buckets.map((b) => b.amount).reduce(max);
+    final total = buckets.map((b) => b.amount).fold(0.0, (s, b) => s + b);
+    final nonZero = buckets.where((b) => b.amount > 0);
+    final avg   = nonZero.isEmpty ? 0.0 : total / nonZero.length;
+    final yMax  = _ceilNice(peak * 1.15);
+
+    // Bar width & chart width — scroll when many bars
+    final n = buckets.length;
+    final barW = n <= 6 ? 28.0 : n <= 14 ? 20.0 : 12.0;
+    final minChartW = MediaQuery.sizeOf(context).width - 32;
+    final chartW = max(minChartW, n * (barW + 6) + 24.0);
+
+    final groups = buckets.asMap().entries.map((e) => BarChartGroupData(
+      x: e.key,
+      barRods: [
+        BarChartRodData(
+          toY: e.value.amount,
+          width: barW,
+          borderRadius: BorderRadius.circular(5),
+          gradient: LinearGradient(
+            colors: [color.withValues(alpha: 0.55), color],
+            begin: Alignment.bottomCenter,
+            end:   Alignment.topCenter,
+          ),
+        ),
+      ],
+    )).toList();
+
+    // Skip labels when too crowded
+    final labelEvery = n <= 8 ? 1 : n <= 16 ? 2 : n <= 31 ? 5 : 7;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Header strip ─────────────────────────────────────────────────
+          Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: color.withValues(alpha: 0.2)),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  drillMode == _DrillMode.weekly
+                      ? Icons.bar_chart_rounded
+                      : Icons.view_day_rounded,
+                  size: 14, color: color,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  drillMode == _DrillMode.weekly ? 'Weekly spend' : 'Daily spend',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, fontWeight: FontWeight.w700, color: color),
+                ),
+                const Spacer(),
+                Text(
+                  drillMode == _DrillMode.weekly
+                      ? 'tap row for daily ›'
+                      : 'tap row to close ×',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 10, color: cs.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+
+          // ── Bar chart ─────────────────────────────────────────────────────
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: chartW,
+              height: 140,
+              child: BarChart(
+                BarChartData(
+                  maxY:      yMax,
+                  barGroups: groups,
+                  alignment: BarChartAlignment.spaceAround,
+                  borderData: FlBorderData(show: false),
+                  gridData: FlGridData(
+                    show: true,
+                    drawVerticalLine: false,
+                    horizontalInterval: yMax / 4,
+                    getDrawingHorizontalLine: (_) => FlLine(
+                      color:       cs.outlineVariant.withValues(alpha: 0.4),
+                      strokeWidth: 1,
+                      dashArray:   [4, 4],
+                    ),
+                  ),
+                  titlesData: FlTitlesData(
+                    leftTitles:  AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    topTitles:   AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    bottomTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles:   true,
+                        reservedSize: 22,
+                        getTitlesWidget: (value, _) {
+                          final idx = value.toInt();
+                          if (idx < 0 || idx >= buckets.length) {
+                            return const SizedBox.shrink();
+                          }
+                          if (idx % labelEvery != 0) return const SizedBox.shrink();
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 3),
+                            child: Text(
+                              buckets[idx].label,
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 10, color: cs.onSurfaceVariant),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                  barTouchData: BarTouchData(
+                    touchTooltipData: BarTouchTooltipData(
+                      getTooltipColor: (_) => cs.surfaceContainerHigh,
+                      getTooltipItem: (group, gi, rod, _) => BarTooltipItem(
+                        '${buckets[gi].label}\n${fmt.format(rod.toY)}',
+                        GoogleFonts.plusJakartaSans(
+                            fontSize: 11, fontWeight: FontWeight.w600,
+                            color: cs.onSurface),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // ── Stats row ─────────────────────────────────────────────────────
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _DrillStat(
+                label: drillMode == _DrillMode.weekly ? 'Wk avg' : 'Day avg',
+                value: fmt.format(avg),
+                color: color,
+              ),
+              _DrillStat(
+                label: drillMode == _DrillMode.weekly ? 'Peak wk' : 'Peak day',
+                value: fmt.format(peak),
+                color: color,
+              ),
+              _DrillStat(label: 'Total', value: fmt.format(total), color: color),
+            ],
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
 }
 
-class _DeepDiveStat extends StatelessWidget {
+class _DrillStat extends StatelessWidget {
   final String label;
   final String value;
   final Color  color;
-  const _DeepDiveStat({required this.label, required this.value, required this.color});
+  const _DrillStat({required this.label, required this.value, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -1097,7 +1157,7 @@ class _DeepDiveStat extends StatelessWidget {
         children: [
           Text(value,
               style: GoogleFonts.plusJakartaSans(
-                  fontSize: 15, fontWeight: FontWeight.w800, color: color)),
+                  fontSize: 14, fontWeight: FontWeight.w800, color: color)),
           const SizedBox(height: 2),
           Text(label,
               style: GoogleFonts.plusJakartaSans(

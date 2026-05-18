@@ -20,6 +20,10 @@ class ReportsState {
   /// categoryId → list of monthly spending amounts, same order as [byMonth].
   final Map<String, List<double>> categoryMonthlySpend;
 
+  /// categoryId → date string ('yyyy-MM-dd') → spending amount.
+  /// Used for the inline weekly / daily drill-down chart.
+  final Map<String, Map<String, double>> categoryDailySpend;
+
   // Net-worth snapshot (from accounts — not period-scoped)
   final double totalAssets;
   final double totalLiabilities;
@@ -32,6 +36,7 @@ class ReportsState {
     required this.topPayees,
     required this.budgetVsActual,
     required this.categoryMonthlySpend,
+    required this.categoryDailySpend,
     required this.totalAssets,
     required this.totalLiabilities,
   });
@@ -144,10 +149,11 @@ final reportsProvider = FutureProvider.autoDispose
   // ── Aggregate transactions ────────────────────────────────────────────────
   double totalIncome   = 0;
   double totalExpenses = 0;
-  final Map<String, _CatAgg>           catMap      = {};
-  final Map<String, double>            payeeMap    = {};
-  final Map<String, _MonthAgg>         monthMap    = {};
+  final Map<String, _CatAgg>             catMap      = {};
+  final Map<String, double>              payeeMap    = {};
+  final Map<String, _MonthAgg>           monthMap    = {};
   final Map<String, Map<String, double>> catMonthAgg = {}; // catId → monthKey → amt
+  final Map<String, Map<String, double>> catDayAgg   = {}; // catId → 'yyyy-MM-dd' → amt
 
   for (final r in res) {
     final amount = (r['amount'] as num).toDouble();
@@ -175,6 +181,14 @@ final reportsProvider = FutureProvider.autoDispose
       final monthKey = '${date.year}-${date.month.toString().padLeft(2, '0')}';
       catMonthAgg.putIfAbsent(id, () => {});
       catMonthAgg[id]!.update(monthKey, (v) => v + amount.abs(),
+          ifAbsent: () => amount.abs());
+
+      // Per-category daily breakdown for inline weekly/daily chart
+      final dayKey = '${date.year}-'
+          '${date.month.toString().padLeft(2, '0')}-'
+          '${date.day.toString().padLeft(2, '0')}';
+      catDayAgg.putIfAbsent(id, () => {});
+      catDayAgg[id]!.update(dayKey, (v) => v + amount.abs(),
           ifAbsent: () => amount.abs());
     }
 
@@ -294,6 +308,7 @@ final reportsProvider = FutureProvider.autoDispose
     topPayees:            topPayees,
     budgetVsActual:       budgetVsActual,
     categoryMonthlySpend: categoryMonthlySpend,
+    categoryDailySpend:   catDayAgg,
     totalAssets:          totalAssets,
     totalLiabilities:     totalLiabilities,
   );
