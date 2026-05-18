@@ -27,6 +27,21 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   int         _touchedIdx   = -1;
   Set<String> _excludedCats = {};
 
+  void _showDeepDive(
+      BuildContext context, ReportsState data, CategorySpend cat, Color color) {
+    final daily = data.categoryDailySpend[cat.categoryId] ?? {};
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _CategoryDeepDiveSheet(
+        category:   cat,
+        dailySpend: daily,
+        color:      color,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs    = Theme.of(context).colorScheme;
@@ -60,6 +75,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
               _months = m; _touchedIdx = -1; _excludedCats = {};
             }),
             onTouchedIdxChanged: (i) => setState(() => _touchedIdx = i),
+            onDrillDown:         (cat, color) => _showDeepDive(context, data, cat, color),
             excludedCats:        _excludedCats,
             onExclude:           (name) => setState(() {
               if (_excludedCats.contains(name)) {
@@ -86,6 +102,7 @@ class _ReportsBody extends StatelessWidget {
   final Set<String> excludedCats;
   final ValueChanged<int> onMonthsChanged;
   final ValueChanged<int> onTouchedIdxChanged;
+  final void Function(CategorySpend, Color) onDrillDown;
   final void Function(String) onExclude;
 
   const _ReportsBody({
@@ -95,6 +112,7 @@ class _ReportsBody extends StatelessWidget {
     required this.excludedCats,
     required this.onMonthsChanged,
     required this.onTouchedIdxChanged,
+    required this.onDrillDown,
     required this.onExclude,
   });
 
@@ -127,7 +145,7 @@ class _ReportsBody extends StatelessWidget {
         // ── Summary (income / expenses / saved / rate) ─────────────────────
         SliverToBoxAdapter(child: _SummarySection(data: data, months: months)),
 
-        // ── Spending by category (donut + inline drill) ────────────────────
+        // ── Spending by category (donut + bottom-sheet drill) ─────────────
         SliverToBoxAdapter(
           child: data.byCategory.isEmpty
               ? _EmptySection(
@@ -139,6 +157,7 @@ class _ReportsBody extends StatelessWidget {
                   touchedIdx:   touchedIdx,
                   excludedCats: excludedCats,
                   onTouch:      onTouchedIdxChanged,
+                  onDrillDown:  onDrillDown,
                   onExclude:    onExclude,
                 ),
         ),
@@ -600,14 +619,15 @@ class _BudgetVsActualSectionState extends State<_BudgetVsActualSection> {
 }
 
 // ---------------------------------------------------------------------------
-// Spending by category — donut chart + inline weekly/daily drill
+// Spending by category — donut chart, tapping a row opens bottom-sheet drill
 // ---------------------------------------------------------------------------
 
-class _SpendingSection extends StatefulWidget {
+class _SpendingSection extends StatelessWidget {
   final ReportsState data;
   final int touchedIdx;
   final Set<String> excludedCats;
   final ValueChanged<int> onTouch;
+  final void Function(CategorySpend, Color) onDrillDown;
   final void Function(String) onExclude;
 
   const _SpendingSection({
@@ -615,43 +635,16 @@ class _SpendingSection extends StatefulWidget {
     required this.touchedIdx,
     required this.excludedCats,
     required this.onTouch,
+    required this.onDrillDown,
     required this.onExclude,
   });
-
-  @override
-  State<_SpendingSection> createState() => _SpendingSectionState();
-}
-
-class _SpendingSectionState extends State<_SpendingSection> {
-  String?    _drillCatId;
-  Color?     _drillColor;
-  _DrillMode _drillMode = _DrillMode.weekly;
-
-  void _onCategoryTap(CategorySpend cat, Color color) {
-    if (cat.categoryId == null) return;
-    setState(() {
-      if (_drillCatId != cat.categoryId) {
-        // New category → open in weekly mode
-        _drillCatId = cat.categoryId;
-        _drillColor = color;
-        _drillMode  = _DrillMode.weekly;
-      } else if (_drillMode == _DrillMode.weekly) {
-        // Same category, weekly → switch to daily
-        _drillMode = _DrillMode.daily;
-      } else {
-        // Same category, daily → dismiss
-        _drillCatId = null;
-        _drillColor = null;
-      }
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
     final cs  = Theme.of(context).colorScheme;
     final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
 
-    final cats  = widget.data.byCategory;
+    final cats  = data.byCategory;
     final shown = cats.take(9).toList();
     final other = cats.length > 9
         ? cats.skip(9).fold(0.0, (s, c) => s + c.amount)
@@ -661,15 +654,13 @@ class _SpendingSectionState extends State<_SpendingSection> {
       if (other > 0) CategorySpend(name: 'Other', amount: other),
     ];
 
-    // Pie uses only non-excluded slices; percentages recalculate accordingly
     final visibleSlices = allSlices
-        .where((c) => !widget.excludedCats.contains(c.name))
+        .where((c) => !excludedCats.contains(c.name))
         .toList();
     final visibleTotal = visibleSlices.fold(0.0, (s, c) => s + c.amount);
 
-    // Map visible index back to original palette index for consistent colours
     final visibleOriginalIndices = allSlices.asMap().entries
-        .where((e) => !widget.excludedCats.contains(e.value.name))
+        .where((e) => !excludedCats.contains(e.value.name))
         .map((e) => e.key)
         .toList();
 
@@ -679,7 +670,7 @@ class _SpendingSectionState extends State<_SpendingSection> {
       final origI = visibleOriginalIndices[vi];
       final pct   = visibleTotal > 0 ? cat.amount / visibleTotal * 100 : 0.0;
       final color = chartPalette[origI % chartPalette.length];
-      final isSel = widget.touchedIdx == origI;
+      final isSel = touchedIdx == origI;
 
       return PieChartSectionData(
         color:  color,
@@ -692,8 +683,8 @@ class _SpendingSectionState extends State<_SpendingSection> {
       );
     }).toList();
 
-    final selCat = (widget.touchedIdx >= 0 && widget.touchedIdx < allSlices.length)
-        ? allSlices[widget.touchedIdx]
+    final selCat = (touchedIdx >= 0 && touchedIdx < allSlices.length)
+        ? allSlices[touchedIdx]
         : null;
 
     return _Section(
@@ -717,10 +708,9 @@ class _SpendingSectionState extends State<_SpendingSection> {
                       touchCallback: (FlTouchEvent event, PieTouchResponse? response) {
                         if (!event.isInterestedForInteractions ||
                             response?.touchedSection == null) {
-                          widget.onTouch(-1);
+                          onTouch(-1);
                         } else {
-                          widget.onTouch(
-                              response!.touchedSection!.touchedSectionIndex);
+                          onTouch(response!.touchedSection!.touchedSectionIndex);
                         }
                       },
                     ),
@@ -758,8 +748,8 @@ class _SpendingSectionState extends State<_SpendingSection> {
           ),
           const SizedBox(height: 16),
 
-          // Legend rows — tap to drill (weekly→daily→dismiss), swipe left to exclude
-          if (widget.excludedCats.isNotEmpty)
+          // Legend rows — tap to open bottom-sheet drill, swipe left to exclude
+          if (excludedCats.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Row(
@@ -767,7 +757,7 @@ class _SpendingSectionState extends State<_SpendingSection> {
                   Icon(Icons.visibility_off_outlined,
                       size: 13, color: cs.onSurfaceVariant),
                   const SizedBox(width: 4),
-                  Text('${widget.excludedCats.length} hidden · tap grayed row to restore',
+                  Text('${excludedCats.length} hidden · tap grayed row to restore',
                       style: GoogleFonts.plusJakartaSans(
                           fontSize: 11, color: cs.onSurfaceVariant)),
                 ],
@@ -776,10 +766,10 @@ class _SpendingSectionState extends State<_SpendingSection> {
           ...allSlices.asMap().entries.map((e) {
             final i          = e.key;
             final cat        = e.value;
-            final isExcluded = widget.excludedCats.contains(cat.name);
+            final isExcluded = excludedCats.contains(cat.name);
             final color      = chartPalette[i % chartPalette.length];
-            final isSel      = widget.touchedIdx == i;
-            final isDrilled  = _drillCatId == cat.categoryId && cat.categoryId != null;
+            final isSel      = touchedIdx == i;
+            final canDrill   = cat.categoryId != null;
 
             final pct     = visibleTotal > 0 && !isExcluded
                 ? cat.amount / visibleTotal * 100
@@ -791,14 +781,14 @@ class _SpendingSectionState extends State<_SpendingSection> {
             return GestureDetector(
               onTap: () {
                 if (isExcluded) {
-                  widget.onExclude(cat.name);
-                } else {
-                  _onCategoryTap(cat, color);
+                  onExclude(cat.name);
+                } else if (canDrill) {
+                  onDrillDown(cat, color);
                 }
               },
               onHorizontalDragEnd: (details) {
                 if ((details.primaryVelocity ?? 0) < -250) {
-                  widget.onExclude(cat.name);
+                  onExclude(cat.name);
                 }
               },
               child: AnimatedOpacity(
@@ -809,7 +799,7 @@ class _SpendingSectionState extends State<_SpendingSection> {
                   margin: const EdgeInsets.only(bottom: 6),
                   padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
                   decoration: BoxDecoration(
-                    color: (isSel && !isExcluded) || isDrilled
+                    color: isSel && !isExcluded
                         ? color.withValues(alpha: 0.1)
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(10),
@@ -864,20 +854,13 @@ class _SpendingSectionState extends State<_SpendingSection> {
                               color: cs.onSurface),
                         ),
                       ),
-                      // Drill icon — shows current drill state for active row
-                      if (cat.categoryId != null && !isExcluded)
+                      if (canDrill && !isExcluded)
                         Padding(
                           padding: const EdgeInsets.only(left: 4),
                           child: Icon(
-                            isDrilled
-                                ? (_drillMode == _DrillMode.weekly
-                                    ? Icons.bar_chart_rounded
-                                    : Icons.view_day_rounded)
-                                : Icons.show_chart_rounded,
+                            Icons.show_chart_rounded,
                             size: 18,
-                            color: isDrilled
-                                ? color
-                                : cs.onSurfaceVariant.withValues(alpha: 0.5),
+                            color: cs.onSurfaceVariant.withValues(alpha: 0.5),
                           ),
                         )
                       else
@@ -888,22 +871,136 @@ class _SpendingSectionState extends State<_SpendingSection> {
               ),
             );
           }),
+        ],
+      ),
+    );
+  }
+}
 
-          // ── Inline drill-down chart (weekly or daily) ──────────────────
-          AnimatedSize(
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInOut,
-            child: _drillCatId == null
-                ? const SizedBox.shrink()
-                : AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 250),
-                    child: _InlineDrillChart(
-                      key: ValueKey('${_drillCatId}_${_drillMode.name}'),
-                      dailySpend: widget.data.categoryDailySpend[_drillCatId!] ?? {},
-                      drillMode:  _drillMode,
-                      color:      _drillColor ?? cs.primary,
-                    ),
+// ---------------------------------------------------------------------------
+// Category deep-dive bottom sheet  — weekly → daily → close on tap
+// ---------------------------------------------------------------------------
+
+class _CategoryDeepDiveSheet extends StatefulWidget {
+  final CategorySpend       category;
+  final Map<String, double> dailySpend; // 'yyyy-MM-dd' → amount
+  final Color               color;
+
+  const _CategoryDeepDiveSheet({
+    required this.category,
+    required this.dailySpend,
+    required this.color,
+  });
+
+  @override
+  State<_CategoryDeepDiveSheet> createState() => _CategoryDeepDiveSheetState();
+}
+
+class _CategoryDeepDiveSheetState extends State<_CategoryDeepDiveSheet> {
+  _DrillMode _mode = _DrillMode.weekly;
+
+  void _onModeTap() {
+    if (_mode == _DrillMode.weekly) {
+      setState(() => _mode = _DrillMode.daily);
+    } else {
+      Navigator.pop(context);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Drag handle
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: cs.outlineVariant,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Header — category name + total
+          Row(
+            children: [
+              Container(
+                width: 12, height: 12,
+                decoration: BoxDecoration(
+                    color: widget.color, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(widget.category.name,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 18, fontWeight: FontWeight.w800,
+                        color: cs.onSurface)),
+              ),
+              Text(fmt.format(widget.category.amount),
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 16, fontWeight: FontWeight.w700,
+                      color: cs.onSurface)),
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          // Mode chip — tap to cycle: weekly → daily → close
+          GestureDetector(
+            onTap: _onModeTap,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: widget.color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: widget.color.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _mode == _DrillMode.weekly
+                        ? Icons.bar_chart_rounded
+                        : Icons.view_day_rounded,
+                    size: 14, color: widget.color,
                   ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _mode == _DrillMode.weekly
+                        ? 'Weekly  ·  tap for daily view'
+                        : 'Daily  ·  tap to close',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, fontWeight: FontWeight.w600,
+                        color: widget.color),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Chart — reuses _DrillChart (no inline header)
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 250),
+            child: _DrillChart(
+              key:        ValueKey(_mode),
+              dailySpend: widget.dailySpend,
+              drillMode:  _mode,
+              color:      widget.color,
+            ),
           ),
         ],
       ),
@@ -912,16 +1009,16 @@ class _SpendingSectionState extends State<_SpendingSection> {
 }
 
 // ---------------------------------------------------------------------------
-// Inline drill-down bar chart (weekly or daily) — no bottom sheet
+// Shared weekly / daily bar chart used inside the bottom sheet
 // ---------------------------------------------------------------------------
 
-class _InlineDrillChart extends StatelessWidget {
+class _DrillChart extends StatelessWidget {
   /// 'yyyy-MM-dd' → spending amount for the selected category.
   final Map<String, double> dailySpend;
   final _DrillMode drillMode;
   final Color      color;
 
-  const _InlineDrillChart({
+  const _DrillChart({
     super.key,
     required this.dailySpend,
     required this.drillMode,
@@ -1015,52 +1112,15 @@ class _InlineDrillChart extends StatelessWidget {
     // Skip labels when too crowded
     final labelEvery = n <= 8 ? 1 : n <= 16 ? 2 : n <= 31 ? 5 : 7;
 
-    return Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── Header strip ─────────────────────────────────────────────────
-          Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: color.withValues(alpha: 0.2)),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  drillMode == _DrillMode.weekly
-                      ? Icons.bar_chart_rounded
-                      : Icons.view_day_rounded,
-                  size: 14, color: color,
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  drillMode == _DrillMode.weekly ? 'Weekly spend' : 'Daily spend',
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 12, fontWeight: FontWeight.w700, color: color),
-                ),
-                const Spacer(),
-                Text(
-                  drillMode == _DrillMode.weekly
-                      ? 'tap row for daily ›'
-                      : 'tap row to close ×',
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 10, color: cs.onSurfaceVariant),
-                ),
-              ],
-            ),
-          ),
-
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
           // ── Bar chart ─────────────────────────────────────────────────────
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: SizedBox(
               width: chartW,
-              height: 140,
+              height: 200,
               child: BarChart(
                 BarChartData(
                   maxY:      yMax,
@@ -1137,8 +1197,7 @@ class _InlineDrillChart extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-        ],
-      ),
+      ],
     );
   }
 }
