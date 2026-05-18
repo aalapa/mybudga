@@ -83,6 +83,13 @@ class _CashflowBody extends StatelessWidget {
     // Build projected entries
     final dayRows = _buildDayRows(state, today, days, accounts);
 
+    // Overdue: scheduled items whose next_date has already passed
+    final todayNorm = DateTime(today.year, today.month, today.day);
+    final overdue = state.scheduled
+        .where((st) => st.nextDate.isBefore(todayNorm))
+        .toList()
+        ..sort((a, b) => a.nextDate.compareTo(b.nextDate));
+
     final isDoomsday = days == _CashflowBody._ddSentinel;
 
     // Peak balance across the projection — used as the 100% reference for bars
@@ -232,6 +239,10 @@ class _CashflowBody extends StatelessWidget {
               ],
             ),
           ),
+
+          // Overdue section — shown above the timeline when items exist
+          if (overdue.isNotEmpty)
+            _OverdueSection(overdueItems: overdue, ref: ref),
 
           // Timeline
           Expanded(
@@ -1884,6 +1895,251 @@ class _ConfirmPaymentSheetState extends ConsumerState<_ConfirmPaymentSheet> {
       }
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Overdue section
+// ---------------------------------------------------------------------------
+
+class _OverdueSection extends StatelessWidget {
+  final List<ScheduledTransaction> overdueItems;
+  final WidgetRef ref;
+
+  const _OverdueSection({required this.overdueItems, required this.ref});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Container(
+        decoration: BoxDecoration(
+          color: cs.errorContainer.withValues(alpha: 0.25),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: cs.error.withValues(alpha: 0.35)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header bar
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, size: 14, color: cs.error),
+                  const SizedBox(width: 6),
+                  Text(
+                    'OVERDUE',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: cs.error,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${overdueItems.length} ${overdueItems.length == 1 ? 'item' : 'items'} not entered',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11,
+                      color: cs.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: cs.error.withValues(alpha: 0.2)),
+            ...overdueItems.map(
+              (st) => _OverdueTile(st: st, ref: ref),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Overdue tile
+// ---------------------------------------------------------------------------
+
+class _OverdueTile extends StatelessWidget {
+  final ScheduledTransaction st;
+  final WidgetRef ref;
+
+  const _OverdueTile({required this.st, required this.ref});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs      = Theme.of(context).colorScheme;
+    final fmt     = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final today   = DateTime.now();
+    final todayN  = DateTime(today.year, today.month, today.day);
+    final stN     = DateTime(st.nextDate.year, st.nextDate.month, st.nextDate.day);
+    final daysLate = todayN.difference(stN).inDays;
+
+    final name = (st.payeeName?.isNotEmpty == true)
+        ? st.payeeName!
+        : (st.memo ?? 'Scheduled');
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      child: Row(
+        children: [
+          // Icon
+          Container(
+            width: 34, height: 34,
+            decoration: BoxDecoration(
+              color: cs.errorContainer.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              st.isTransfer
+                  ? Icons.compare_arrows_rounded
+                  : st.isIncome
+                      ? Icons.arrow_downward_rounded
+                      : Icons.arrow_upward_rounded,
+              size: 16,
+              color: cs.error,
+            ),
+          ),
+          const SizedBox(width: 10),
+
+          // Name + days overdue
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurface,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  '${DateFormat('MMM d').format(st.nextDate)} · '
+                  '$daysLate day${daysLate != 1 ? 's' : ''} overdue',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    color: cs.error,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+
+          // Amount
+          Text(
+            fmt.format(st.amount.abs()),
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: cs.onSurface,
+            ),
+          ),
+          const SizedBox(width: 10),
+
+          // Action buttons
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Enter
+              GestureDetector(
+                onTap: () => _onEnter(context),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: cs.primary,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'Enter',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: cs.onPrimary,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              // Delete
+              GestureDetector(
+                onTap: () => _onDelete(context),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: cs.errorContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'Delete',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: cs.error,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _onEnter(BuildContext context) {
+    // Wrap the scheduled transaction in a projected entry so existing sheets
+    // can be reused without duplication.
+    final entry = _ProjectedEntry(
+      scheduledTx: st,
+      date:        st.nextDate,
+      payee:       (st.payeeName?.isNotEmpty == true)
+          ? st.payeeName!
+          : (st.memo ?? 'Scheduled'),
+      accountName: st.accountName,
+      amount:      st.amount,
+      isIncome:    !st.isTransfer && st.amount > 0,
+      category:    st.categoryName,
+    );
+
+    if (st.needsAccount) {
+      _showConfirmPaymentSheet(context, ref, entry);
+    } else {
+      ref.read(cashflowProvider.notifier).markAsPaid(st.id);
+    }
+  }
+
+  Future<void> _onDelete(BuildContext context) async {
+    final cs = Theme.of(context).colorScheme;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Delete scheduled transaction?'),
+        content: const Text('This will remove the schedule entirely.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            style: TextButton.styleFrom(foregroundColor: cs.error),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      await ref.read(cashflowProvider.notifier).deleteScheduled(st.id);
     }
   }
 }
