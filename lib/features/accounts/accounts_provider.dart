@@ -309,6 +309,60 @@ final ccDebtHistoryProvider = FutureProvider.autoDispose
   }).toList();
 });
 
+// ---------------------------------------------------------------------------
+// Liquid cash history — monthly end-of-month balances for the last 12 months.
+// Key: comma-joined sorted liquid account IDs.
+// ---------------------------------------------------------------------------
+
+final liquidCashHistoryProvider = FutureProvider.autoDispose
+    .family<List<({DateTime month, double cash})>, String>(
+        (ref, idsKey) async {
+  if (idsKey.isEmpty) return [];
+  final ids = idsKey.split(',');
+
+  final client = ref.watch(supabaseProvider);
+
+  // Fresh current balances
+  final accountRows = await client
+      .from('accounts')
+      .select('current_balance')
+      .inFilter('id', ids)
+      .eq('is_active', true);
+  final currentTotal = (accountRows as List)
+      .fold<double>(0.0, (s, r) => s + (r['current_balance'] as num).toDouble());
+
+  // Transactions going back 12 months
+  final now       = DateTime.now();
+  final cutoff    = _ccMonthStart(now, 11);
+  final cutoffStr =
+      '${cutoff.year}-${cutoff.month.toString().padLeft(2, '0')}-01';
+
+  final txRows = await client
+      .from('transactions')
+      .select('amount, date')
+      .inFilter('account_id', ids)
+      .gte('date', cutoffStr)
+      .isFilter('deleted_at', null);
+
+  final txList = (txRows as List)
+      .map((r) => (
+            amount: (r['amount'] as num).toDouble(),
+            date: DateTime.parse(r['date'] as String),
+          ))
+      .toList();
+
+  // Reconstruct end-of-month balances (same unwind logic as CC debt)
+  final months = List.generate(12, (i) => _ccMonthStart(now, 11 - i));
+  return months.map((ms) {
+    final nextMs   = _ccMonthStart(ms, -1);
+    final laterSum = txList
+        .where((tx) => !tx.date.isBefore(nextMs))
+        .fold<double>(0.0, (s, tx) => s + tx.amount);
+    final balance  = currentTotal - laterSum;
+    return (month: ms, cash: balance);
+  }).toList();
+});
+
 /// Transactions for a single account over the last [days] days.
 final accountTransactionsProvider = FutureProvider.autoDispose
     .family<List<Transaction>, ({String accountId, int days})>((ref, args) async {

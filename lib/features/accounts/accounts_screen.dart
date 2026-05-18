@@ -129,13 +129,22 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                   .toList()
                 ..sort())
               .join(',');
+          final liquidIdsKey = (accounts
+                  .where((a) => !a.isTracking && !a.isCreditCard)
+                  .map((a) => a.id)
+                  .toList()
+                ..sort())
+              .join(',');
           return _AccountsBody(
-            accounts:       accounts,
-            labels:         labels,
-            onManageLabels: () => _showManageLabelsSheet(context, ref),
-            onCcDebtTap:    ccIdsKey.isEmpty
+            accounts:          accounts,
+            labels:            labels,
+            onManageLabels:    () => _showManageLabelsSheet(context, ref),
+            onCcDebtTap:       ccIdsKey.isEmpty
                 ? null
                 : () => _showCcDebtHistorySheet(context, ccIdsKey),
+            onLiquidCashTap:   liquidIdsKey.isEmpty
+                ? null
+                : () => _showLiquidCashHistorySheet(context, liquidIdsKey),
           );
         },
       ),
@@ -158,12 +167,14 @@ class _AccountsBody extends ConsumerWidget {
   final List<AccountLabel> labels;
   final VoidCallback onManageLabels;
   final VoidCallback? onCcDebtTap;
+  final VoidCallback? onLiquidCashTap;
 
   const _AccountsBody({
     required this.accounts,
     required this.labels,
     required this.onManageLabels,
     this.onCcDebtTap,
+    this.onLiquidCashTap,
   });
 
   List<Account> get _budgetAccounts => accounts.where((a) => !a.isTracking).toList();
@@ -212,11 +223,12 @@ class _AccountsBody extends ConsumerWidget {
         slivers: [
           SliverToBoxAdapter(
             child: _NetWorthHeader(
-              netWorth:       _netWorth,
-              liquidCash:     _liquidCash,
-              ccDebt:         _ccDebt,
-              onManageLabels: onManageLabels,
-              onCcDebtTap:    onCcDebtTap,
+              netWorth:          _netWorth,
+              liquidCash:        _liquidCash,
+              ccDebt:            _ccDebt,
+              onManageLabels:    onManageLabels,
+              onCcDebtTap:       onCcDebtTap,
+              onLiquidCashTap:   onLiquidCashTap,
             ),
           ),
           SliverPadding(
@@ -293,6 +305,7 @@ class _NetWorthHeader extends StatelessWidget {
   final double ccDebt;
   final VoidCallback onManageLabels;
   final VoidCallback? onCcDebtTap;
+  final VoidCallback? onLiquidCashTap;
 
   const _NetWorthHeader({
     required this.netWorth,
@@ -300,6 +313,7 @@ class _NetWorthHeader extends StatelessWidget {
     required this.ccDebt,
     required this.onManageLabels,
     this.onCcDebtTap,
+    this.onLiquidCashTap,
   });
 
   @override
@@ -368,6 +382,7 @@ class _NetWorthHeader extends StatelessWidget {
                 value: fmt.format(liquidCash),
                 color: cs.tertiary,
                 icon:  Icons.account_balance_outlined,
+                onTap: onLiquidCashTap,
               ),
               const SizedBox(width: 12),
               _NetWorthStat(
@@ -685,6 +700,160 @@ class _DueDateBadge extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Liquid cash history sheet
+// ---------------------------------------------------------------------------
+
+void _showLiquidCashHistorySheet(BuildContext context, String idsKey) {
+  showModalBottomSheet(
+    context:            context,
+    isScrollControlled: true,
+    backgroundColor:    Colors.transparent,
+    builder: (_) => _LiquidCashHistorySheet(idsKey: idsKey),
+  );
+}
+
+class _LiquidCashHistorySheet extends ConsumerWidget {
+  final String idsKey;
+  const _LiquidCashHistorySheet({required this.idsKey});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs   = Theme.of(context).colorScheme;
+    final hist = ref.watch(liquidCashHistoryProvider(idsKey));
+
+    return Container(
+      decoration: BoxDecoration(
+        color:        cs.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 36),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color:        cs.onSurfaceVariant.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text('Liquid Cash History',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 18, fontWeight: FontWeight.w800, color: cs.onSurface)),
+          const SizedBox(height: 2),
+          Text('End-of-month checking & savings balance',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12, color: cs.onSurfaceVariant)),
+          const SizedBox(height: 24),
+          SizedBox(
+            height: 220,
+            child: hist.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error:   (e, s) => Center(
+                  child: Text('Could not load history',
+                      style: GoogleFonts.plusJakartaSans(color: cs.onSurfaceVariant))),
+              data: (data) {
+                if (data.isEmpty) {
+                  return Center(
+                    child: Text('No data found',
+                        style: GoogleFonts.plusJakartaSans(color: cs.onSurfaceVariant)),
+                  );
+                }
+                return _LiquidCashChart(data: data);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LiquidCashChart extends StatelessWidget {
+  final List<({DateTime month, double cash})> data;
+  const _LiquidCashChart({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs     = Theme.of(context).colorScheme;
+    final fmt    = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final maxVal = data.map((d) => d.cash).fold(0.0, math.max);
+    final minVal = data.map((d) => d.cash).fold(double.infinity, math.min);
+    // Allow bars below zero if cash ever went negative
+    final floorY = minVal < 0 ? minVal * 1.25 : 0.0;
+
+    return BarChart(
+      BarChartData(
+        maxY: maxVal * 1.25,
+        minY: floorY,
+        barGroups: data.asMap().entries.map((e) {
+          final isPositive = e.value.cash >= 0;
+          return BarChartGroupData(
+            x: e.key,
+            barRods: [
+              BarChartRodData(
+                toY:          e.value.cash,
+                fromY:        e.value.cash < 0 ? e.value.cash : 0,
+                color:        isPositive
+                    ? cs.tertiary.withValues(alpha: 0.75)
+                    : cs.error.withValues(alpha: 0.75),
+                width:        18,
+                borderRadius: BorderRadius.vertical(
+                  top:    isPositive ? const Radius.circular(5) : Radius.zero,
+                  bottom: isPositive ? Radius.zero : const Radius.circular(5),
+                ),
+              ),
+            ],
+          );
+        }).toList(),
+        titlesData: FlTitlesData(
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles:   true,
+              reservedSize: 28,
+              getTitlesWidget: (value, meta) {
+                final i = value.toInt();
+                if (i < 0 || i >= data.length) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    DateFormat('MMM').format(data[i].month),
+                    style: TextStyle(fontSize: 10, color: cs.onSurfaceVariant),
+                  ),
+                );
+              },
+            ),
+          ),
+          leftTitles:  AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles:   AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        ),
+        gridData:   FlGridData(show: false),
+        borderData: FlBorderData(show: false),
+        barTouchData: BarTouchData(
+          touchTooltipData: BarTouchTooltipData(
+            getTooltipItem: (group, gi, rod, ri) {
+              final d = data[group.x];
+              return BarTooltipItem(
+                '${DateFormat('MMM yy').format(d.month)}\n${fmt.format(d.cash)}',
+                GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurface),
+              );
+            },
+          ),
+        ),
       ),
     );
   }

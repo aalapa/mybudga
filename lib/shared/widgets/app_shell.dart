@@ -206,8 +206,6 @@ class _CenterNavItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final bg = isSelected ? cs.primary : cs.primaryContainer;
-    final fg = isSelected ? cs.onPrimary : cs.onPrimaryContainer;
 
     return InkWell(
       onTap: onTap,
@@ -216,25 +214,29 @@ class _CenterNavItem extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(
-            width: 56,
-            height: 34,
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeInOut,
+            width: isSelected ? 56 : 32,
+            height: 32,
             decoration: BoxDecoration(
-              color: bg,
-              borderRadius: BorderRadius.circular(17),
-              boxShadow: [
-                BoxShadow(
-                  color: cs.shadow.withValues(alpha: 0.18),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+              color: isSelected ? cs.primary : Colors.transparent,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: isSelected
+                  ? [
+                      BoxShadow(
+                        color: cs.shadow.withValues(alpha: 0.18),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
+                  : null,
             ),
             child: Center(
               child: Icon(
                 isSelected ? item.activeIcon : item.icon,
                 size: 20,
-                color: fg,
+                color: isSelected ? cs.onPrimary : cs.onSurfaceVariant,
               ),
             ),
           ),
