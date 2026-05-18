@@ -2070,9 +2070,9 @@ class _OverdueTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 6),
-              // Delete
+              // Skip
               GestureDetector(
-                onTap: () => _onDelete(context),
+                onTap: () => _onSkip(context),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
@@ -2080,7 +2080,7 @@ class _OverdueTile extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    'Delete',
+                    'Skip',
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
@@ -2118,13 +2118,16 @@ class _OverdueTile extends StatelessWidget {
     }
   }
 
-  Future<void> _onDelete(BuildContext context) async {
+  Future<void> _onSkip(BuildContext context) async {
     final cs = Theme.of(context).colorScheme;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
-        title: const Text('Delete scheduled transaction?'),
-        content: const Text('This will remove the schedule entirely.'),
+        title: const Text('Skip this occurrence?'),
+        content: const Text(
+          'The missed payment will be dismissed. Future scheduled '
+          'occurrences will continue as normal.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogCtx, false),
@@ -2133,13 +2136,13 @@ class _OverdueTile extends StatelessWidget {
           TextButton(
             onPressed: () => Navigator.pop(dialogCtx, true),
             style: TextButton.styleFrom(foregroundColor: cs.error),
-            child: const Text('Delete'),
+            child: const Text('Skip'),
           ),
         ],
       ),
     );
     if (confirm == true) {
-      await ref.read(cashflowProvider.notifier).deleteScheduled(st.id);
+      await ref.read(cashflowProvider.notifier).markAsPaid(st.id);
     }
   }
 }
