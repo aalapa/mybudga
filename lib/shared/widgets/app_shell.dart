@@ -151,13 +151,13 @@ class _BottomBar extends StatelessWidget {
                           onTap: () => onTabSelected(i),
                         ),
                 )),
-                // ── hairline separator ─────────────────────────────────────
+                // ── divider between Reports and Me ────────────────────────
                 VerticalDivider(
                   width: 1,
-                  thickness: 0.5,
-                  indent: 10,
-                  endIndent: 10,
-                  color: cs.outlineVariant.withValues(alpha: 0.5),
+                  thickness: 1,
+                  indent: 8,
+                  endIndent: 8,
+                  color: cs.outlineVariant.withValues(alpha: 0.4),
                 ),
                 // ── settings icon ──────────────────────────────────────────
                 SizedBox(

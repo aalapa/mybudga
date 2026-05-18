@@ -92,7 +92,7 @@ final appAuthNotifier = _AppAuthNotifier();
 final routerProvider = Provider<GoRouter>((ref) {
   final router = GoRouter(
     refreshListenable: appAuthNotifier,
-    initialLocation: '/transactions',
+    initialLocation: '/budget',
     redirect: (context, state) {
       final authState = appAuthNotifier.state;
       final loc = state.matchedLocation;
@@ -106,7 +106,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           return loc == '/setup' ? null : '/setup';
         case _AppAuthState.ready:
           if (loc == '/login' || loc == '/setup' || loc == '/loading') {
-            return '/transactions';
+            return '/budget';
           }
           return null; // '/settings' and all shell routes are allowed
       }
