@@ -30,6 +30,9 @@ class Transaction {
   final TransactionStatus status;
   final String? transferId;
   final DateTime? reconciledAt;
+  /// Non-null when this transaction is one line of a split group.
+  /// All lines in the same split share the same [splitGroupId].
+  final String? splitGroupId;
 
   const Transaction({
     required this.id,
@@ -48,6 +51,7 @@ class Transaction {
     this.status = TransactionStatus.confirmed,
     this.transferId,
     this.reconciledAt,
+    this.splitGroupId,
   });
 
   factory Transaction.fromJson(Map<String, dynamic> json) {
@@ -70,17 +74,19 @@ class Transaction {
       memo:         json['memo'] as String?,
       cleared:      json['cleared'] as bool? ?? false,
       status:       TransactionStatus.fromString(json['status'] as String? ?? 'confirmed'),
-      transferId:   json['transfer_id'] as String?,
+      transferId:   json['transfer_id']   as String?,
       reconciledAt: json['reconciled_at'] != null
           ? DateTime.parse(json['reconciled_at'] as String)
           : null,
+      splitGroupId: json['split_group_id'] as String?,
     );
   }
 
   bool get isPendingReview => status == TransactionStatus.pendingReview;
-  bool get isIncome => amount > 0;
-  bool get isTransfer => transferId != null;
-  bool get isReconciled => reconciledAt != null;
+  bool get isIncome        => amount > 0;
+  bool get isTransfer      => transferId != null;
+  bool get isReconciled    => reconciledAt != null;
+  bool get isSplit         => splitGroupId != null;
 
   String get displayPayee => payeeName ?? '';
 }

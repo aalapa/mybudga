@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
 import '../../shared/models/account.dart';
 import '../../shared/models/category.dart';
 import '../../shared/models/scheduled_transaction.dart';
@@ -15,6 +16,7 @@ import 'transactions_provider.dart';
 import '../../core/sms/sms_parser.dart';
 import '../budget/category_icons.dart';
 import '../../core/sms/sms_service.dart';
+import 'templates_provider.dart';
 
 // ---------------------------------------------------------------------------
 
@@ -168,12 +170,15 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
             child: const Icon(Icons.swap_horiz),
           ),
           const SizedBox(height: 12),
-          FloatingActionButton(
-            heroTag: 'add',
-            onPressed: () => showEditTransactionSheet(context, ref),
-            backgroundColor: cs.primary,
-            foregroundColor: cs.onPrimary,
-            child: const Icon(Icons.add),
+          GestureDetector(
+            onLongPress: () => _showQuickAddSheet(context, ref),
+            child: FloatingActionButton(
+              heroTag: 'add',
+              onPressed: () => showEditTransactionSheet(context, ref),
+              backgroundColor: cs.primary,
+              foregroundColor: cs.onPrimary,
+              child: const Icon(Icons.add),
+            ),
           ),
         ],
       ),
@@ -624,6 +629,34 @@ class _DateHeader extends StatelessWidget {
 // Transaction group + tile
 // ---------------------------------------------------------------------------
 
+// Sealed display-item types for a single day's transaction list.
+sealed class _DayItem {}
+class _SingleTx  extends _DayItem { final Transaction tx;           _SingleTx(this.tx); }
+class _SplitGroup extends _DayItem { final List<Transaction> parts; _SplitGroup(this.parts); }
+
+List<_DayItem> _toDayItems(List<Transaction> txs) {
+  final result          = <_DayItem>[];
+  final seenSplitGroups = <String>{};
+  final splitMap        = <String, List<Transaction>>{};
+
+  for (final tx in txs) {
+    if (tx.splitGroupId != null) {
+      (splitMap[tx.splitGroupId!] ??= []).add(tx);
+    }
+  }
+
+  for (final tx in txs) {
+    if (tx.splitGroupId != null) {
+      if (seenSplitGroups.add(tx.splitGroupId!)) {
+        result.add(_SplitGroup(splitMap[tx.splitGroupId!]!));
+      }
+    } else {
+      result.add(_SingleTx(tx));
+    }
+  }
+  return result;
+}
+
 class _TransactionGroup extends StatelessWidget {
   final List<Transaction> transactions;
   final WidgetRef ref;
@@ -632,19 +665,21 @@ class _TransactionGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final cs    = Theme.of(context).colorScheme;
+    final items = _toDayItems(transactions);
+
     return Container(
       decoration: BoxDecoration(
         color: cs.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
-        children: transactions.asMap().entries.map((e) {
-          return _TransactionTile(
-            tx:     e.value,
-            isLast: e.key == transactions.length - 1,
-            ref:    ref,
-          );
+        children: items.asMap().entries.map((e) {
+          final isLast = e.key == items.length - 1;
+          return switch (e.value) {
+            _SingleTx(:final tx)      => _TransactionTile(tx: tx, isLast: isLast, ref: ref),
+            _SplitGroup(:final parts) => _SplitGroupTile(parts: parts, isLast: isLast, ref: ref),
+          };
         }).toList(),
       ),
     );
@@ -753,6 +788,30 @@ class _PayeeAvatar extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
+// Quick-fill data — used when launching the sheet from a template/suggestion
+// ---------------------------------------------------------------------------
+
+class _QuickFill {
+  final String  payeeName;
+  final double? amount;
+  final String? categoryId;
+  final String? categoryName;
+  final int?    categoryIconCodePoint;
+  final String? accountId;
+  final bool    isIncome;
+
+  const _QuickFill({
+    required this.payeeName,
+    this.amount,
+    this.categoryId,
+    this.categoryName,
+    this.categoryIconCodePoint,
+    this.accountId,
+    this.isIncome = false,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Add / Edit Transaction sheet
 // ---------------------------------------------------------------------------
 
@@ -761,7 +820,8 @@ Future<void> showEditTransactionSheet(
   BuildContext context,
   WidgetRef ref, {
   Transaction? prefill,
-  ParsedSms? smsData,
+  ParsedSms?   smsData,
+  _QuickFill?  quickFill,
 }) async {
   await showModalBottomSheet(
     context: context,
@@ -770,6 +830,7 @@ Future<void> showEditTransactionSheet(
     builder: (_) => _AddTransactionSheet(
       prefill:   prefill,
       smsData:   smsData,
+      quickFill: quickFill,
       widgetRef: ref,
     ),
   );
@@ -778,8 +839,9 @@ Future<void> showEditTransactionSheet(
 class _AddTransactionSheet extends ConsumerStatefulWidget {
   final Transaction? prefill;
   final ParsedSms?   smsData;
+  final _QuickFill?  quickFill;
   final WidgetRef    widgetRef;
-  const _AddTransactionSheet({this.prefill, this.smsData, required this.widgetRef});
+  const _AddTransactionSheet({this.prefill, this.smsData, this.quickFill, required this.widgetRef});
 
   @override
   ConsumerState<_AddTransactionSheet> createState() => _AddTransactionSheetState();
@@ -850,6 +912,10 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
   bool _showCategorySuggestions = false;
   bool _saving = false;
 
+  // ── Split state ───────────────────────────────────────────────────────────
+  bool _isSplit = false;
+  final List<_SplitEntry> _splits = [];
+
   @override
   void initState() {
     super.initState();
@@ -862,6 +928,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
 
     final p   = widget.prefill;
     final sms = widget.smsData;
+    final qf  = widget.quickFill;
 
     if (p != null) {
       _rightCents           = (p.amount.abs() * 100).round();
@@ -875,13 +942,14 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
       _isIncome             = p.isIncome;
     } else {
       // Default to first budget account
-      final accounts = widget.widgetRef.read(accountsProvider).valueOrNull ?? [];
+      final accounts       = widget.widgetRef.read(accountsProvider).valueOrNull ?? [];
       final budgetAccounts = accounts.where((a) => !a.isTracking && !a.isCreditCard);
-      _selectedAccount = budgetAccounts.isNotEmpty
+      _selectedAccount     = budgetAccounts.isNotEmpty
           ? budgetAccounts.first
           : accounts.isNotEmpty ? accounts.first : null;
-      // Override with SMS-parsed values if present
+
       if (sms != null) {
+        // Override with SMS-parsed values
         _rightCents = (sms.amount.abs() * 100).round();
         if (sms.payee?.isNotEmpty == true) _payeeCtrl.text = sms.payee!;
         _isIncome = !sms.isDebit;
@@ -889,6 +957,18 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
           final matched = accounts
               .where((a) => a.lastFour == sms.accountLastFour)
               .firstOrNull;
+          if (matched != null) _selectedAccount = matched;
+        }
+      } else if (qf != null) {
+        // Pre-fill from template / quick-add suggestion
+        if (qf.amount != null) _rightCents = (qf.amount! * 100).round();
+        _payeeCtrl.text       = qf.payeeName;
+        _categoryCtrl.text    = qf.categoryName ?? '';
+        _selectedCategoryId   = qf.categoryId;
+        _selectedCategoryName = qf.categoryName;
+        _isIncome             = qf.isIncome;
+        if (qf.accountId != null) {
+          final matched = accounts.where((a) => a.id == qf.accountId).firstOrNull;
           if (matched != null) _selectedAccount = matched;
         }
       }
@@ -901,6 +981,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
     _payeeCtrl.dispose();
     _categoryCtrl.dispose();
     _memoCtrl.dispose();
+    for (final s in _splits) s.dispose();
     super.dispose();
   }
 
@@ -972,7 +1053,18 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
         .toList();
   }
 
-  bool get _canSave => _effectiveDollars > 0 && _selectedAccount != null && !_saving;
+  bool get _canSave {
+    if (_selectedAccount == null || _saving || _effectiveDollars <= 0) return false;
+    if (_isSplit) {
+      if (_splits.length < 2) return false;
+      final splitTotal = _splits.fold(0.0, (s, e) => s + e.amount);
+      return (_splitRemaining).abs() < 0.01 && splitTotal > 0;
+    }
+    return true;
+  }
+
+  double get _splitRemaining =>
+      _effectiveDollars - _splits.fold(0.0, (s, e) => s + e.amount);
 
   Future<void> _save() async {
     if (!_canSave) return;
@@ -1004,6 +1096,16 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
           payeeName:  _payeeCtrl.text.trim(),
           categoryId: _selectedCategoryId,
           memo:       _memoCtrl.text.trim(),
+        );
+      } else if (_isSplit) {
+        await ref.read(transactionsProvider.notifier).addSplitTransactions(
+          accountId: _selectedAccount!.id,
+          date:      saveDate,
+          payeeName: _payeeCtrl.text.trim(),
+          memo:      _memoCtrl.text.trim(),
+          splits:    _splits
+              .map((s) => (categoryId: s.categoryId, amount: s.amount))
+              .toList(),
         );
       } else {
         await ref.read(transactionsProvider.notifier).addTransaction(
@@ -1145,6 +1247,68 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                             fontSize: 20, fontWeight: FontWeight.w800, color: cs.onSurface),
                       ),
                       const Spacer(),
+                      // Split toggle — only available for new transactions
+                      if (widget.prefill == null) ...[
+                        GestureDetector(
+                          onTap: () {
+                            if (_isSplit) {
+                              setState(() {
+                                _isSplit = false;
+                                for (final s in _splits) s.dispose();
+                                _splits.clear();
+                              });
+                            } else {
+                              final total = _effectiveDollars;
+                              setState(() {
+                                _isSplit = true;
+                                _splits
+                                  ..clear()
+                                  ..add(_SplitEntry(
+                                    categoryId:   _selectedCategoryId,
+                                    categoryName: _selectedCategoryName,
+                                    amount:       total,
+                                  ))
+                                  ..add(_SplitEntry());
+                              });
+                            }
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: _isSplit
+                                  ? cs.primaryContainer
+                                  : cs.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(20),
+                              border: _isSplit
+                                  ? Border.all(
+                                      color: cs.primary.withValues(alpha: 0.4))
+                                  : null,
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.call_split_rounded,
+                                    size: 13,
+                                    color: _isSplit
+                                        ? cs.primary
+                                        : cs.onSurfaceVariant),
+                                const SizedBox(width: 4),
+                                Text('Split',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: _isSplit
+                                          ? cs.primary
+                                          : cs.onSurfaceVariant,
+                                    )),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                       InkWell(
                         onTap: () async {
                           final picked = await showDatePicker(
@@ -1375,77 +1539,139 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                   ],
                   const SizedBox(height: 12),
 
-                  // Category search field
-                  TextField(
-                    controller: _categoryCtrl,
-                    textCapitalization: TextCapitalization.words,
-                    onChanged: (v) => setState(() {
-                      _showCategorySuggestions = v.isNotEmpty;
-                      // Clear confirmed selection if text was manually edited
-                      if (v != _selectedCategoryName) {
-                        _selectedCategoryId   = null;
-                        _selectedCategoryName = null;
-                      }
-                    }),
-                    decoration: InputDecoration(
-                      labelText: 'Category',
-                      prefixIcon: const Icon(Icons.label_outline, size: 18),
-                      suffixIcon: _categoryCtrl.text.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.close, size: 16),
-                              onPressed: () => setState(() {
-                                _categoryCtrl.clear();
-                                _selectedCategoryId      = null;
-                                _selectedCategoryName    = null;
-                                _showCategorySuggestions = false;
-                              }),
-                            )
-                          : null,
-                    ),
-                  ),
-
-                  // Category suggestions dropdown
-                  if (_showCategorySuggestions && categoryMatches.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: cs.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Column(
-                        children: categoryMatches.map((c) => InkWell(
-                          onTap: () {
-                            _categoryCtrl.text = c.name;
-                            setState(() {
-                              _selectedCategoryId      = c.id;
-                              _selectedCategoryName    = c.name;
-                              _showCategorySuggestions = false;
-                            });
-                          },
-                          borderRadius: BorderRadius.circular(12),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 10),
-                            child: Row(
-                              children: [
-                                Icon(Icons.label_outline,
-                                    size: 14, color: cs.onSurfaceVariant),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Text(c.name,
-                                      style: GoogleFonts.plusJakartaSans(
-                                          fontSize: 14, color: cs.onSurface)),
-                                ),
-                                Text(c.groupName,
-                                    style: GoogleFonts.plusJakartaSans(
-                                        fontSize: 11,
-                                        color: cs.onSurfaceVariant)),
-                              ],
-                            ),
+                  // ── Category OR split lines ──────────────────────────────
+                  if (_isSplit) ...[
+                    // Split header: remaining indicator
+                    Row(
+                      children: [
+                        Icon(Icons.call_split_rounded,
+                            size: 14, color: cs.primary),
+                        const SizedBox(width: 6),
+                        Text('Split lines',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12, fontWeight: FontWeight.w700,
+                              color: cs.primary,
+                            )),
+                        const Spacer(),
+                        Text(
+                          _splitRemaining.abs() < 0.005
+                              ? 'Balanced ✓'
+                              : _splitRemaining > 0
+                                  ? '${NumberFormat.currency(symbol: '\$', decimalDigits: 2).format(_splitRemaining)} remaining'
+                                  : '${NumberFormat.currency(symbol: '\$', decimalDigits: 2).format(-_splitRemaining)} over',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11, fontWeight: FontWeight.w600,
+                            color: _splitRemaining.abs() < 0.005
+                                ? cs.tertiary
+                                : cs.error,
                           ),
-                        )).toList(),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ..._splits.asMap().entries.map((e) {
+                      final i     = e.key;
+                      final split = e.value;
+                      return _SplitLineRow(
+                        key:          ValueKey(split.id),
+                        split:        split,
+                        canDelete:    _splits.length > 2,
+                        onPickCategory: () async {
+                          final picked = await _pickCategoryFromSheet(context, ref);
+                          if (picked != null) {
+                            setState(() {
+                              _splits[i].categoryId   = picked.id;
+                              _splits[i].categoryName = picked.name;
+                            });
+                          }
+                        },
+                        onDelete: () => setState(() {
+                          _splits[i].dispose();
+                          _splits.removeAt(i);
+                        }),
+                        onAmountChanged: () => setState(() {}),
+                      );
+                    }),
+                    TextButton.icon(
+                      onPressed: () => setState(() => _splits.add(_SplitEntry())),
+                      icon:  const Icon(Icons.add, size: 15),
+                      label: Text('Add line',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13, fontWeight: FontWeight.w600)),
+                      style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact),
+                    ),
+                  ] else ...[
+                    // Normal single-category field
+                    TextField(
+                      controller: _categoryCtrl,
+                      textCapitalization: TextCapitalization.words,
+                      onChanged: (v) => setState(() {
+                        _showCategorySuggestions = v.isNotEmpty;
+                        if (v != _selectedCategoryName) {
+                          _selectedCategoryId   = null;
+                          _selectedCategoryName = null;
+                        }
+                      }),
+                      decoration: InputDecoration(
+                        labelText: 'Category',
+                        prefixIcon: const Icon(Icons.label_outline, size: 18),
+                        suffixIcon: _categoryCtrl.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.close, size: 16),
+                                onPressed: () => setState(() {
+                                  _categoryCtrl.clear();
+                                  _selectedCategoryId      = null;
+                                  _selectedCategoryName    = null;
+                                  _showCategorySuggestions = false;
+                                }),
+                              )
+                            : null,
                       ),
                     ),
+
+                    if (_showCategorySuggestions && categoryMatches.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: cs.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Column(
+                          children: categoryMatches.map((c) => InkWell(
+                            onTap: () {
+                              _categoryCtrl.text = c.name;
+                              setState(() {
+                                _selectedCategoryId      = c.id;
+                                _selectedCategoryName    = c.name;
+                                _showCategorySuggestions = false;
+                              });
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 10),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.label_outline,
+                                      size: 14, color: cs.onSurfaceVariant),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(c.name,
+                                        style: GoogleFonts.plusJakartaSans(
+                                            fontSize: 14, color: cs.onSurface)),
+                                  ),
+                                  Text(c.groupName,
+                                      style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 11,
+                                          color: cs.onSurfaceVariant)),
+                                ],
+                              ),
+                            ),
+                          )).toList(),
+                        ),
+                      ),
+                    ],
                   ],
                   const SizedBox(height: 12),
 
@@ -1880,6 +2106,781 @@ class _PayeeSuggestion {
   final String? categoryId;
   final String? categoryName;
   const _PayeeSuggestion({required this.name, this.categoryId, this.categoryName});
+}
+
+// ---------------------------------------------------------------------------
+// Split entry model (mutable, holds per-line data in the edit sheet)
+// ---------------------------------------------------------------------------
+
+class _SplitEntry {
+  final String id;
+  String? categoryId;
+  String? categoryName;
+  final TextEditingController amountCtrl;
+
+  _SplitEntry({this.categoryId, this.categoryName, double? amount})
+      : id = _makeId(),
+        amountCtrl = TextEditingController(
+          text: (amount != null && amount > 0)
+              ? amount.toStringAsFixed(2)
+              : '',
+        );
+
+  static String _makeId() {
+    final uuid = Uuid();
+    return uuid.v4();
+  }
+
+  double get amount => double.tryParse(amountCtrl.text.trim()) ?? 0.0;
+
+  void dispose() => amountCtrl.dispose();
+}
+
+// ---------------------------------------------------------------------------
+// Split line row — one editable line inside the split section
+// ---------------------------------------------------------------------------
+
+class _SplitLineRow extends StatelessWidget {
+  final _SplitEntry split;
+  final bool canDelete;
+  final VoidCallback onPickCategory;
+  final VoidCallback onDelete;
+  final VoidCallback onAmountChanged;
+
+  const _SplitLineRow({
+    super.key,
+    required this.split,
+    required this.canDelete,
+    required this.onPickCategory,
+    required this.onDelete,
+    required this.onAmountChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          // Category chip
+          Expanded(
+            flex: 5,
+            child: GestureDetector(
+              onTap: onPickCategory,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                decoration: BoxDecoration(
+                  color: cs.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(10),
+                  border: split.categoryId != null
+                      ? Border.all(color: cs.primary.withValues(alpha: 0.3))
+                      : null,
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.label_outline,
+                        size: 14,
+                        color: split.categoryId != null
+                            ? cs.primary
+                            : cs.onSurfaceVariant),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        split.categoryName ?? 'Category',
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13,
+                          color: split.categoryName != null
+                              ? cs.onSurface
+                              : cs.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Amount field
+          Expanded(
+            flex: 3,
+            child: TextField(
+              controller: split.amountCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              onChanged: (_) => onAmountChanged(),
+              decoration: const InputDecoration(
+                prefixText: '\$',
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                isDense: true,
+              ),
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+          ),
+          const SizedBox(width: 4),
+          // Delete button (hidden but space-reserved when canDelete = false)
+          if (canDelete)
+            IconButton(
+              onPressed: onDelete,
+              icon: const Icon(Icons.remove_circle_outline, size: 18),
+              color: cs.error,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            )
+          else
+            const SizedBox(width: 32),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Split group tile — renders a split group in the confirmed-transactions list
+// ---------------------------------------------------------------------------
+
+class _SplitGroupTile extends StatelessWidget {
+  final List<Transaction> parts;
+  final bool isLast;
+  final WidgetRef ref;
+
+  const _SplitGroupTile({
+    required this.parts,
+    required this.isLast,
+    required this.ref,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs    = Theme.of(context).colorScheme;
+    final fmt   = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final first = parts.first;
+    final total = parts.fold(0.0, (s, t) => s + t.amount);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header row
+        InkWell(
+          onTap: () => showEditTransactionSheet(context, ref, prefill: first),
+          borderRadius: BorderRadius.zero,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(
+              children: [
+                _PayeeAvatar(payee: first.displayPayee, color: cs.primary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              first.displayPayee.isNotEmpty
+                                  ? first.displayPayee
+                                  : 'Unknown',
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: cs.onSurface),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: cs.primaryContainer,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text('Split',
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    color: cs.onPrimaryContainer)),
+                          ),
+                        ],
+                      ),
+                      if (first.account != null)
+                        Text(
+                          first.account!.displayName,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: cs.onSurfaceVariant),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                    ],
+                  ),
+                ),
+                Text(fmt.format(total),
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: total >= 0 ? cs.tertiary : cs.onSurface)),
+              ],
+            ),
+          ),
+        ),
+        // Sub-rows: each split line
+        ...parts.asMap().entries.map((e) {
+          final i          = e.key;
+          final part       = e.value;
+          final isPartLast = isLast && i == parts.length - 1;
+          return InkWell(
+            onTap: () => showEditTransactionSheet(context, ref, prefill: part),
+            borderRadius: isPartLast
+                ? const BorderRadius.vertical(bottom: Radius.circular(16))
+                : BorderRadius.zero,
+            child: Padding(
+              padding: const EdgeInsets.only(
+                  left: 68, right: 16, top: 4, bottom: 4),
+              child: Row(
+                children: [
+                  Icon(Icons.subdirectory_arrow_right_rounded,
+                      size: 13, color: cs.onSurfaceVariant),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      part.categoryName ?? 'Uncategorized',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12, color: cs.onSurfaceVariant),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Text(fmt.format(part.amount),
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12, color: cs.onSurfaceVariant)),
+                ],
+              ),
+            ),
+          );
+        }),
+        if (!isLast)
+          Divider(
+              height: 1,
+              color: cs.outlineVariant.withValues(alpha: 0.5)),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Category picker sheet — used inside split-line rows
+// ---------------------------------------------------------------------------
+
+Future<({String id, String name})?> _pickCategoryFromSheet(
+  BuildContext context,
+  WidgetRef ref,
+) {
+  final groups = ref.read(categoriesProvider).valueOrNull ?? [];
+  return showModalBottomSheet<({String id, String name})?>(
+    context:            context,
+    isScrollControlled: true,
+    useSafeArea:        true,
+    builder:            (ctx) => _CategoryPickerSheet(groups: groups),
+  );
+}
+
+class _CategoryPickerSheet extends StatefulWidget {
+  final List<CategoryGroup> groups;
+  const _CategoryPickerSheet({required this.groups});
+
+  @override
+  State<_CategoryPickerSheet> createState() => _CategoryPickerSheetState();
+}
+
+class _CategoryPickerSheetState extends State<_CategoryPickerSheet> {
+  final _searchCtrl = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<Category> get _matches {
+    final all = widget.groups.expand((g) => g.categories).toList();
+    if (_query.isEmpty) return all;
+    final q = _query.toLowerCase();
+    return all.where((c) => c.name.toLowerCase().contains(q)).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs      = Theme.of(context).colorScheme;
+    final matches = _matches;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.6,
+      minChildSize:     0.4,
+      maxChildSize:     0.9,
+      expand:           false,
+      builder: (ctx, scrollController) => Container(
+        color: cs.surfaceContainerHigh,
+        child: Column(
+          children: [
+            Center(
+              child: Container(
+                margin: const EdgeInsets.only(top: 10, bottom: 4),
+                width: 36, height: 4,
+                decoration: BoxDecoration(
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+              child: Text('Category',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 18, fontWeight: FontWeight.w800)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: TextField(
+                controller: _searchCtrl,
+                autofocus:  true,
+                onChanged:  (v) => setState(() => _query = v),
+                decoration: InputDecoration(
+                  hintText: 'Search categories…',
+                  prefixIcon: const Icon(Icons.search, size: 18),
+                  suffixIcon: _query.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 16),
+                          onPressed: () => setState(() {
+                            _query = '';
+                            _searchCtrl.clear();
+                          }),
+                        )
+                      : null,
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: matches.isEmpty
+                  ? Center(
+                      child: Text('No categories match "$_query"',
+                          style: GoogleFonts.plusJakartaSans(
+                              color: cs.onSurfaceVariant)),
+                    )
+                  : ListView.builder(
+                      controller: scrollController,
+                      itemCount:  matches.length,
+                      itemBuilder: (_, i) {
+                        final c = matches[i];
+                        return ListTile(
+                          leading: Icon(Icons.label_outline,
+                              size: 18, color: cs.onSurfaceVariant),
+                          title: Text(c.name,
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600)),
+                          subtitle: Text(c.groupName,
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 12,
+                                  color: cs.onSurfaceVariant)),
+                          onTap: () =>
+                              Navigator.pop(ctx, (id: c.id, name: c.name)),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Quick-add sheet — opened by long-pressing the main FAB
+// ---------------------------------------------------------------------------
+
+void _showQuickAddSheet(BuildContext context, WidgetRef ref) {
+  showModalBottomSheet(
+    context:            context,
+    isScrollControlled: true,
+    useSafeArea:        true,
+    builder:            (_) => _QuickAddSheet(widgetRef: ref),
+  );
+}
+
+class _QuickAddSheet extends ConsumerWidget {
+  final WidgetRef widgetRef;
+  const _QuickAddSheet({required this.widgetRef});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs          = Theme.of(context).colorScheme;
+    final pinned      = ref.watch(quickTemplatesProvider);
+    final suggestions = ref.watch(quickSuggestionsProvider);
+    final fmt         = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+
+    void useTemplate(QuickTemplate t) {
+      Navigator.pop(context);
+      showEditTransactionSheet(
+        context,
+        widgetRef,
+        quickFill: _QuickFill(
+          payeeName:             t.payeeName,
+          amount:                t.amount,
+          categoryId:            t.categoryId,
+          categoryName:          t.categoryName,
+          categoryIconCodePoint: t.categoryIconCodePoint,
+          accountId:             t.accountId,
+          isIncome:              t.isIncome,
+        ),
+      );
+    }
+
+    void useSuggestion(AutoSuggestion s) {
+      Navigator.pop(context);
+      showEditTransactionSheet(
+        context,
+        widgetRef,
+        quickFill: _QuickFill(
+          payeeName:             s.payeeName,
+          amount:                s.medianAmount,
+          categoryId:            s.categoryId,
+          categoryName:          s.categoryName,
+          categoryIconCodePoint: s.categoryIconCodePoint,
+        ),
+      );
+    }
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.55,
+      minChildSize:     0.35,
+      maxChildSize:     0.85,
+      expand:           false,
+      builder: (ctx, scrollController) => Container(
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHigh,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+              child: Column(
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40, height: 4,
+                      decoration: BoxDecoration(
+                        color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Text('Quick Add',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 20, fontWeight: FontWeight.w800)),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          showEditTransactionSheet(context, widgetRef);
+                        },
+                        child: const Text('Add custom'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            Expanded(
+              child: ListView(
+                controller: scrollController,
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+                children: [
+                  // ── Layer 2: Pinned templates ─────────────────────────────
+                  if (pinned.isNotEmpty) ...[
+                    _QuickSectionHeader(
+                        label: 'Pinned',
+                        icon:  Icons.push_pin_outlined),
+                    const SizedBox(height: 8),
+                    ReorderableListView(
+                      shrinkWrap: true,
+                      physics:    const NeverScrollableScrollPhysics(),
+                      onReorder:  (oldIdx, newIdx) => ref
+                          .read(quickTemplatesProvider.notifier)
+                          .reorder(oldIdx, newIdx),
+                      children: pinned
+                          .map((t) => _PinnedTemplateTile(
+                                key:      ValueKey(t.id),
+                                template: t,
+                                fmt:      fmt,
+                                onTap:    () => useTemplate(t),
+                                onDelete: () => ref
+                                    .read(quickTemplatesProvider.notifier)
+                                    .remove(t.id),
+                              ))
+                          .toList(),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // ── Layer 1: Auto-suggestions ─────────────────────────────
+                  if (suggestions.isNotEmpty) ...[
+                    _QuickSectionHeader(
+                      label:    'Recent',
+                      icon:     Icons.bolt_outlined,
+                      subtitle: 'Based on last 60 days',
+                    ),
+                    const SizedBox(height: 8),
+                    ...suggestions.map((s) => _SuggestionTile(
+                          suggestion: s,
+                          fmt:        fmt,
+                          onTap:      () => useSuggestion(s),
+                          onPin: () {
+                            ref
+                                .read(quickTemplatesProvider.notifier)
+                                .add(templateFromSuggestion(s));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Pinned "${s.payeeName}"'),
+                                behavior: SnackBarBehavior.floating,
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
+                          },
+                        )),
+                  ],
+
+                  // Empty state
+                  if (pinned.isEmpty && suggestions.isEmpty)
+                    Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 32),
+                        child: Column(
+                          children: [
+                            Icon(Icons.bolt_outlined,
+                                size: 40, color: cs.onSurfaceVariant),
+                            const SizedBox(height: 12),
+                            Text('No recent transactions yet',
+                                style: GoogleFonts.plusJakartaSans(
+                                    color: cs.onSurfaceVariant)),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Add some transactions to see quick\nsuggestions here',
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 12,
+                                  color: cs.onSurfaceVariant),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Section header for the quick-add sheet
+class _QuickSectionHeader extends StatelessWidget {
+  final String  label;
+  final IconData icon;
+  final String? subtitle;
+  const _QuickSectionHeader({
+    required this.label,
+    required this.icon,
+    this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        Icon(icon, size: 14, color: cs.onSurfaceVariant),
+        const SizedBox(width: 6),
+        Text(label,
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: cs.onSurfaceVariant,
+                letterSpacing: 0.5)),
+        if (subtitle != null) ...[
+          const SizedBox(width: 8),
+          Text(subtitle!,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11, color: cs.onSurfaceVariant)),
+        ],
+      ],
+    );
+  }
+}
+
+// Pinned template tile (drag-reorderable)
+class _PinnedTemplateTile extends StatelessWidget {
+  final QuickTemplate template;
+  final VoidCallback  onTap;
+  final VoidCallback  onDelete;
+  final NumberFormat  fmt;
+
+  const _PinnedTemplateTile({
+    super.key,
+    required this.template,
+    required this.onTap,
+    required this.onDelete,
+    required this.fmt,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap:        onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color:        cs.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.push_pin, size: 14, color: cs.primary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(template.name,
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: cs.onSurface)),
+                  if (template.categoryName != null)
+                    Text(template.categoryName!,
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12, color: cs.onSurfaceVariant)),
+                ],
+              ),
+            ),
+            if (template.amount != null) ...[
+              Text(fmt.format(template.amount!),
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: template.isIncome ? cs.tertiary : cs.onSurface)),
+              const SizedBox(width: 4),
+            ],
+            IconButton(
+              onPressed:   onDelete,
+              icon:        Icon(Icons.close, size: 16, color: cs.onSurfaceVariant),
+              padding:     EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            ),
+            // Drag handle icon — ReorderableListView's default handles
+            // (buildDefaultDragHandles: true) activate drag on long-press.
+            Icon(Icons.drag_handle, size: 18, color: cs.onSurfaceVariant),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Auto-suggestion tile
+class _SuggestionTile extends StatelessWidget {
+  final AutoSuggestion suggestion;
+  final VoidCallback   onTap;
+  final VoidCallback   onPin;
+  final NumberFormat   fmt;
+
+  const _SuggestionTile({
+    required this.suggestion,
+    required this.onTap,
+    required this.onPin,
+    required this.fmt,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap:        onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color:        cs.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            _PayeeAvatar(
+              payee:         suggestion.payeeName,
+              color:         cs.primary,
+              iconCodePoint: suggestion.categoryIconCodePoint,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(suggestion.payeeName,
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: cs.onSurface)),
+                  if (suggestion.categoryName != null)
+                    Text(suggestion.categoryName!,
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12, color: cs.onSurfaceVariant)),
+                ],
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(fmt.format(suggestion.medianAmount),
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: cs.onSurface)),
+                Text('${suggestion.frequency}×',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11, color: cs.onSurfaceVariant)),
+              ],
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              onPressed:   onPin,
+              icon: Icon(Icons.push_pin_outlined,
+                  size: 16, color: cs.onSurfaceVariant),
+              tooltip:     'Pin as template',
+              padding:     EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

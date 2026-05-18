@@ -127,6 +127,56 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
     ref.invalidate(cashflowProvider);
   }
 
+  /// Saves multiple linked transactions that share a [split_group_id].
+  /// Each entry in [splits] gets its own row with an individual category and
+  /// amount; payee, account, date and memo are shared across all lines.
+  ///
+  /// Requires the `split_group_id UUID` column to exist on the transactions
+  /// table. Migration:
+  ///   ALTER TABLE transactions ADD COLUMN split_group_id UUID;
+  Future<void> addSplitTransactions({
+    required String accountId,
+    required DateTime date,
+    String payeeName = '',
+    String? memo,
+    required List<({String? categoryId, double amount})> splits,
+  }) async {
+    const uuid        = Uuid();
+    final splitId     = uuid.v4();
+    final householdId = await ref.read(householdIdProvider.future);
+    final client      = ref.read(supabaseProvider);
+
+    String? payeeId;
+    if (payeeName.trim().isNotEmpty) {
+      payeeId = await _upsertPayee(
+        client:      client,
+        householdId: householdId,
+        name:        payeeName.trim(),
+        categoryId:  splits.firstOrNull?.categoryId,
+      );
+    }
+
+    final rows = splits.map((s) => <String, dynamic>{
+      'household_id':   householdId,
+      'account_id':     accountId,
+      'payee_id':       payeeId,
+      'category_id':    s.categoryId,
+      'amount':         -s.amount.abs(), // splits are always expenses for now
+      'date':           _toDateString(date),
+      'memo':           memo?.isNotEmpty == true ? memo : null,
+      'status':         'confirmed',
+      'split_group_id': splitId,
+    }).toList();
+
+    await client.from('transactions').insert(rows);
+
+    ref.invalidateSelf();
+    ref.invalidate(payeesProvider);
+    ref.invalidate(accountsProvider);
+    ref.invalidate(budgetProvider);
+    ref.invalidate(cashflowProvider);
+  }
+
   Future<void> transferTransaction({
     required String fromAccountId,
     required String toAccountId,
