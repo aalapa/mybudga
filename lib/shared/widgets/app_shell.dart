@@ -32,11 +32,18 @@ DateTime _sidebarLastDue(int dueDay) {
       : DateTime(now.year, now.month - 1, dueDay);
 }
 
+// Start of the current billing cycle = one month before the last due date.
+// Any payment after this date counts, including early payments.
+DateTime _sidebarCycleStart(int dueDay) {
+  final last = _sidebarLastDue(dueDay);
+  return DateTime(last.year, last.month - 1, last.day);
+}
+
 _SidebarPayStatus _sidebarPayStatus(Account a, Map<String, DateTime> creditDates) {
   if (a.dueDay == null) return _SidebarPayStatus.unpaid;
   if (a.balance >= 0)   return _SidebarPayStatus.paid;
   final lastCredit = creditDates[a.id];
-  if (lastCredit != null && !lastCredit.isBefore(_sidebarLastDue(a.dueDay!))) {
+  if (lastCredit != null && lastCredit.isAfter(_sidebarCycleStart(a.dueDay!))) {
     return _SidebarPayStatus.partial;
   }
   return _SidebarPayStatus.unpaid;

@@ -37,13 +37,25 @@ String _ordinal(int n) {
 }
 
 /// The most recent past occurrence of [dueDay] in the calendar.
-/// e.g. today = May 17, dueDay = 1  → May 1  (already passed this month)
-///      today = May 17, dueDay = 20 → April 20 (hasn't happened yet this month)
+/// e.g. today = May 23, dueDay = 1  → May 1  (already passed this month)
+///      today = May 23, dueDay = 20 → May 20  (already passed this month)
+///      today = May 23, dueDay = 25 → April 25 (hasn't happened yet this month)
 DateTime _lastDueDate(int dueDay) {
   final now = DateTime.now();
   return dueDay <= now.day
       ? DateTime(now.year, now.month, dueDay)
       : DateTime(now.year, now.month - 1, dueDay);
+}
+
+/// One billing cycle before [_lastDueDate] — i.e. the start of the current
+/// billing period.  A payment made ANY TIME after this date (including before
+/// the actual due date) counts as paid for the current cycle.
+/// e.g. today = May 23, dueDay = 20 → April 20
+///      today = May 23, dueDay = 1  → April 1
+DateTime _cycleStartDate(int dueDay) {
+  final last = _lastDueDate(dueDay);
+  // Subtract one month; Dart's DateTime wraps month 0 → December previous year.
+  return DateTime(last.year, last.month - 1, last.day);
 }
 
 // ---------------------------------------------------------------------------
@@ -56,7 +68,9 @@ _PaymentStatus _paymentStatus(Account a, Map<String, DateTime> creditDates) {
   if (a.dueDay == null) return _PaymentStatus.unpaid;
   if (a.balance >= 0)   return _PaymentStatus.fullyPaid;
   final lastCredit = creditDates[a.id];
-  if (lastCredit != null && !lastCredit.isBefore(_lastDueDate(a.dueDay!))) {
+  // Count any payment made AFTER the previous cycle's due date (cycle start).
+  // This correctly handles early payments (e.g. paying May 17 for a May 20 due).
+  if (lastCredit != null && lastCredit.isAfter(_cycleStartDate(a.dueDay!))) {
     return _PaymentStatus.partiallyPaid;
   }
   return _PaymentStatus.unpaid;
