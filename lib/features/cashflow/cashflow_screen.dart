@@ -43,7 +43,7 @@ class _CashflowScreenState extends ConsumerState<CashflowScreen> {
           ref:              ref,
         ),
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: MediaQuery.sizeOf(context).width >= 800 ? null : FloatingActionButton(
         onPressed: () => showAddScheduledSheet(context, ref, prefill: null),
         backgroundColor: cs.primary,
         child: Icon(Icons.add, color: cs.onPrimary),

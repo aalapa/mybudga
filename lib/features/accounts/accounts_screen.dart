@@ -148,8 +148,8 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _showAddAccountSheet(context, ref),
+      floatingActionButton: MediaQuery.sizeOf(context).width >= 800 ? null : FloatingActionButton(
+        onPressed: () => showAddAccountSheet(context, ref),
         backgroundColor: cs.primary,
         foregroundColor: cs.onPrimary,
         child: const Icon(Icons.add),
@@ -2566,7 +2566,7 @@ class _ReconcileSheetState extends ConsumerState<_ReconcileSheet> {
 // Add Account sheet
 // ---------------------------------------------------------------------------
 
-void _showAddAccountSheet(BuildContext context, WidgetRef ref) {
+void showAddAccountSheet(BuildContext context, WidgetRef ref) {
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,

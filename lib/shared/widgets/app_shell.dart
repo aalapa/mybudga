@@ -8,6 +8,12 @@ import '../../features/accounts/accounts_provider.dart';
 import '../../features/insights/insights_provider.dart';
 import '../../features/insights/notification_service.dart';
 import '../../shared/models/account.dart';
+import '../../features/transactions/transactions_screen.dart'
+    show showEditTransactionSheet, showTransferSheet, showQuickAddSheet;
+import '../../features/cashflow/cashflow_screen.dart'
+    show showAddScheduledSheet;
+import '../../features/accounts/accounts_screen.dart'
+    show showAddAccountSheet;
 
 // ---------------------------------------------------------------------------
 // Due-date helpers (mirrors accounts_screen.dart logic)
@@ -87,17 +93,26 @@ class AppShell extends ConsumerWidget {
 
     if (isWide) {
       return Scaffold(
-        body: Row(
+        body: Stack(
           children: [
-            _DesktopSidebar(
-              tabs:          _desktopTabs,
-              selectedIndex: selectedIndex,
+            Row(
+              children: [
+                _DesktopSidebar(
+                  tabs:          _desktopTabs,
+                  selectedIndex: selectedIndex,
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 72),
+                    child: child,
+                  ),
+                ),
+              ],
             ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(right: 72),
-                child: child,
-              ),
+            const Positioned(
+              right: 8,
+              bottom: 24,
+              child: _DesktopFabLayer(),
             ),
           ],
         ),
@@ -382,10 +397,10 @@ class _SidebarNavRow extends StatelessWidget {
 
 // ── Account group ─────────────────────────────────────────────────────────────
 
-class _SidebarAccountGroup extends StatelessWidget {
+class _SidebarAccountGroup extends StatefulWidget {
   final String                    label;
   final List<Account>             accounts;
-  final bool                      collapsed;
+  final bool                      collapsed;       // sidebar collapsed (icon-only mode)
   final String?                   selectedAccountId;
   final Map<String, DateTime>     creditDates;
   final ValueChanged<Account>     onAccountTap;
@@ -400,35 +415,83 @@ class _SidebarAccountGroup extends StatelessWidget {
   });
 
   @override
+  State<_SidebarAccountGroup> createState() => _SidebarAccountGroupState();
+}
+
+class _SidebarAccountGroupState extends State<_SidebarAccountGroup> {
+  bool _expanded = true;
+
+  @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+
+    final rows = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final account in widget.accounts)
+          _SidebarAccountRow(
+            account:     account,
+            selected:    account.id == widget.selectedAccountId,
+            collapsed:   widget.collapsed,
+            creditDates: widget.creditDates,
+            onTap:       () => widget.onAccountTap(account),
+          ),
+      ],
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (!collapsed)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 12, 3),
-            child: Text(
-              label,
-              style: GoogleFonts.plusJakartaSans(
-                fontSize:   10,
-                fontWeight: FontWeight.w700,
-                color:      cs.onSurfaceVariant.withValues(alpha: 0.65),
-                letterSpacing: 0.8,
-              ),
-            ),
-          )
+        // Header — only when sidebar is expanded
+        if (!widget.collapsed)
+          _buildHeader(cs)
         else
           const SizedBox(height: 6),
-        for (final account in accounts)
-          _SidebarAccountRow(
-            account:     account,
-            selected:    account.id == selectedAccountId,
-            collapsed:   collapsed,
-            creditDates: creditDates,
-            onTap:       () => onAccountTap(account),
+        // Animated expand/collapse of account rows
+        ClipRect(
+          child: AnimatedAlign(
+            duration:     const Duration(milliseconds: 200),
+            curve:        Curves.easeInOut,
+            alignment:    Alignment.topCenter,
+            heightFactor: _expanded ? 1.0 : 0.0,
+            child: rows,
           ),
+        ),
       ],
+    );
+  }
+
+  Widget _buildHeader(ColorScheme cs) {
+    return InkWell(
+      onTap:        () => setState(() => _expanded = !_expanded),
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 10, 3),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                widget.label,
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize:      10,
+                  fontWeight:    FontWeight.w700,
+                  color:         cs.onSurfaceVariant.withValues(alpha: 0.65),
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ),
+            AnimatedRotation(
+              turns:    _expanded ? 0.0 : -0.25,   // ▾ when expanded, ► when collapsed
+              duration: const Duration(milliseconds: 200),
+              child: Icon(
+                Icons.expand_more,
+                size:  14,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -709,6 +772,67 @@ class _SidebarSettingsRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child:   inner,
     );
+  }
+}
+
+// ── Desktop FAB layer (positioned in right padding area) ──────────────────────
+
+class _DesktopFabLayer extends ConsumerWidget {
+  const _DesktopFabLayer();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs   = Theme.of(context).colorScheme;
+    final path = GoRouterState.of(context).uri.path;
+
+    switch (path) {
+      case '/transactions':
+        return Column(
+          mainAxisSize:      MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            FloatingActionButton.small(
+              heroTag:         'desk_transfer',
+              onPressed:       () => showTransferSheet(context, ref),
+              backgroundColor: cs.secondaryContainer,
+              foregroundColor: cs.onSecondaryContainer,
+              child: const Icon(Icons.swap_horiz),
+            ),
+            const SizedBox(height: 12),
+            GestureDetector(
+              onLongPress: () => showQuickAddSheet(context, ref),
+              child: FloatingActionButton(
+                heroTag:         'desk_add_tx',
+                onPressed:       () => showEditTransactionSheet(context, ref),
+                backgroundColor: cs.primary,
+                foregroundColor: cs.onPrimary,
+                child: const Icon(Icons.add),
+              ),
+            ),
+          ],
+        );
+
+      case '/cashflow':
+        return FloatingActionButton(
+          heroTag:         'desk_add_sched',
+          onPressed:       () => showAddScheduledSheet(context, ref, prefill: null),
+          backgroundColor: cs.primary,
+          foregroundColor: cs.onPrimary,
+          child: const Icon(Icons.add),
+        );
+
+      case '/accounts':
+        return FloatingActionButton(
+          heroTag:         'desk_add_acct',
+          onPressed:       () => showAddAccountSheet(context, ref),
+          backgroundColor: cs.primary,
+          foregroundColor: cs.onPrimary,
+          child: const Icon(Icons.add),
+        );
+
+      default:
+        return const SizedBox.shrink();
+    }
   }
 }
 

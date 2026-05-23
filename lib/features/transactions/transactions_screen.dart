@@ -202,20 +202,20 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
           ],
         ),
       ),
-      floatingActionButton: Column(
+      floatingActionButton: MediaQuery.sizeOf(context).width >= 800 ? null : Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           FloatingActionButton.small(
             heroTag: 'transfer',
-            onPressed: () => _showTransferSheet(context, ref),
+            onPressed: () => showTransferSheet(context, ref),
             backgroundColor: cs.secondaryContainer,
             foregroundColor: cs.onSecondaryContainer,
             child: const Icon(Icons.swap_horiz),
           ),
           const SizedBox(height: 12),
           GestureDetector(
-            onLongPress: () => _showQuickAddSheet(context, ref),
+            onLongPress: () => showQuickAddSheet(context, ref),
             child: FloatingActionButton(
               heroTag: 'add',
               onPressed: () => showEditTransactionSheet(context, ref),
@@ -2558,7 +2558,7 @@ class _CategoryPickerSheetState extends State<_CategoryPickerSheet> {
 // Quick-add sheet — opened by long-pressing the main FAB
 // ---------------------------------------------------------------------------
 
-void _showQuickAddSheet(BuildContext context, WidgetRef ref) {
+void showQuickAddSheet(BuildContext context, WidgetRef ref) {
   showModalBottomSheet(
     context:            context,
     isScrollControlled: true,
@@ -2940,7 +2940,7 @@ class _SuggestionTile extends StatelessWidget {
 // Transfer sheet
 // ---------------------------------------------------------------------------
 
-void _showTransferSheet(BuildContext context, WidgetRef ref) {
+void showTransferSheet(BuildContext context, WidgetRef ref) {
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
