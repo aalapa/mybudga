@@ -5,7 +5,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../features/accounts/accounts_provider.dart'
-    show accountsProvider, recentCreditDatesProvider, futureTxSumsProvider;
+    show accountsProvider, recentCreditDatesProvider,
+         futureTxSumsProvider, todayBalanceProvider;
 import '../../features/insights/insights_provider.dart';
 import '../../features/insights/notification_service.dart';
 import '../../shared/models/account.dart';
@@ -142,30 +143,22 @@ class _DesktopSidebar extends ConsumerStatefulWidget {
 }
 
 class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
-  bool _collapsed     = false;
-  bool _todayBalance  = true;   // "As of today" toggle — excludes future txns
+  bool _collapsed = false;
 
-  static const _prefKeyCollapsed     = 'sidebar_collapsed';
-  static const _prefKeyTodayBalance  = 'sidebar_today_balance';
-  static const _expandedWidth  = 300.0;
-  static const _collapsedWidth = 60.0;
+  static const _prefKeyCollapsed = 'sidebar_collapsed';
+  static const _expandedWidth    = 300.0;
+  static const _collapsedWidth   = 60.0;
 
   @override
   void initState() {
     super.initState();
-    _loadPrefs();
+    _loadPref();
   }
 
-  Future<void> _loadPrefs() async {
+  Future<void> _loadPref() async {
     final prefs = await SharedPreferences.getInstance();
-    final collapsed    = prefs.getBool(_prefKeyCollapsed)    ?? false;
-    final todayBalance = prefs.getBool(_prefKeyTodayBalance) ?? true;
-    if (mounted) {
-      setState(() {
-        _collapsed    = collapsed;
-        _todayBalance = todayBalance;
-      });
-    }
+    final v = prefs.getBool(_prefKeyCollapsed) ?? false;
+    if (mounted && v != _collapsed) setState(() => _collapsed = v);
   }
 
   Future<void> _toggle() async {
@@ -175,19 +168,14 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
     await prefs.setBool(_prefKeyCollapsed, next);
   }
 
-  Future<void> _setTodayBalance(bool value) async {
-    setState(() => _todayBalance = value);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_prefKeyTodayBalance, value);
-  }
-
   @override
   Widget build(BuildContext context) {
     final cs               = Theme.of(context).colorScheme;
     final accounts         = ref.watch(accountsProvider).valueOrNull ?? [];
     final creditDates      = ref.watch(recentCreditDatesProvider).valueOrNull ?? {};
-    final futureSums       = _todayBalance
-        ? (ref.watch(futureTxSumsProvider).valueOrNull ?? {})
+    final todayOn    = ref.watch(todayBalanceProvider);
+    final futureSums = todayOn
+        ? (ref.watch(futureTxSumsProvider).valueOrNull ?? <String, double>{})
         : <String, double>{};
     final currentAccountId = GoRouterState.of(context).uri.queryParameters['account'];
 
@@ -248,8 +236,9 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                       // "As of today" toggle — only when sidebar is expanded
                       if (!_collapsed)
                         _SidebarTodayToggle(
-                          value:     _todayBalance,
-                          onChanged: _setTodayBalance,
+                          value:     todayOn,
+                          onChanged: (v) =>
+                              ref.read(todayBalanceProvider.notifier).set(v),
                         ),
                       if (budgetCash.isNotEmpty)
                         _SidebarAccountGroup(

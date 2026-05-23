@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/supabase/supabase_provider.dart';
 import '../../shared/models/account.dart';
@@ -428,6 +429,35 @@ final recentCreditDatesProvider =
   }
   return map;
 });
+
+// ---------------------------------------------------------------------------
+// "As of today" toggle — shared between sidebar (desktop) and accounts screen
+// ---------------------------------------------------------------------------
+
+class TodayBalanceNotifier extends Notifier<bool> {
+  static const _prefKey = 'today_balance_toggle';
+
+  @override
+  bool build() {
+    _loadPref();
+    return true; // optimistic default while prefs load
+  }
+
+  Future<void> _loadPref() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getBool(_prefKey) ?? true;
+    if (state != v) state = v;
+  }
+
+  Future<void> set(bool value) async {
+    state = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefKey, value);
+  }
+}
+
+final todayBalanceProvider =
+    NotifierProvider<TodayBalanceNotifier, bool>(TodayBalanceNotifier.new);
 
 // ---------------------------------------------------------------------------
 // Future transaction sums — used by sidebar "As of today" toggle

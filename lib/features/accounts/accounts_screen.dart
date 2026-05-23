@@ -177,58 +177,81 @@ class _AccountsBody extends ConsumerWidget {
     this.onLiquidCashTap,
   });
 
-  List<Account> get _budgetAccounts => accounts.where((a) => !a.isTracking).toList();
-  List<Account> get _tracking        => accounts.where((a) => a.isTracking).toList();
-
-  double get _netWorth   => accounts.fold(0.0, (s, a) => s + a.balance);
-  double get _liquidCash => accounts
-      .where((a) => !a.isTracking && !a.isCreditCard)
-      .fold(0.0, (s, a) => s + a.balance);
-  double get _ccDebt     => accounts
-      .where((a) => a.isCreditCard)
-      .fold(0.0, (s, a) => s + a.balance);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final creditDates = ref.watch(recentCreditDatesProvider).valueOrNull ?? {};
-    final budget = _budgetAccounts;
+    final todayOn     = ref.watch(todayBalanceProvider);
+    final futureSums  = todayOn
+        ? (ref.watch(futureTxSumsProvider).valueOrNull ?? <String, double>{})
+        : <String, double>{};
 
-    // Build labeled sections when labels are defined.
-    // Each label claims accounts in order; a claimed account is not shown again.
+    // Adjust account balances when "As of today" is on.
+    // effectiveBalance = current_balance − sum(future-dated transactions)
+    Account eff(Account a) => futureSums.containsKey(a.id)
+        ? a.copyWith(balance: a.balance - futureSums[a.id]!)
+        : a;
+
+    final effAccounts = accounts.map(eff).toList();
+    final effBudget   = effAccounts.where((a) => !a.isTracking).toList();
+    final effTracking = effAccounts.where((a) => a.isTracking).toList();
+
+    final effNetWorth   = effAccounts.fold(0.0, (s, a) => s + a.balance);
+    final effLiquidCash = effAccounts
+        .where((a) => !a.isTracking && !a.isCreditCard)
+        .fold(0.0, (s, a) => s + a.balance);
+    final effCcDebt = effAccounts
+        .where((a) => a.isCreditCard)
+        .fold(0.0, (s, a) => s + a.balance);
+
+    // Build labeled sections using effective accounts.
     final claimed = <String>{};
     final labeledSections = <({AccountLabel label, List<Account> accounts})>[];
     for (final label in labels) {
-      final matched = budget.where((a) => !claimed.contains(a.id) && label.matches(a)).toList();
+      final matched = effBudget
+          .where((a) => !claimed.contains(a.id) && label.matches(a))
+          .toList();
       if (matched.isNotEmpty) {
         for (final a in matched) claimed.add(a.id);
         labeledSections.add((label: label, accounts: matched));
       }
     }
-    final unclaimed = budget.where((a) => !claimed.contains(a.id)).toList();
+    final unclaimed = effBudget.where((a) => !claimed.contains(a.id)).toList();
 
     // Apply the same labels to tracking accounts independently.
     final trackingClaimed = <String>{};
     final trackingLabeledSections = <({AccountLabel label, List<Account> accounts})>[];
     for (final label in labels) {
-      final matched = _tracking.where((a) => !trackingClaimed.contains(a.id) && label.matches(a)).toList();
+      final matched = effTracking
+          .where((a) => !trackingClaimed.contains(a.id) && label.matches(a))
+          .toList();
       if (matched.isNotEmpty) {
         for (final a in matched) trackingClaimed.add(a.id);
         trackingLabeledSections.add((label: label, accounts: matched));
       }
     }
-    final unclaimedTracking = _tracking.where((a) => !trackingClaimed.contains(a.id)).toList();
+    final unclaimedTracking =
+        effTracking.where((a) => !trackingClaimed.contains(a.id)).toList();
 
     return SafeArea(
       child: CustomScrollView(
         slivers: [
           SliverToBoxAdapter(
             child: _NetWorthHeader(
-              netWorth:          _netWorth,
-              liquidCash:        _liquidCash,
-              ccDebt:            _ccDebt,
+              netWorth:          effNetWorth,
+              liquidCash:        effLiquidCash,
+              ccDebt:            effCcDebt,
               onManageLabels:    onManageLabels,
               onCcDebtTap:       onCcDebtTap,
               onLiquidCashTap:   onLiquidCashTap,
+            ),
+          ),
+          // ── "As of today" toggle ────────────────────────────────────
+          SliverToBoxAdapter(
+            child: _TodayBalanceToggle(
+              value:     todayOn,
+              onChanged: (v) =>
+                  ref.read(todayBalanceProvider.notifier).set(v),
             ),
           ),
           SliverPadding(
@@ -238,8 +261,8 @@ class _AccountsBody extends ConsumerWidget {
                 // ── Labeled sections ──────────────────────────────────────
                 for (final sec in labeledSections) ...[
                   _SectionHeader(
-                    label: sec.label.name.toUpperCase(),
-                    total: sec.accounts.fold(0.0, (s, a) => s + a.balance),
+                    label:  sec.label.name.toUpperCase(),
+                    total:  sec.accounts.fold(0.0, (s, a) => s + a.balance),
                     isDebt: sec.accounts.every((a) => a.isCreditCard),
                   ),
                   const SizedBox(height: 8),
@@ -250,8 +273,8 @@ class _AccountsBody extends ConsumerWidget {
                 // ── Unclaimed budget accounts ("Other") ───────────────────
                 if (unclaimed.isNotEmpty) ...[
                   _SectionHeader(
-                    label: labels.isEmpty ? 'BUDGET ACCOUNTS' : 'OTHER',
-                    total: unclaimed.fold(0.0, (s, a) => s + a.balance),
+                    label:  labels.isEmpty ? 'BUDGET ACCOUNTS' : 'OTHER',
+                    total:  unclaimed.fold(0.0, (s, a) => s + a.balance),
                     isDebt: unclaimed.every((a) => a.isCreditCard),
                   ),
                   const SizedBox(height: 8),
@@ -260,10 +283,10 @@ class _AccountsBody extends ConsumerWidget {
                 ],
 
                 // ── Tracking accounts ─────────────────────────────────────
-                if (_tracking.isNotEmpty) ...[
+                if (effTracking.isNotEmpty) ...[
                   _SectionHeader(
                     label: 'TRACKING ACCOUNTS',
-                    total: _tracking.fold(0.0, (s, a) => s + a.balance),
+                    total: effTracking.fold(0.0, (s, a) => s + a.balance),
                   ),
                   const SizedBox(height: 8),
                   for (final sec in trackingLabeledSections) ...[
@@ -287,6 +310,49 @@ class _AccountsBody extends ConsumerWidget {
                   ],
                 ],
               ]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// "As of today" toggle row — mobile accounts screen
+// ---------------------------------------------------------------------------
+
+class _TodayBalanceToggle extends StatelessWidget {
+  final bool               value;
+  final ValueChanged<bool> onChanged;
+  const _TodayBalanceToggle({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
+      child: Row(
+        children: [
+          Icon(Icons.today_outlined, size: 14, color: cs.onSurfaceVariant),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'As of today',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize:   13,
+                fontWeight: FontWeight.w500,
+                color:      cs.onSurfaceVariant,
+              ),
+            ),
+          ),
+          Transform.scale(
+            scale: 0.8,
+            alignment: Alignment.centerRight,
+            child: Switch(
+              value:     value,
+              onChanged: onChanged,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
           ),
         ],
