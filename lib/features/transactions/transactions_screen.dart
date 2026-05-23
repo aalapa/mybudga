@@ -753,8 +753,20 @@ class _TransactionTile extends StatelessWidget {
 
     return InkWell(
       onTap: () => showEditTransactionSheet(context, ref, prefill: tx),
-      onLongPress:    tx.isTransfer ? null : () => _showTransactionActions(context, ref, tx),
-      onSecondaryTap: tx.isTransfer ? null : () => _showTransactionActions(context, ref, tx),
+      onLongPress: tx.isTransfer ? null : () async {
+        if (tx.isReconciled) {
+          final ok = await _showReconciledGate(context, tx);
+          if (!ok || !context.mounted) return;
+        }
+        _showTransactionActions(context, ref, tx);
+      },
+      onSecondaryTap: tx.isTransfer ? null : () async {
+        if (tx.isReconciled) {
+          final ok = await _showReconciledGate(context, tx);
+          if (!ok || !context.mounted) return;
+        }
+        _showTransactionActions(context, ref, tx);
+      },
       borderRadius: isLast
           ? const BorderRadius.vertical(bottom: Radius.circular(16))
           : BorderRadius.zero,
@@ -795,10 +807,24 @@ class _TransactionTile extends StatelessWidget {
                 ],
               ),
             ),
-            Text(fmt.format(tx.amount),
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 14, fontWeight: FontWeight.w700,
-                    color: tx.isIncome ? cs.tertiary : cs.onSurface)),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(fmt.format(tx.amount),
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14, fontWeight: FontWeight.w700,
+                        color: tx.isIncome ? cs.tertiary : cs.onSurface)),
+                if (tx.isReconciled) ...[
+                  const SizedBox(height: 2),
+                  Icon(
+                    Icons.lock_outline,
+                    size: 11,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.45),
+                  ),
+                ],
+              ],
+            ),
           ],
         ),
       ),
@@ -865,10 +891,67 @@ class _QuickFill {
 }
 
 // ---------------------------------------------------------------------------
+// Reconciled-transaction gate
+// ---------------------------------------------------------------------------
+
+/// Shows a warning before the user edits or deletes a reconciled transaction.
+/// Returns true if the user chose to proceed anyway, false if they cancelled.
+Future<bool> _showReconciledGate(
+  BuildContext context,
+  Transaction tx, {
+  bool forDelete = false,
+}) async {
+  final cs = Theme.of(context).colorScheme;
+  final dateStr = tx.reconciledAt != null
+      ? DateFormat('MMM d, yyyy').format(tx.reconciledAt!)
+      : 'a previous session';
+
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      icon: Icon(
+        forDelete ? Icons.lock : Icons.lock_outline,
+        color: forDelete ? cs.error : const Color(0xFFFFB300),
+        size: 30,
+      ),
+      title: Text(
+        forDelete
+            ? 'Delete reconciled transaction?'
+            : 'Edit reconciled transaction?',
+        style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700),
+        textAlign: TextAlign.center,
+      ),
+      content: Text(
+        'This transaction was reconciled on $dateStr.\n\n'
+        '${forDelete
+            ? 'Deleting it will permanently remove it and may unbalance your reconciliation.'
+            : 'Editing it may affect your reconciliation balance.'}',
+        style: GoogleFonts.plusJakartaSans(fontSize: 14),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          style: forDelete
+              ? TextButton.styleFrom(foregroundColor: cs.error)
+              : null,
+          onPressed: () => Navigator.pop(ctx, true),
+          child: Text(forDelete ? 'Delete anyway' : 'Edit anyway'),
+        ),
+      ],
+    ),
+  );
+  return ok == true;
+}
+
+// ---------------------------------------------------------------------------
 // Add / Edit Transaction sheet
 // ---------------------------------------------------------------------------
 
 /// Public so the account detail view can open the same edit sheet.
+/// Shows a reconciliation warning first when [prefill] is a reconciled transaction.
 Future<void> showEditTransactionSheet(
   BuildContext context,
   WidgetRef ref, {
@@ -876,6 +959,12 @@ Future<void> showEditTransactionSheet(
   ParsedSms?   smsData,
   _QuickFill?  quickFill,
 }) async {
+  // Gate: warn before letting the user edit a reconciled transaction.
+  if (prefill?.isReconciled == true) {
+    final proceed = await _showReconciledGate(context, prefill!);
+    if (!proceed || !context.mounted) return;
+  }
+
   await showModalBottomSheet(
     context: context,
     isScrollControlled: true,
@@ -1204,28 +1293,38 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
 
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Delete transaction?',
-            style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
-        content: Text('This will permanently remove the transaction.',
-            style: GoogleFonts.plusJakartaSans()),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Delete',
-                style: TextStyle(
-                    color: cs.error, fontWeight: FontWeight.w700)),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true && mounted) {
+    // Reconciled transactions get a stronger warning (second gate — first was
+    // on sheet open, this one is the final confirmation for the destructive act).
+    bool confirmed;
+    if (widget.prefill?.isReconciled == true) {
+      // ignore: use_build_context_synchronously
+      confirmed = await _showReconciledGate(context, widget.prefill!, forDelete: true);
+    } else {
+      // ignore: use_build_context_synchronously
+      confirmed = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: Text('Delete transaction?',
+                  style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+              content: Text('This will permanently remove the transaction.',
+                  style: GoogleFonts.plusJakartaSans()),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: Text('Delete',
+                      style: TextStyle(
+                          color: cs.error, fontWeight: FontWeight.w700)),
+                ),
+              ],
+            ),
+          ) == true;
+    }
+
+    if (confirmed && mounted) {
       setState(() => _saving = true);
       try {
         await ref

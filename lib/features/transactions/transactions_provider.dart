@@ -242,15 +242,6 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
   }) async {
     final client = ref.read(supabaseProvider);
 
-    final row = await client
-        .from('transactions')
-        .select('reconciled_at')
-        .eq('id', id)
-        .maybeSingle();
-    if (row?['reconciled_at'] != null) {
-      throw Exception('Cannot edit a reconciled transaction.');
-    }
-
     final householdId = await ref.read(householdIdProvider.future);
 
     String? payeeId;
@@ -298,12 +289,9 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
 
     final row = await client
         .from('transactions')
-        .select('transfer_id, reconciled_at')
+        .select('transfer_id')
         .eq('id', id)
         .maybeSingle();
-    if (row?['reconciled_at'] != null) {
-      throw Exception('Cannot delete a reconciled transaction.');
-    }
     final partnerId = row?['transfer_id'] as String?;
 
     final deletedAt = DateTime.now().toIso8601String();
