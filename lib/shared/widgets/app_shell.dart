@@ -9,6 +9,43 @@ import '../../features/insights/insights_provider.dart';
 import '../../features/insights/notification_service.dart';
 import '../../shared/models/account.dart';
 
+// ---------------------------------------------------------------------------
+// Due-date helpers (mirrors accounts_screen.dart logic)
+// ---------------------------------------------------------------------------
+
+enum _SidebarPayStatus { unpaid, partial, paid }
+
+DateTime _sidebarLastDue(int dueDay) {
+  final now = DateTime.now();
+  return dueDay <= now.day
+      ? DateTime(now.year, now.month, dueDay)
+      : DateTime(now.year, now.month - 1, dueDay);
+}
+
+_SidebarPayStatus _sidebarPayStatus(Account a, Map<String, DateTime> creditDates) {
+  if (a.dueDay == null) return _SidebarPayStatus.unpaid;
+  if (a.balance >= 0)   return _SidebarPayStatus.paid;
+  final lastCredit = creditDates[a.id];
+  if (lastCredit != null && !lastCredit.isBefore(_sidebarLastDue(a.dueDay!))) {
+    return _SidebarPayStatus.partial;
+  }
+  return _SidebarPayStatus.unpaid;
+}
+
+// Compact balance formatter: $9,999 / $10k / $1.2M
+String _compactBalance(double balance) {
+  final abs  = balance.abs();
+  final sign = balance < 0 ? '-' : '';
+  if (abs >= 1000000) {
+    final m = abs / 1000000;
+    return '$sign\$${m.toStringAsFixed(m >= 10 ? 0 : 1)}M';
+  }
+  if (abs >= 10000) {
+    return '$sign\$${(abs / 1000).round()}k';
+  }
+  return '$sign\$${NumberFormat('#,##0').format(abs)}';
+}
+
 class AppShell extends ConsumerWidget {
   final Widget child;
   const AppShell({super.key, required this.child});
@@ -56,7 +93,12 @@ class AppShell extends ConsumerWidget {
               tabs:          _desktopTabs,
               selectedIndex: selectedIndex,
             ),
-            Expanded(child: child),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: child,
+              ),
+            ),
           ],
         ),
       );
@@ -89,7 +131,7 @@ class _DesktopSidebar extends ConsumerStatefulWidget {
 class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
   bool _collapsed = false;
   static const _prefKey        = 'sidebar_collapsed';
-  static const _expandedWidth  = 220.0;
+  static const _expandedWidth  = 260.0;
   static const _collapsedWidth = 60.0;
 
   @override
@@ -115,6 +157,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
   Widget build(BuildContext context) {
     final cs               = Theme.of(context).colorScheme;
     final accounts         = ref.watch(accountsProvider).valueOrNull ?? [];
+    final creditDates      = ref.watch(recentCreditDatesProvider).valueOrNull ?? {};
     final currentAccountId = GoRouterState.of(context).uri.queryParameters['account'];
 
     final budgetCash = accounts.where((a) =>
@@ -177,6 +220,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                           accounts:          budgetCash,
                           collapsed:         _collapsed,
                           selectedAccountId: currentAccountId,
+                          creditDates:       creditDates,
                           onAccountTap: (a) =>
                               context.go('/transactions?account=${a.id}'),
                         ),
@@ -186,6 +230,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                           accounts:          creditCards,
                           collapsed:         _collapsed,
                           selectedAccountId: currentAccountId,
+                          creditDates:       creditDates,
                           onAccountTap: (a) =>
                               context.go('/transactions?account=${a.id}'),
                         ),
@@ -195,6 +240,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                           accounts:          trackingList,
                           collapsed:         _collapsed,
                           selectedAccountId: currentAccountId,
+                          creditDates:       creditDates,
                           onAccountTap: (a) =>
                               context.go('/transactions?account=${a.id}'),
                         ),
@@ -337,17 +383,19 @@ class _SidebarNavRow extends StatelessWidget {
 // ── Account group ─────────────────────────────────────────────────────────────
 
 class _SidebarAccountGroup extends StatelessWidget {
-  final String             label;
-  final List<Account>      accounts;
-  final bool               collapsed;
-  final String?            selectedAccountId;
-  final ValueChanged<Account> onAccountTap;
+  final String                    label;
+  final List<Account>             accounts;
+  final bool                      collapsed;
+  final String?                   selectedAccountId;
+  final Map<String, DateTime>     creditDates;
+  final ValueChanged<Account>     onAccountTap;
 
   const _SidebarAccountGroup({
     required this.label,
     required this.accounts,
     required this.collapsed,
     required this.selectedAccountId,
+    required this.creditDates,
     required this.onAccountTap,
   });
 
@@ -374,10 +422,11 @@ class _SidebarAccountGroup extends StatelessWidget {
           const SizedBox(height: 6),
         for (final account in accounts)
           _SidebarAccountRow(
-            account:  account,
-            selected: account.id == selectedAccountId,
-            collapsed: collapsed,
-            onTap:    () => onAccountTap(account),
+            account:     account,
+            selected:    account.id == selectedAccountId,
+            collapsed:   collapsed,
+            creditDates: creditDates,
+            onTap:       () => onAccountTap(account),
           ),
       ],
     );
@@ -387,34 +436,50 @@ class _SidebarAccountGroup extends StatelessWidget {
 // ── Account row ───────────────────────────────────────────────────────────────
 
 class _SidebarAccountRow extends StatelessWidget {
-  final Account       account;
-  final bool          selected;
-  final bool          collapsed;
-  final VoidCallback  onTap;
+  final Account               account;
+  final bool                  selected;
+  final bool                  collapsed;
+  final Map<String, DateTime> creditDates;
+  final VoidCallback          onTap;
 
   const _SidebarAccountRow({
     required this.account,
     required this.selected,
     required this.collapsed,
+    required this.creditDates,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final cs    = Theme.of(context).colorScheme;
-    final isNeg = account.balance < 0;
-    final fmt   = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
-    final balStr = isNeg
-        ? '-${fmt.format(account.balance.abs())}'
-        : fmt.format(account.balance);
+    final cs     = Theme.of(context).colorScheme;
+    final isNeg  = account.balance < 0;
+    final balStr = _compactBalance(account.balance);
+
+    final isCC   = account.type == AccountType.creditCard ||
+                   account.type == AccountType.lineOfCredit;
+    final hasDue = isCC && account.dueDay != null;
+    final status = hasDue ? _sidebarPayStatus(account, creditDates) : null;
+
+    // Leading widget: due-date badge for CCs (expanded), or type icon
+    Widget leading;
+    if (!collapsed && hasDue && status != null) {
+      leading = _SidebarDueBadge(dueDay: account.dueDay!, status: status);
+    } else {
+      leading = Icon(
+        account.type.icon,
+        size:  16,
+        color: selected ? cs.onSecondaryContainer : cs.onSurfaceVariant,
+      );
+    }
 
     final row = InkWell(
       onTap:        onTap,
       borderRadius: BorderRadius.circular(8),
       child: AnimatedContainer(
         duration:  const Duration(milliseconds: 180),
-        height:    36,
-        padding:   EdgeInsets.symmetric(horizontal: collapsed ? 0 : 10),
+        height:    38,
+        padding:   EdgeInsets.symmetric(horizontal: collapsed ? 0 : 8),
         decoration: BoxDecoration(
           color:        selected ? cs.secondaryContainer : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
@@ -424,11 +489,7 @@ class _SidebarAccountRow extends StatelessWidget {
               ? MainAxisAlignment.center
               : MainAxisAlignment.start,
           children: [
-            Icon(
-              account.type.icon,
-              size:  16,
-              color: selected ? cs.onSecondaryContainer : cs.onSurfaceVariant,
-            ),
+            leading,
             if (!collapsed) ...[
               const SizedBox(width: 8),
               Expanded(
@@ -442,7 +503,7 @@ class _SidebarAccountRow extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 4),
+              const SizedBox(width: 6),
               Text(
                 balStr,
                 style: GoogleFonts.plusJakartaSans(
@@ -453,15 +514,29 @@ class _SidebarAccountRow extends StatelessWidget {
                       : (selected ? cs.onSecondaryContainer : cs.onSurfaceVariant),
                 ),
               ),
+              const SizedBox(width: 4),
             ],
           ],
         ),
       ),
     );
 
+    // Tooltip content: include payment status for CCs
+    String tooltip = account.displayName;
+    if (hasDue) {
+      final statusLabel = switch (status!) {
+        _SidebarPayStatus.paid    => 'Paid',
+        _SidebarPayStatus.partial => 'Payment received',
+        _SidebarPayStatus.unpaid  => 'Due ${account.dueDay}',
+      };
+      tooltip = '${account.displayName} · $statusLabel\n$balStr';
+    } else {
+      tooltip = '${account.displayName}\n$balStr';
+    }
+
     if (collapsed) {
       return Tooltip(
-        message:     '${account.displayName}\n$balStr',
+        message:     tooltip,
         preferBelow: false,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
@@ -472,6 +547,74 @@ class _SidebarAccountRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
       child:   row,
+    );
+  }
+}
+
+// ── Due-date badge (compact, for sidebar CC rows) ─────────────────────────────
+
+class _SidebarDueBadge extends StatelessWidget {
+  final int               dueDay;
+  final _SidebarPayStatus status;
+  const _SidebarDueBadge({required this.dueDay, required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    if (status != _SidebarPayStatus.unpaid) {
+      final isPaid = status == _SidebarPayStatus.paid;
+      final color  = isPaid
+          ? const Color(0xFF4CAF50)   // green
+          : const Color(0xFFFFB300);  // amber
+      return Container(
+        width: 28, height: 32,
+        decoration: BoxDecoration(
+          color:        color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Center(
+          child: Icon(Icons.check_circle_rounded, size: 18, color: color),
+        ),
+      );
+    }
+
+    // Unpaid — mini calendar
+    final now     = DateTime.now();
+    final dueDate = dueDay >= now.day
+        ? DateTime(now.year, now.month, dueDay)
+        : DateTime(now.year, now.month + 1, dueDay);
+    final month   = DateFormat('MMM').format(dueDate).toUpperCase();
+
+    return Container(
+      width: 28, height: 32,
+      decoration: BoxDecoration(
+        color:        cs.error.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            month,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize:     7,
+              fontWeight:   FontWeight.w800,
+              color:        cs.error.withValues(alpha: 0.75),
+              letterSpacing: 0.4,
+            ),
+          ),
+          Text(
+            '$dueDay',
+            style: GoogleFonts.plusJakartaSans(
+              fontSize:   15,
+              fontWeight: FontWeight.w800,
+              color:      cs.error,
+              height:     1.0,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
