@@ -95,7 +95,7 @@ class AppShell extends ConsumerWidget {
             ),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.only(right: 12),
+                padding: const EdgeInsets.only(right: 72),
                 child: child,
               ),
             ),
@@ -131,7 +131,7 @@ class _DesktopSidebar extends ConsumerStatefulWidget {
 class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
   bool _collapsed = false;
   static const _prefKey        = 'sidebar_collapsed';
-  static const _expandedWidth  = 260.0;
+  static const _expandedWidth  = 300.0;
   static const _collapsedWidth = 60.0;
 
   @override
