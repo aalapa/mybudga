@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
@@ -129,6 +130,48 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                   ),
                 ),
               ),
+            Builder(
+              builder: (context) {
+                final accountIdFilter =
+                    GoRouterState.of(context).uri.queryParameters['account'];
+                if (accountIdFilter == null) return const SizedBox.shrink();
+                final accountName = ref
+                    .watch(accountsProvider)
+                    .valueOrNull
+                    ?.where((a) => a.id == accountIdFilter)
+                    .firstOrNull
+                    ?.displayName;
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                  child: Row(
+                    children: [
+                      Icon(Icons.filter_alt, size: 14,
+                          color: Theme.of(context).colorScheme.primary),
+                      const SizedBox(width: 6),
+                      Text(
+                        accountName ?? 'Account',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                      const Spacer(),
+                      GestureDetector(
+                        onTap: () => context.go('/transactions'),
+                        child: Text(
+                          'Show all',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
             Expanded(
               child: txAsync.when(
                 loading: () => const Center(child: CircularProgressIndicator()),
@@ -148,10 +191,11 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                   ),
                 ),
                 data: (all) => _TransactionsList(
-                  all:          all,
-                  search:       _search,
-                  searchFilter: _searchFilter,
-                  ref:          ref,
+                  all:             all,
+                  search:          _search,
+                  searchFilter:    _searchFilter,
+                  fixedAccountId:  GoRouterState.of(context).uri.queryParameters['account'],
+                  ref:             ref,
                 ),
               ),
             ),
@@ -194,38 +238,47 @@ class _TransactionsList extends StatelessWidget {
   final List<Transaction> all;
   final String search;
   final _SearchFilter searchFilter;
+  final String? fixedAccountId;
   final WidgetRef ref;
 
   const _TransactionsList({
     required this.all,
     required this.search,
     required this.searchFilter,
+    this.fixedAccountId,
     required this.ref,
   });
 
-  List<Transaction> get _pending =>
-      all.where((t) => t.isPendingReview).toList();
+  List<Transaction> get _pending {
+    final base = all.where((t) => t.isPendingReview);
+    if (fixedAccountId != null) {
+      return base.where((t) => t.accountId == fixedAccountId).toList();
+    }
+    return base.toList();
+  }
 
   List<Transaction> get _confirmed {
-    if (search.isEmpty) {
-      return all.where((t) => !t.isPendingReview).toList();
+    Iterable<Transaction> base = all.where((t) => !t.isPendingReview);
+    if (fixedAccountId != null) {
+      base = base.where((t) => t.accountId == fixedAccountId);
     }
+    if (search.isEmpty) return base.toList();
     final q    = search.toLowerCase();
     final byId = {for (final t in all) t.id: t};
-    String _partnerAccount(Transaction t) => t.transferId != null
+    String partnerAccount(Transaction t) => t.transferId != null
         ? (byId[t.transferId]?.account?.displayName ?? '').toLowerCase()
         : '';
-    return all.where((t) {
+    return base.where((t) {
       if (t.isPendingReview) return false;
       return switch (searchFilter) {
         _SearchFilter.all      => t.displayPayee.toLowerCase().contains(q) ||
                                   (t.categoryName ?? '').toLowerCase().contains(q) ||
                                   (t.account?.displayName ?? '').toLowerCase().contains(q) ||
-                                  _partnerAccount(t).contains(q),
+                                  partnerAccount(t).contains(q),
         _SearchFilter.payee    => t.displayPayee.toLowerCase().contains(q),
         _SearchFilter.category => (t.categoryName ?? '').toLowerCase().contains(q),
         _SearchFilter.account  => (t.account?.displayName ?? '').toLowerCase().contains(q) ||
-                                  _partnerAccount(t).contains(q),
+                                  partnerAccount(t).contains(q),
       };
     }).toList();
   }
