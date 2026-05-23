@@ -16,6 +16,8 @@ import '../../features/transactions/transactions_screen.dart'
     show showEditTransactionSheet, showTransferSheet, showQuickAddSheet;
 import '../../features/cashflow/cashflow_screen.dart'
     show showAddScheduledSheet;
+import '../../features/emi/emi_screen.dart'
+    show showSetupEmiSheet;
 import '../../features/accounts/accounts_screen.dart'
     show showAddAccountSheet;
 
@@ -25,23 +27,20 @@ import '../../features/accounts/accounts_screen.dart'
 
 enum _SidebarDueStatus { paid, dueSoon, overdue, upcoming }
 
-DateTime _sidebarLastDue(int dueDay) {
-  final now = DateTime.now();
-  return dueDay <= now.day
-      ? DateTime(now.year, now.month, dueDay)
-      : DateTime(now.year, now.month - 1, dueDay);
-}
-
 _SidebarDueStatus _sidebarDueStatus(Account a, Map<String, DateTime> creditDates) {
   if (a.dueDay == null) return _SidebarDueStatus.upcoming;
-  // Cycle start = one month before the last due date
-  final last       = _sidebarLastDue(a.dueDay!);
-  final cycleStart = DateTime(last.year, last.month - 1, last.day);
-  final lastCredit = creditDates[a.id];
-  final hasPaid    = a.balance >= 0 ||
-      (lastCredit != null && lastCredit.isAfter(cycleStart));
+  final now = DateTime.now();
+  // Most recent past occurrence of the due date (or today if it falls today).
+  final lastDue = a.dueDay! <= now.day
+      ? DateTime(now.year, now.month, a.dueDay!)
+      : DateTime(now.year, now.month - 1, a.dueDay!);
+  // A credit within 21 days before the last due date counts as payment.
+  final windowStart = lastDue.subtract(const Duration(days: 21));
+  final lastCredit  = creditDates[a.id];
+  final hasPaid     = a.balance >= 0 ||
+      (lastCredit != null && !lastCredit.isBefore(windowStart));
   if (hasPaid) return _SidebarDueStatus.paid;
-  final daysLeft = a.dueDay! - DateTime.now().day;
+  final daysLeft = a.dueDay! - now.day;
   if (daysLeft < 0)  return _SidebarDueStatus.overdue;
   if (daysLeft <= 7) return _SidebarDueStatus.dueSoon;
   return _SidebarDueStatus.upcoming;
@@ -880,12 +879,28 @@ class _DesktopFabLayer extends ConsumerWidget {
         );
 
       case '/cashflow':
-        return FloatingActionButton(
-          heroTag:         'desk_add_sched',
-          onPressed:       () => showAddScheduledSheet(context, ref, prefill: null),
-          backgroundColor: cs.primary,
-          foregroundColor: cs.onPrimary,
-          child: const Icon(Icons.add),
+        return Column(
+          mainAxisSize:       MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            FloatingActionButton.small(
+              heroTag:         'desk_add_emi',
+              onPressed:       () => showSetupEmiSheet(context, ref),
+              backgroundColor: cs.secondaryContainer,
+              foregroundColor: cs.onSecondaryContainer,
+              tooltip:         'Set up EMI',
+              child: const Icon(Icons.credit_score),
+            ),
+            const SizedBox(height: 12),
+            FloatingActionButton(
+              heroTag:         'desk_add_sched',
+              onPressed:       () => showAddScheduledSheet(context, ref, prefill: null),
+              backgroundColor: cs.primary,
+              foregroundColor: cs.onPrimary,
+              tooltip:         'Add bill / schedule',
+              child: const Icon(Icons.add),
+            ),
+          ],
         );
 
       case '/accounts':

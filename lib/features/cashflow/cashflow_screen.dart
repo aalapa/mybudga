@@ -7,6 +7,7 @@ import '../../shared/models/scheduled_transaction.dart';
 import '../../shared/models/account.dart';
 import '../../shared/providers/categories_provider.dart';
 import '../accounts/accounts_provider.dart';
+import '../emi/emi_screen.dart' show EmiSection, showSetupEmiSheet;
 import '../insights/notification_service.dart';
 import 'bill_reminders_provider.dart';
 import 'cashflow_provider.dart';
@@ -43,11 +44,13 @@ class _CashflowScreenState extends ConsumerState<CashflowScreen> {
           ref:              ref,
         ),
       ),
-      floatingActionButton: MediaQuery.sizeOf(context).width >= 800 ? null : FloatingActionButton(
-        onPressed: () => showAddScheduledSheet(context, ref, prefill: null),
-        backgroundColor: cs.primary,
-        child: Icon(Icons.add, color: cs.onPrimary),
-      ),
+      floatingActionButton: MediaQuery.sizeOf(context).width >= 800
+          ? null
+          : FloatingActionButton(
+              onPressed: () => _showAddOptions(context, ref),
+              backgroundColor: cs.primary,
+              child: Icon(Icons.add, color: cs.onPrimary),
+            ),
     );
   }
 }
@@ -239,6 +242,9 @@ class _CashflowBody extends StatelessWidget {
               ],
             ),
           ),
+
+          // EMI plans section — horizontal cards, collapsed when empty
+          const EmiSection(),
 
           // Overdue section — shown above the timeline when items exist
           if (overdue.isNotEmpty)
@@ -920,6 +926,64 @@ void _showTileActions(
 }
 
 // ---------------------------------------------------------------------------
+// Add options picker (Bill or EMI)
+// ---------------------------------------------------------------------------
+
+void _showAddOptions(BuildContext context, WidgetRef ref) {
+  final cs = Theme.of(context).colorScheme;
+  showModalBottomSheet(
+    context:         context,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => Container(
+      margin: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color:        cs.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 12),
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: cs.outlineVariant, borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          ListTile(
+            leading: CircleAvatar(
+              backgroundColor: cs.primaryContainer,
+              child: Icon(Icons.event_repeat, color: cs.onPrimaryContainer),
+            ),
+            title: const Text('Add Bill / Schedule'),
+            subtitle: const Text('Recurring income or expense reminder'),
+            onTap: () {
+              Navigator.pop(ctx);
+              showAddScheduledSheet(context, ref, prefill: null);
+            },
+          ),
+          ListTile(
+            leading: CircleAvatar(
+              backgroundColor: cs.secondaryContainer,
+              child: Icon(Icons.credit_score, color: cs.onSecondaryContainer),
+            ),
+            title: const Text('Set Up EMI'),
+            subtitle: const Text('CC purchase split into monthly installments'),
+            onTap: () {
+              Navigator.pop(ctx);
+              showSetupEmiSheet(context, ref);
+            },
+          ),
+          const SizedBox(height: 12),
+        ],
+      ),
+    ),
+  );
+}
+
 // Add scheduled transaction sheet
 // ---------------------------------------------------------------------------
 

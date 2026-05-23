@@ -36,50 +36,35 @@ String _ordinal(int n) {
   };
 }
 
-/// The most recent past occurrence of [dueDay] in the calendar.
-/// e.g. today = May 23, dueDay = 1  → May 1  (already passed this month)
-///      today = May 23, dueDay = 20 → May 20  (already passed this month)
-///      today = May 23, dueDay = 25 → April 25 (hasn't happened yet this month)
-DateTime _lastDueDate(int dueDay) {
-  final now = DateTime.now();
-  return dueDay <= now.day
-      ? DateTime(now.year, now.month, dueDay)
-      : DateTime(now.year, now.month - 1, dueDay);
-}
-
-/// One billing cycle before [_lastDueDate] — i.e. the start of the current
-/// billing period.  A payment made ANY TIME after this date (including before
-/// the actual due date) counts as paid for the current cycle.
-/// e.g. today = May 23, dueDay = 20 → April 20
-///      today = May 23, dueDay = 1  → April 1
-DateTime _cycleStartDate(int dueDay) {
-  final last = _lastDueDate(dueDay);
-  // Subtract one month; Dart's DateTime wraps month 0 → December previous year.
-  return DateTime(last.year, last.month - 1, last.day);
-}
-
 // ---------------------------------------------------------------------------
 // Due status — drives badge border colour
 // ---------------------------------------------------------------------------
 
 enum _DueStatus {
-  paid,      // payment found after cycle start          → green border
-  dueSoon,   // unpaid, due ≤ 7 days from today          → amber border
-  overdue,   // unpaid, this month's due date has passed → red border
-  upcoming,  // unpaid, due > 7 days away                → subtle border
+  paid,      // payment found in 21-day window before due → green border
+  dueSoon,   // unpaid, due ≤ 7 days from today           → amber border
+  overdue,   // unpaid, this month's due date has passed  → red border
+  upcoming,  // unpaid, due > 7 days away                 → subtle border
 }
 
 _DueStatus _dueStatus(Account a, Map<String, DateTime> creditDates) {
   if (a.dueDay == null) return _DueStatus.upcoming;
 
-  // Paid: zero/positive balance OR a payment recorded after the cycle start.
+  final now = DateTime.now();
+  // Most recent past occurrence of the due date (or today if it falls today).
+  final lastDue = a.dueDay! <= now.day
+      ? DateTime(now.year, now.month, a.dueDay!)
+      : DateTime(now.year, now.month - 1, a.dueDay!);
+  // A credit within 21 days before the last due date counts as payment.
+  final windowStart = lastDue.subtract(const Duration(days: 21));
+
   final lastCredit = creditDates[a.id];
   final hasPaid = a.balance >= 0 ||
-      (lastCredit != null && lastCredit.isAfter(_cycleStartDate(a.dueDay!)));
+      (lastCredit != null && !lastCredit.isBefore(windowStart));
   if (hasPaid) return _DueStatus.paid;
 
   // Not paid — classify by how far the current month's due date is.
-  final daysLeft = a.dueDay! - DateTime.now().day;
+  final daysLeft = a.dueDay! - now.day;
   if (daysLeft < 0) return _DueStatus.overdue;   // due date already passed this month
   if (daysLeft <= 7) return _DueStatus.dueSoon;  // due within a week
   return _DueStatus.upcoming;
