@@ -716,11 +716,15 @@ class _DueDateBadge extends StatelessWidget {
       _DueStatus.upcoming => cs.outlineVariant,          // subtle grey
     };
 
-    final now     = DateTime.now();
-    final dueDate = dueDay >= now.day
-        ? DateTime(now.year, now.month, dueDay)
-        : DateTime(now.year, now.month + 1, dueDay);
-    final month   = DateFormat('MMM').format(dueDate).toUpperCase();
+    final now = DateTime.now();
+    // Overdue → show the MISSED date (this month's occurrence, already past).
+    // All other states → show the NEXT upcoming occurrence.
+    final dueDate = status == _DueStatus.overdue
+        ? DateTime(now.year, now.month, dueDay)          // e.g. May 17
+        : dueDay >= now.day
+            ? DateTime(now.year, now.month, dueDay)      // e.g. May 28
+            : DateTime(now.year, now.month + 1, dueDay); // e.g. Jun 17
+    final month = DateFormat('MMM').format(dueDate).toUpperCase();
 
     return Container(
       width: 36, height: 40,
