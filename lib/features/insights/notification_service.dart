@@ -16,8 +16,11 @@ const _kMaxSlots  = 20;
 // IDs 3000–3099 reserved for bill-due reminders (max 100 scheduled transactions)
 const _kBillBase  = 3000;
 const _kBillSlots = 100;
-// IDs 4000–4049 reserved for CC due T-3 warnings  (max 50 CC accounts)
-// IDs 4050–4099 reserved for CC due T-0 reminders (max 50 CC accounts)
+// IDs 4000–4199 reserved for CC due reminders (4 slots × 50 accounts)
+//   4000–4049 : T-3 warnings
+//   4050–4099 : T-2 warnings
+//   4100–4149 : T-1 warnings
+//   4150–4199 : T-0 due-day reminders
 const _kCcBase  = 4000;
 const _kCcSlots = 50;
 
@@ -194,10 +197,9 @@ class NotificationService {
 
   // ── Credit-card due reminders ────────────────────────────────────────────
 
-  static int _ccWarningId(String accountId) =>
-      _kCcBase + (accountId.hashCode.abs() % _kCcSlots);
-  static int _ccDueId(String accountId) =>
-      _kCcBase + _kCcSlots + (accountId.hashCode.abs() % _kCcSlots);
+  // slot 0 = T-3, slot 1 = T-2, slot 2 = T-1, slot 3 = T-0
+  static int _ccNotifId(String accountId, int slot) =>
+      _kCcBase + slot * _kCcSlots + (accountId.hashCode.abs() % _kCcSlots);
 
   /// Cancels then reschedules CC due notifications for every active,
   /// unpaid credit-card / line-of-credit account in [accounts].
@@ -214,8 +216,8 @@ class NotificationService {
   ) async {
     if (!_initialized) return;
 
-    // Cancel all CC slots first.
-    for (var i = _kCcBase; i < _kCcBase + _kCcSlots * 2; i++) {
+    // Cancel all 4 CC slots (T-3, T-2, T-1, T-0).
+    for (var i = _kCcBase; i < _kCcBase + _kCcSlots * 4; i++) {
       await _plugin.cancel(i);
     }
 
@@ -247,20 +249,23 @@ class NotificationService {
       final amount = fmt.format(account.balance.abs());
       final dateLabel = _shortDate(nextDue);
 
-      // T-3 — "due in 3 days"
-      await _scheduleCcNotif(
-        id:    _ccWarningId(account.id),
-        fireAt: nextDue.subtract(const Duration(days: 3)),
-        title: '$name due in 3 days',
-        body:  'Payment of $amount due $dateLabel. Pay on time to avoid charges.',
-      );
+      // T-3, T-2, T-1 — escalating warnings
+      for (final days in [3, 2, 1]) {
+        final slot = 3 - days; // 0, 1, 2
+        await _scheduleCcNotif(
+          id:     _ccNotifId(account.id, slot),
+          fireAt: nextDue.subtract(Duration(days: days)),
+          title:  '$name due in $days ${days == 1 ? 'day' : 'days'}',
+          body:   'Payment of $amount due $dateLabel. Pay on time to avoid charges.',
+        );
+      }
 
       // T-0 — "due today"
       await _scheduleCcNotif(
-        id:    _ccDueId(account.id),
+        id:     _ccNotifId(account.id, 3),
         fireAt: nextDue,
-        title: '$name payment due today',
-        body:  '$amount due today. Open MyBudga to record your payment.',
+        title:  '$name payment due today',
+        body:   '$amount due today. Open MyBudga to record your payment.',
       );
     }
   }
