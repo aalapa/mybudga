@@ -64,10 +64,11 @@ class AppShell extends ConsumerWidget {
     _TabItem(path: '/reports',      label: 'Reports',  icon: Icons.bar_chart_outlined,              activeIcon: Icons.bar_chart),
   ];
 
-  // Desktop sidebar nav — Accounts moved into sidebar, not a top-level tab
+  // Desktop sidebar nav
   static const _desktopTabs = [
     _TabItem(path: '/dashboard',    label: 'Home',         icon: Icons.home_outlined,                   activeIcon: Icons.home),
     _TabItem(path: '/budget',       label: 'Budget',       icon: Icons.account_balance_wallet_outlined, activeIcon: Icons.account_balance_wallet),
+    _TabItem(path: '/accounts',     label: 'Accounts',     icon: Icons.credit_card_outlined,            activeIcon: Icons.credit_card),
     _TabItem(path: '/transactions', label: 'Transactions', icon: Icons.receipt_long_outlined,           activeIcon: Icons.receipt_long),
     _TabItem(path: '/cashflow',     label: 'Cashflow',     icon: Icons.waterfall_chart_outlined,        activeIcon: Icons.waterfall_chart),
     _TabItem(path: '/reports',      label: 'Reports',      icon: Icons.bar_chart_outlined,              activeIcon: Icons.bar_chart),
@@ -272,10 +273,6 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                           futureSums:        futureSums,
                           onAccountTap: (a) =>
                               context.go('/transactions?account=${a.id}'),
-                        ),
-                      if (!_collapsed)
-                        _SidebarManageRow(
-                          onTap: () => context.go('/accounts'),
                         ),
                       const SizedBox(height: 8),
                     ],
@@ -746,43 +743,6 @@ class _SidebarDueBadge extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-// ── Manage accounts row ───────────────────────────────────────────────────────
-
-class _SidebarManageRow extends StatelessWidget {
-  final VoidCallback onTap;
-  const _SidebarManageRow({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
-      child: InkWell(
-        onTap:        onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: SizedBox(
-          height: 34,
-          child: Row(
-            children: [
-              const SizedBox(width: 10),
-              Icon(Icons.add, size: 15, color: cs.onSurfaceVariant),
-              const SizedBox(width: 8),
-              Text(
-                'Manage accounts',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize:   12,
-                  fontWeight: FontWeight.w500,
-                  color:      cs.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
