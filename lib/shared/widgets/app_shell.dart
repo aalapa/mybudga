@@ -7,6 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../features/accounts/accounts_provider.dart'
     show accountsProvider, recentCreditDatesProvider,
          futureTxSumsProvider, todayBalanceProvider;
+import '../../features/accounts/account_labels_provider.dart'
+    show accountLabelsProvider;
 import '../../features/insights/insights_provider.dart';
 import '../../features/insights/notification_service.dart';
 import '../../shared/models/account.dart';
@@ -173,6 +175,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
   Widget build(BuildContext context) {
     final cs               = Theme.of(context).colorScheme;
     final accounts         = ref.watch(accountsProvider).valueOrNull ?? [];
+    final labels           = ref.watch(accountLabelsProvider);
     final creditDates      = ref.watch(recentCreditDatesProvider).valueOrNull ?? {};
     final todayOn    = ref.watch(todayBalanceProvider);
     final futureSums = todayOn
@@ -180,15 +183,23 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
         : <String, double>{};
     final currentAccountId = GoRouterState.of(context).uri.queryParameters['account'];
 
-    final budgetCash = accounts.where((a) =>
-        !a.isTracking &&
-        a.type != AccountType.creditCard &&
-        a.type != AccountType.lineOfCredit).toList();
-    final creditCards = accounts.where((a) =>
-        !a.isTracking &&
-        (a.type == AccountType.creditCard ||
-         a.type == AccountType.lineOfCredit)).toList();
-    final trackingList = accounts.where((a) => a.isTracking).toList();
+    // Mirror the same label-based grouping as the Accounts screen.
+    final budgetAccounts = accounts.where((a) => !a.isTracking).toList();
+    final trackingList   = accounts.where((a) =>  a.isTracking).toList();
+
+    final claimed = <String>{};
+    final labeledSections = <({String label, List<Account> accounts})>[];
+    for (final lbl in labels) {
+      final matched = budgetAccounts
+          .where((a) => !claimed.contains(a.id) && lbl.matches(a))
+          .toList();
+      if (matched.isNotEmpty) {
+        for (final a in matched) claimed.add(a.id);
+        labeledSections.add((label: lbl.name.toUpperCase(), accounts: matched));
+      }
+    }
+    final unclaimed      = budgetAccounts.where((a) => !claimed.contains(a.id)).toList();
+    final unclaimedLabel = labels.isEmpty ? 'BUDGET ACCOUNTS' : 'OTHER';
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
@@ -241,10 +252,11 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                           onChanged: (v) =>
                               ref.read(todayBalanceProvider.notifier).set(v),
                         ),
-                      if (budgetCash.isNotEmpty)
+                      // ── User-defined label groups ─────────────────
+                      for (final sec in labeledSections)
                         _SidebarAccountGroup(
-                          label:             'CASH & SAVINGS',
-                          accounts:          budgetCash,
+                          label:             sec.label,
+                          accounts:          sec.accounts,
                           collapsed:         _collapsed,
                           selectedAccountId: currentAccountId,
                           creditDates:       creditDates,
@@ -252,10 +264,11 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                           onAccountTap: (a) =>
                               context.go('/transactions?account=${a.id}'),
                         ),
-                      if (creditCards.isNotEmpty)
+                      // ── Unclaimed budget accounts ─────────────────
+                      if (unclaimed.isNotEmpty)
                         _SidebarAccountGroup(
-                          label:             'CREDIT CARDS',
-                          accounts:          creditCards,
+                          label:             unclaimedLabel,
+                          accounts:          unclaimed,
                           collapsed:         _collapsed,
                           selectedAccountId: currentAccountId,
                           creditDates:       creditDates,
@@ -263,6 +276,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                           onAccountTap: (a) =>
                               context.go('/transactions?account=${a.id}'),
                         ),
+                      // ── Tracking accounts ─────────────────────────
                       if (trackingList.isNotEmpty)
                         _SidebarAccountGroup(
                           label:             'TRACKING',
