@@ -806,6 +806,101 @@ class _AppearanceCard extends ConsumerWidget {
                         entry.color.toARGB32(),
                     onTap:      () => notifier.setSeedColor(entry.color),
                   ),
+                // Custom colour picker button
+                Tooltip(
+                  message: 'Custom colour',
+                  child: GestureDetector(
+                    onTap: () async {
+                      final picked = await showModalBottomSheet<Color>(
+                        context:            context,
+                        isScrollControlled: true,
+                        useSafeArea:        true,
+                        backgroundColor:    Colors.transparent,
+                        builder: (_) => _CustomColorPickerSheet(
+                          initialColor: settings.seedColor,
+                        ),
+                      );
+                      if (picked != null) notifier.setSeedColor(picked);
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      width:  38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: cs.outline.withValues(alpha: 0.4),
+                          width: 1.5,
+                        ),
+                        gradient: const SweepGradient(
+                          colors: [
+                            Color(0xFFFF0000), Color(0xFFFFFF00),
+                            Color(0xFF00FF00), Color(0xFF00FFFF),
+                            Color(0xFF0000FF), Color(0xFFFF00FF),
+                            Color(0xFFFF0000),
+                          ],
+                        ),
+                      ),
+                      child: const Icon(Icons.add, color: Colors.white, size: 18),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            // ── Card style ────────────────────────────────────────────────
+            Row(
+              children: [
+                Icon(Icons.style_outlined,
+                    size: 18, color: cs.onSurfaceVariant),
+                const SizedBox(width: 10),
+                Text('Card Style',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14, fontWeight: FontWeight.w600,
+                        color: cs.onSurface)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                for (final style in CardStyle.values) ...[
+                  Expanded(
+                    child: _CardStyleTile(
+                      style:      style,
+                      isSelected: settings.cardStyle == style,
+                      onTap:      () => notifier.setCardStyle(style),
+                    ),
+                  ),
+                  if (style != CardStyle.values.last) const SizedBox(width: 8),
+                ],
+              ],
+            ),
+            const SizedBox(height: 20),
+            // ── Card radius ───────────────────────────────────────────────
+            Row(
+              children: [
+                Icon(Icons.rounded_corner,
+                    size: 18, color: cs.onSurfaceVariant),
+                const SizedBox(width: 10),
+                Text('Corner Radius',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14, fontWeight: FontWeight.w600,
+                        color: cs.onSurface)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                for (final radius in CardRadius.values) ...[
+                  Expanded(
+                    child: _CardRadiusTile(
+                      radius:     radius,
+                      isSelected: settings.cardRadius == radius,
+                      onTap:      () => notifier.setCardRadius(radius),
+                    ),
+                  ),
+                  if (radius != CardRadius.values.last) const SizedBox(width: 8),
+                ],
               ],
             ),
           ],
@@ -813,6 +908,431 @@ class _AppearanceCard extends ConsumerWidget {
       ),
     );
   }
+}
+
+// ── Card style preview tile ───────────────────────────────────────────────────
+
+class _CardStyleTile extends StatelessWidget {
+  final CardStyle    style;
+  final bool         isSelected;
+  final VoidCallback onTap;
+  const _CardStyleTile({required this.style, required this.isSelected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final bgColor = switch (style) {
+      CardStyle.flat     => cs.surfaceContainerHigh,
+      CardStyle.outlined => Colors.transparent,
+      CardStyle.elevated => cs.surfaceContainerHighest,
+      CardStyle.tinted   => Color.lerp(cs.surfaceContainerHigh, cs.primaryContainer, 0.30)!,
+    };
+    final hasBorder = style == CardStyle.outlined;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color:        isSelected ? cs.primaryContainer.withValues(alpha: 0.25) : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? cs.primary : cs.outline.withValues(alpha: 0.25),
+            width: isSelected ? 1.5 : 1,
+          ),
+        ),
+        child: Column(
+          children: [
+            // Mini card preview
+            Container(
+              height: 52,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color:        bgColor,
+                borderRadius: BorderRadius.circular(8),
+                border: hasBorder
+                    ? Border.all(color: cs.outline.withValues(alpha: 0.30), width: 1)
+                    : null,
+                boxShadow: style == CardStyle.elevated
+                    ? [BoxShadow(color: cs.shadow.withValues(alpha: 0.18),
+                          blurRadius: 4, offset: const Offset(0, 2))]
+                    : null,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(height: 6, width: 40,
+                      decoration: BoxDecoration(
+                        color: cs.onSurface.withValues(alpha: 0.25),
+                        borderRadius: BorderRadius.circular(3),
+                      )),
+                  const SizedBox(height: 5),
+                  Row(
+                    children: [
+                      Container(height: 5, width: 28,
+                          decoration: BoxDecoration(
+                            color: cs.onSurface.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(3),
+                          )),
+                      const Spacer(),
+                      Container(height: 5, width: 20,
+                          decoration: BoxDecoration(
+                            color: cs.primary.withValues(alpha: 0.4),
+                            borderRadius: BorderRadius.circular(3),
+                          )),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              style.label,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize:   11,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                color:      isSelected ? cs.primary : cs.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Card radius selector tile ─────────────────────────────────────────────────
+
+class _CardRadiusTile extends StatelessWidget {
+  final CardRadius   radius;
+  final bool         isSelected;
+  final VoidCallback onTap;
+  const _CardRadiusTile({required this.radius, required this.isSelected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final r  = radius.value;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        decoration: BoxDecoration(
+          color:        isSelected ? cs.primaryContainer.withValues(alpha: 0.25) : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? cs.primary : cs.outline.withValues(alpha: 0.25),
+            width: isSelected ? 1.5 : 1,
+          ),
+        ),
+        child: Column(
+          children: [
+            Container(
+              height: 36,
+              width:  double.infinity,
+              decoration: BoxDecoration(
+                color:        cs.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(r),
+                border: Border.all(color: cs.outline.withValues(alpha: 0.15), width: 1),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              radius.label,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize:   11,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                color:      isSelected ? cs.primary : cs.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Custom colour picker (HSV + hex) ─────────────────────────────────────────
+
+class _CustomColorPickerSheet extends StatefulWidget {
+  final Color initialColor;
+  const _CustomColorPickerSheet({required this.initialColor});
+
+  @override
+  State<_CustomColorPickerSheet> createState() => _CustomColorPickerSheetState();
+}
+
+class _CustomColorPickerSheetState extends State<_CustomColorPickerSheet> {
+  late double _hue;
+  late double _sat;
+  late double _val;
+  late TextEditingController _hexCtrl;
+  bool _hexFocused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final hsv = HSVColor.fromColor(widget.initialColor);
+    _hue = hsv.hue;
+    _sat = hsv.saturation;
+    _val = hsv.value;
+    _hexCtrl = TextEditingController(text: _toHex(_currentColor));
+  }
+
+  @override
+  void dispose() { _hexCtrl.dispose(); super.dispose(); }
+
+  Color get _currentColor => HSVColor.fromAHSV(1, _hue, _sat, _val).toColor();
+
+  String _toHex(Color c) =>
+      c.toARGB32().toRadixString(16).substring(2).toUpperCase();
+
+  void _applyHex(String hex) {
+    final clean = hex.replaceAll('#', '');
+    if (clean.length == 6) {
+      final v = int.tryParse('FF$clean', radix: 16);
+      if (v != null) {
+        final hsv = HSVColor.fromColor(Color(v));
+        setState(() {
+          _hue = hsv.hue;
+          _sat = hsv.saturation;
+          _val = hsv.value;
+        });
+      }
+    }
+  }
+
+  void _onSvPan(Offset local, Size size) {
+    setState(() {
+      _sat = (local.dx / size.width).clamp(0.0, 1.0);
+      _val = (1 - local.dy / size.height).clamp(0.0, 1.0);
+      if (!_hexFocused) _hexCtrl.text = _toHex(_currentColor);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        color:        cs.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+          20, 12, 20, MediaQuery.viewInsetsOf(context).bottom + 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Handle
+          Container(width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurface.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(2),
+              )),
+          const SizedBox(height: 16),
+          // Title + preview circle
+          Row(
+            children: [
+              Text('Custom Colour',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 16, fontWeight: FontWeight.w700,
+                      color: cs.onSurface)),
+              const Spacer(),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 80),
+                width: 32, height: 32,
+                decoration: BoxDecoration(
+                  color:  _currentColor,
+                  shape:  BoxShape.circle,
+                  border: Border.all(
+                      color: cs.outline.withValues(alpha: 0.3), width: 1),
+                  boxShadow: [BoxShadow(
+                      color: _currentColor.withValues(alpha: 0.5),
+                      blurRadius: 8)],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // SV box
+          LayoutBuilder(builder: (ctx, constraints) {
+            final w = constraints.maxWidth;
+            const h = 200.0;
+            return GestureDetector(
+              onPanDown:   (d) => _onSvPan(d.localPosition, Size(w, h)),
+              onPanUpdate: (d) => _onSvPan(d.localPosition, Size(w, h)),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: CustomPaint(
+                  size: Size(w, h),
+                  painter: _SvBoxPainter(
+                      hue: _hue, saturation: _sat, value: _val),
+                ),
+              ),
+            );
+          }),
+          const SizedBox(height: 14),
+          // Hue bar
+          LayoutBuilder(builder: (ctx, constraints) {
+            final w = constraints.maxWidth;
+            const h = 24.0;
+            return GestureDetector(
+              onPanDown: (d) => setState(() {
+                _hue = ((d.localPosition.dx / w) * 360).clamp(0, 360);
+                if (!_hexFocused) _hexCtrl.text = _toHex(_currentColor);
+              }),
+              onPanUpdate: (d) => setState(() {
+                _hue = ((d.localPosition.dx / w) * 360).clamp(0, 360);
+                if (!_hexFocused) _hexCtrl.text = _toHex(_currentColor);
+              }),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(h / 2),
+                child: CustomPaint(
+                  size: Size(w, h),
+                  painter: _HueBarPainter(hue: _hue),
+                ),
+              ),
+            );
+          }),
+          const SizedBox(height: 16),
+          // Hex input
+          Focus(
+            onFocusChange: (f) => setState(() => _hexFocused = f),
+            child: TextField(
+              controller: _hexCtrl,
+              onChanged:  _applyHex,
+              onSubmitted: _applyHex,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 14, fontWeight: FontWeight.w600),
+              decoration: InputDecoration(
+                labelText:   'Hex colour',
+                hintText:    'e.g. 5C00F2',
+                prefixText:  '#',
+                prefixStyle: GoogleFonts.plusJakartaSans(
+                    fontSize: 14, color: cs.onSurfaceVariant),
+                suffixIcon: Container(
+                  margin: const EdgeInsets.all(8),
+                  width: 28, height: 28,
+                  decoration: BoxDecoration(
+                    color:  _currentColor,
+                    shape:  BoxShape.circle,
+                    border: Border.all(
+                        color: cs.outline.withValues(alpha: 0.3), width: 1),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          // Buttons
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 48),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text('Cancel'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(context, _currentColor),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(0, 48),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text('Apply'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Painters ──────────────────────────────────────────────────────────────────
+
+class _SvBoxPainter extends CustomPainter {
+  final double hue;
+  final double saturation;
+  final double value;
+  const _SvBoxPainter({required this.hue, required this.saturation, required this.value});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final hueColor = HSVColor.fromAHSV(1, hue, 1, 1).toColor();
+
+    // White → hue (saturation, left→right)
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..shader = LinearGradient(
+        colors: [Colors.white, hueColor],
+      ).createShader(Offset.zero & size),
+    );
+    // Transparent → black (value, top→bottom)
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..shader = const LinearGradient(
+        begin: Alignment.topCenter,
+        end:   Alignment.bottomCenter,
+        colors: [Colors.transparent, Colors.black],
+      ).createShader(Offset.zero & size),
+    );
+    // Crosshair cursor
+    final cx = saturation * size.width;
+    final cy = (1 - value) * size.height;
+    canvas.drawCircle(Offset(cx, cy), 10,
+        Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 2.5);
+    canvas.drawCircle(Offset(cx, cy), 9,
+        Paint()..color = Colors.black.withValues(alpha: 0.3)..style = PaintingStyle.stroke..strokeWidth = 1);
+  }
+
+  @override
+  bool shouldRepaint(_SvBoxPainter o) =>
+      o.hue != hue || o.saturation != saturation || o.value != value;
+}
+
+class _HueBarPainter extends CustomPainter {
+  final double hue;
+  const _HueBarPainter({required this.hue});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Rainbow gradient across full bar
+    final colors = List.generate(
+        7, (i) => HSVColor.fromAHSV(1, i * 60.0, 1, 1).toColor());
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..shader = LinearGradient(colors: colors)
+          .createShader(Offset.zero & size),
+    );
+    // Thumb circle
+    final tx = (hue / 360) * size.width;
+    final ty = size.height / 2;
+    canvas.drawCircle(Offset(tx, ty), size.height * 0.58,
+        Paint()..color = Colors.white..style = PaintingStyle.fill);
+    canvas.drawCircle(Offset(tx, ty), size.height * 0.58,
+        Paint()..color = Colors.black.withValues(alpha: 0.2)
+            ..style = PaintingStyle.stroke..strokeWidth = 1);
+    // Thumb fill with selected hue
+    canvas.drawCircle(Offset(tx, ty), size.height * 0.44,
+        Paint()..color = HSVColor.fromAHSV(1, hue, 1, 1).toColor());
+  }
+
+  @override
+  bool shouldRepaint(_HueBarPainter o) => o.hue != hue;
 }
 
 // ── Single colour swatch circle ───────────────────────────────────────────────

@@ -56,8 +56,8 @@ class MyBudgaApp extends ConsumerWidget {
     final themePref = ref.watch(themeProvider);
     return MaterialApp.router(
       title:      'MyBudga',
-      theme:      AppTheme.light(seedColor: themePref.seedColor),
-      darkTheme:  AppTheme.dark(seedColor: themePref.seedColor),
+      theme:        AppTheme.light(seedColor: themePref.seedColor, cardStyle: themePref.cardStyle, cardRadius: themePref.cardRadius),
+      darkTheme:    AppTheme.dark(seedColor: themePref.seedColor,  cardStyle: themePref.cardStyle, cardRadius: themePref.cardRadius),
       themeMode:  themePref.mode,
       routerConfig: router,
       debugShowCheckedModeBanner: false,
