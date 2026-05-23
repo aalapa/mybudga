@@ -38,7 +38,7 @@ _SidebarPayStatus _sidebarPayStatus(Account a, Map<String, DateTime> creditDates
   return _SidebarPayStatus.unpaid;
 }
 
-// Compact balance formatter: $9,999 / $10k / $1.2M
+// Sidebar balance formatter: always two decimals; compact only for ≥ 1M
 String _compactBalance(double balance) {
   final abs  = balance.abs();
   final sign = balance < 0 ? '-' : '';
@@ -46,10 +46,7 @@ String _compactBalance(double balance) {
     final m = abs / 1000000;
     return '$sign\$${m.toStringAsFixed(m >= 10 ? 0 : 1)}M';
   }
-  if (abs >= 10000) {
-    return '$sign\$${(abs / 1000).round()}k';
-  }
-  return '$sign\$${NumberFormat('#,##0').format(abs)}';
+  return '$sign\$${NumberFormat('#,##0.00').format(abs)}';
 }
 
 class AppShell extends ConsumerWidget {
