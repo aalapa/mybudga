@@ -887,36 +887,22 @@ void _showTileActions(
             ),
           ),
           const SizedBox(height: 4),
-          if (st.needsAccount)
-            ListTile(
-              leading: Icon(Icons.check_circle_outline, color: cs.tertiary),
-              title: Text('Confirm Payment',
-                  style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
-              subtitle: Text(
-                'Choose account & confirm actual amount',
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 12, color: cs.onSurfaceVariant),
-              ),
-              onTap: () {
-                Navigator.pop(ctx);
-                _showConfirmPaymentSheet(context, ref, entry);
-              },
-            )
-          else
-            ListTile(
-              leading: Icon(Icons.check_circle_outline, color: cs.tertiary),
-              title: Text('Mark as paid',
-                  style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
-              subtitle: Text(
-                'Advances due date to the next occurrence',
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 12, color: cs.onSurfaceVariant),
-              ),
-              onTap: () async {
-                Navigator.pop(ctx);
-                await ref.read(cashflowProvider.notifier).markAsPaid(st.id);
-              },
+          ListTile(
+            leading: Icon(Icons.check_circle_outline, color: cs.tertiary),
+            title: Text('Enter transaction',
+                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
+            subtitle: Text(
+              st.needsAccount
+                  ? 'Choose account & confirm actual amount'
+                  : 'Confirm amount & date, then record to ${st.accountName}',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12, color: cs.onSurfaceVariant),
             ),
+            onTap: () {
+              Navigator.pop(ctx);
+              _showConfirmPaymentSheet(context, ref, entry);
+            },
+          ),
           ListTile(
             leading: Icon(Icons.edit_outlined, color: cs.onSurfaceVariant),
             title: Text('Edit',
@@ -2112,9 +2098,17 @@ class _OverdueTile extends StatelessWidget {
     );
 
     if (st.needsAccount) {
+      // No account set (or transfer) — sheet lets user pick account / confirm.
       _showConfirmPaymentSheet(context, ref, entry);
     } else {
-      ref.read(cashflowProvider.notifier).markAsPaid(st.id);
+      // Account is known — create the transaction immediately and advance the
+      // schedule.  confirmPayment() writes the row + calls invalidateSelf().
+      ref.read(cashflowProvider.notifier).confirmPayment(
+        st.id,
+        accountId:    st.accountId!,
+        actualAmount: st.amount,
+        date:         DateTime.now(),
+      ).ignore();
     }
   }
 
