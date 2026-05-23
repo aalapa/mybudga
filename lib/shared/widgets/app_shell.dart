@@ -47,6 +47,20 @@ _SidebarDueStatus _sidebarDueStatus(Account a, Map<String, DateTime> creditDates
   return _SidebarDueStatus.upcoming;
 }
 
+// Sort accounts by days until next due date (soonest first).
+// Accounts without a due day go to the end.
+List<Account> _sortByDue(List<Account> accounts) {
+  final now = DateTime.now();
+  int daysUntil(int? d) {
+    if (d == null) return 999;
+    if (d >= now.day) return d - now.day;
+    final daysInMonth = DateTime(now.year, now.month + 1, 0).day;
+    return (daysInMonth - now.day) + d;
+  }
+  return [...accounts]..sort((a, b) =>
+      daysUntil(a.dueDay).compareTo(daysUntil(b.dueDay)));
+}
+
 String _ordinal(int n) {
   if (n >= 11 && n <= 13) return '${n}th';
   return switch (n % 10) {
@@ -271,7 +285,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                       for (final sec in labeledSections)
                         _SidebarAccountGroup(
                           label:             sec.label,
-                          accounts:          sec.accounts,
+                          accounts:          _sortByDue(sec.accounts),
                           collapsed:         _collapsed,
                           selectedAccountId: currentAccountId,
                           creditDates:       creditDates,
@@ -283,7 +297,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                       if (unclaimed.isNotEmpty)
                         _SidebarAccountGroup(
                           label:             unclaimedLabel,
-                          accounts:          unclaimed,
+                          accounts:          _sortByDue(unclaimed),
                           collapsed:         _collapsed,
                           selectedAccountId: currentAccountId,
                           creditDates:       creditDates,
@@ -295,7 +309,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                       if (trackingList.isNotEmpty)
                         _SidebarAccountGroup(
                           label:             'TRACKING',
-                          accounts:          trackingList,
+                          accounts:          _sortByDue(trackingList),
                           collapsed:         _collapsed,
                           selectedAccountId: currentAccountId,
                           creditDates:       creditDates,
