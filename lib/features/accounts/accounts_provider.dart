@@ -428,3 +428,40 @@ final recentCreditDatesProvider =
   }
   return map;
 });
+
+// ---------------------------------------------------------------------------
+// Future transaction sums — used by sidebar "As of today" toggle
+// Returns Map<accountId, sumOfTransactionsWithDateAfterToday>
+// "Today's balance" = current_balance - futureSums[accountId]
+// ---------------------------------------------------------------------------
+
+final futureTxSumsProvider =
+    FutureProvider.autoDispose<Map<String, double>>((ref) async {
+  // Invalidate whenever accounts (and therefore transactions) change.
+  ref.watch(accountsProvider);
+
+  final householdId = await ref.watch(householdIdProvider.future);
+  final client      = ref.watch(supabaseProvider);
+
+  final now      = DateTime.now();
+  final todayStr = '${now.year}-'
+      '${now.month.toString().padLeft(2, '0')}-'
+      '${now.day.toString().padLeft(2, '0')}';
+
+  final res = await client
+      .from('transactions')
+      .select('account_id, amount')
+      .eq('household_id', householdId)
+      .gt('date', todayStr)          // strictly after today
+      .isFilter('deleted_at', null);
+
+  final map = <String, double>{};
+  for (final r in res as List) {
+    final id     = r['account_id'] as String?;
+    final amount = (r['amount'] as num?)?.toDouble() ?? 0.0;
+    if (id != null) {
+      map[id] = (map[id] ?? 0.0) + amount;
+    }
+  }
+  return map;
+});

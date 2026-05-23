@@ -4,7 +4,8 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../features/accounts/accounts_provider.dart';
+import '../../features/accounts/accounts_provider.dart'
+    show accountsProvider, recentCreditDatesProvider, futureTxSumsProvider;
 import '../../features/insights/insights_provider.dart';
 import '../../features/insights/notification_service.dart';
 import '../../shared/models/account.dart';
@@ -141,28 +142,43 @@ class _DesktopSidebar extends ConsumerStatefulWidget {
 }
 
 class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
-  bool _collapsed = false;
-  static const _prefKey        = 'sidebar_collapsed';
+  bool _collapsed     = false;
+  bool _todayBalance  = true;   // "As of today" toggle — excludes future txns
+
+  static const _prefKeyCollapsed     = 'sidebar_collapsed';
+  static const _prefKeyTodayBalance  = 'sidebar_today_balance';
   static const _expandedWidth  = 300.0;
   static const _collapsedWidth = 60.0;
 
   @override
   void initState() {
     super.initState();
-    _loadPref();
+    _loadPrefs();
   }
 
-  Future<void> _loadPref() async {
+  Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
-    final v = prefs.getBool(_prefKey) ?? false;
-    if (mounted && v != _collapsed) setState(() => _collapsed = v);
+    final collapsed    = prefs.getBool(_prefKeyCollapsed)    ?? false;
+    final todayBalance = prefs.getBool(_prefKeyTodayBalance) ?? true;
+    if (mounted) {
+      setState(() {
+        _collapsed    = collapsed;
+        _todayBalance = todayBalance;
+      });
+    }
   }
 
   Future<void> _toggle() async {
     final next = !_collapsed;
     setState(() => _collapsed = next);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_prefKey, next);
+    await prefs.setBool(_prefKeyCollapsed, next);
+  }
+
+  Future<void> _setTodayBalance(bool value) async {
+    setState(() => _todayBalance = value);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefKeyTodayBalance, value);
   }
 
   @override
@@ -170,6 +186,9 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
     final cs               = Theme.of(context).colorScheme;
     final accounts         = ref.watch(accountsProvider).valueOrNull ?? [];
     final creditDates      = ref.watch(recentCreditDatesProvider).valueOrNull ?? {};
+    final futureSums       = _todayBalance
+        ? (ref.watch(futureTxSumsProvider).valueOrNull ?? {})
+        : <String, double>{};
     final currentAccountId = GoRouterState.of(context).uri.queryParameters['account'];
 
     final budgetCash = accounts.where((a) =>
@@ -226,6 +245,12 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // "As of today" toggle — only when sidebar is expanded
+                      if (!_collapsed)
+                        _SidebarTodayToggle(
+                          value:     _todayBalance,
+                          onChanged: _setTodayBalance,
+                        ),
                       if (budgetCash.isNotEmpty)
                         _SidebarAccountGroup(
                           label:             'CASH & SAVINGS',
@@ -233,6 +258,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                           collapsed:         _collapsed,
                           selectedAccountId: currentAccountId,
                           creditDates:       creditDates,
+                          futureSums:        futureSums,
                           onAccountTap: (a) =>
                               context.go('/transactions?account=${a.id}'),
                         ),
@@ -243,6 +269,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                           collapsed:         _collapsed,
                           selectedAccountId: currentAccountId,
                           creditDates:       creditDates,
+                          futureSums:        futureSums,
                           onAccountTap: (a) =>
                               context.go('/transactions?account=${a.id}'),
                         ),
@@ -253,6 +280,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                           collapsed:         _collapsed,
                           selectedAccountId: currentAccountId,
                           creditDates:       creditDates,
+                          futureSums:        futureSums,
                           onAccountTap: (a) =>
                               context.go('/transactions?account=${a.id}'),
                         ),
@@ -392,6 +420,52 @@ class _SidebarNavRow extends StatelessWidget {
   }
 }
 
+// ── "As of today" toggle row ──────────────────────────────────────────────────
+
+class _SidebarTodayToggle extends StatelessWidget {
+  final bool                value;
+  final ValueChanged<bool>  onChanged;
+  const _SidebarTodayToggle({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 4, 10, 2),
+      child: Row(
+        children: [
+          Icon(
+            Icons.today_outlined,
+            size:  13,
+            color: cs.onSurfaceVariant.withValues(alpha: 0.65),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'As of today',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize:      10,
+                fontWeight:    FontWeight.w600,
+                color:         cs.onSurfaceVariant.withValues(alpha: 0.65),
+                letterSpacing: 0.4,
+              ),
+            ),
+          ),
+          Transform.scale(
+            scale: 0.65,
+            alignment: Alignment.centerRight,
+            child: Switch(
+              value:     value,
+              onChanged: onChanged,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // ── Account group ─────────────────────────────────────────────────────────────
 
 class _SidebarAccountGroup extends StatefulWidget {
@@ -400,6 +474,7 @@ class _SidebarAccountGroup extends StatefulWidget {
   final bool                      collapsed;       // sidebar collapsed (icon-only mode)
   final String?                   selectedAccountId;
   final Map<String, DateTime>     creditDates;
+  final Map<String, double>       futureSums;      // accountId → sum of future txns
   final ValueChanged<Account>     onAccountTap;
 
   const _SidebarAccountGroup({
@@ -408,6 +483,7 @@ class _SidebarAccountGroup extends StatefulWidget {
     required this.collapsed,
     required this.selectedAccountId,
     required this.creditDates,
+    required this.futureSums,
     required this.onAccountTap,
   });
 
@@ -427,11 +503,12 @@ class _SidebarAccountGroupState extends State<_SidebarAccountGroup> {
       children: [
         for (final account in widget.accounts)
           _SidebarAccountRow(
-            account:     account,
-            selected:    account.id == widget.selectedAccountId,
-            collapsed:   widget.collapsed,
-            creditDates: widget.creditDates,
-            onTap:       () => widget.onAccountTap(account),
+            account:          account,
+            effectiveBalance: account.balance - (widget.futureSums[account.id] ?? 0.0),
+            selected:         account.id == widget.selectedAccountId,
+            collapsed:        widget.collapsed,
+            creditDates:      widget.creditDates,
+            onTap:            () => widget.onAccountTap(account),
           ),
       ],
     );
@@ -497,6 +574,7 @@ class _SidebarAccountGroupState extends State<_SidebarAccountGroup> {
 
 class _SidebarAccountRow extends StatelessWidget {
   final Account               account;
+  final double                effectiveBalance; // may differ from account.balance when "As of today" is on
   final bool                  selected;
   final bool                  collapsed;
   final Map<String, DateTime> creditDates;
@@ -504,6 +582,7 @@ class _SidebarAccountRow extends StatelessWidget {
 
   const _SidebarAccountRow({
     required this.account,
+    required this.effectiveBalance,
     required this.selected,
     required this.collapsed,
     required this.creditDates,
@@ -513,13 +592,17 @@ class _SidebarAccountRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs     = Theme.of(context).colorScheme;
-    final isNeg  = account.balance < 0;
-    final balStr = _compactBalance(account.balance);
+    final isNeg  = effectiveBalance < 0;
+    final balStr = _compactBalance(effectiveBalance);
 
     final isCC   = account.type == AccountType.creditCard ||
                    account.type == AccountType.lineOfCredit;
     final hasDue = isCC && account.dueDay != null;
-    final status = hasDue ? _sidebarPayStatus(account, creditDates) : null;
+    // Use effective balance for pay-status so the CC badge stays accurate
+    final statusAccount = account.balance == effectiveBalance
+        ? account
+        : account.copyWith(balance: effectiveBalance);
+    final status = hasDue ? _sidebarPayStatus(statusAccount, creditDates) : null;
 
     // Leading widget: due-date badge for CCs (expanded), or type icon
     Widget leading;
