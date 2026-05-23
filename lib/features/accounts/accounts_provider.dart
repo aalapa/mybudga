@@ -431,6 +431,20 @@ final recentCreditDatesProvider =
 });
 
 // ---------------------------------------------------------------------------
+// CC due-notification data — watched by the app shell to reschedule alerts
+// whenever accounts or credit-date data changes.
+// Returns null while either underlying provider is still loading.
+// ---------------------------------------------------------------------------
+
+final ccDueNotifDataProvider =
+    Provider.autoDispose<(List<Account>, Map<String, DateTime>)?>((ref) {
+  final accounts    = ref.watch(accountsProvider).valueOrNull;
+  final creditDates = ref.watch(recentCreditDatesProvider).valueOrNull;
+  if (accounts == null || creditDates == null) return null;
+  return (accounts, creditDates);
+});
+
+// ---------------------------------------------------------------------------
 // "As of today" toggle — shared between sidebar (desktop) and accounts screen
 // ---------------------------------------------------------------------------
 

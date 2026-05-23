@@ -6,7 +6,8 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../features/accounts/accounts_provider.dart'
     show accountsProvider, recentCreditDatesProvider,
-         futureTxSumsProvider, todayBalanceProvider;
+         futureTxSumsProvider, todayBalanceProvider,
+         ccDueNotifDataProvider;
 import '../../features/accounts/account_labels_provider.dart'
     show accountLabelsProvider;
 import '../../features/insights/insights_provider.dart';
@@ -119,6 +120,15 @@ class AppShell extends ConsumerWidget {
     ref.listen(notificationPatternsProvider, (_, next) {
       next.whenData((patterns) =>
           NotificationService.instance.schedulePatternNotifications(patterns));
+    });
+
+    // Reschedule CC due-date alerts whenever accounts or payment data changes.
+    ref.listen(ccDueNotifDataProvider, (_, next) {
+      if (next == null) return;
+      final (accounts, creditDates) = next;
+      NotificationService.instance
+          .rescheduleCcDueReminders(accounts, creditDates)
+          .ignore();
     });
 
     if (isWide) {

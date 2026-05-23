@@ -2,6 +2,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:intl/intl.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tzdata;
+import '../../shared/models/account.dart';
 import '../../shared/models/scheduled_transaction.dart';
 import 'payee_pattern.dart';
 
@@ -15,6 +16,10 @@ const _kMaxSlots  = 20;
 // IDs 3000–3099 reserved for bill-due reminders (max 100 scheduled transactions)
 const _kBillBase  = 3000;
 const _kBillSlots = 100;
+// IDs 4000–4049 reserved for CC due T-3 warnings  (max 50 CC accounts)
+// IDs 4050–4099 reserved for CC due T-0 reminders (max 50 CC accounts)
+const _kCcBase  = 4000;
+const _kCcSlots = 50;
 
 // ---------------------------------------------------------------------------
 // NotificationService — singleton
@@ -185,6 +190,123 @@ class NotificationService {
         dueDate:       st.nextDate,
       );
     }
+  }
+
+  // ── Credit-card due reminders ────────────────────────────────────────────
+
+  static int _ccWarningId(String accountId) =>
+      _kCcBase + (accountId.hashCode.abs() % _kCcSlots);
+  static int _ccDueId(String accountId) =>
+      _kCcBase + _kCcSlots + (accountId.hashCode.abs() % _kCcSlots);
+
+  /// Cancels then reschedules CC due notifications for every active,
+  /// unpaid credit-card / line-of-credit account in [accounts].
+  ///
+  /// Schedules two notifications per qualifying account:
+  ///   • T-3: 9 AM three days before next due date  — "due in 3 days"
+  ///   • T-0: 9 AM on the due date itself           — "due today"
+  ///
+  /// An account is considered paid when its balance ≥ 0 OR a positive
+  /// transaction exists within 21 days before the last due date.
+  Future<void> rescheduleCcDueReminders(
+    List<Account> accounts,
+    Map<String, DateTime> creditDates,
+  ) async {
+    if (!_initialized) return;
+
+    // Cancel all CC slots first.
+    for (var i = _kCcBase; i < _kCcBase + _kCcSlots * 2; i++) {
+      await _plugin.cancel(i);
+    }
+
+    final now = DateTime.now();
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+
+    for (final account in accounts) {
+      if (!account.isActive) continue;
+      final t = account.type;
+      if (t != AccountType.creditCard && t != AccountType.lineOfCredit) continue;
+      if (account.dueDay == null) continue;
+      if (account.balance >= 0) continue; // nothing owed
+
+      // 21-day payment window — mirrors _dueStatus() in accounts_screen.dart
+      final lastDue = account.dueDay! <= now.day
+          ? DateTime(now.year, now.month, account.dueDay!)
+          : DateTime(now.year, now.month - 1, account.dueDay!);
+      final windowStart = lastDue.subtract(const Duration(days: 21));
+      final lastCredit  = creditDates[account.id];
+      final hasPaid     = lastCredit != null && !lastCredit.isBefore(windowStart);
+      if (hasPaid) continue; // paid this cycle — no notification needed
+
+      // Next upcoming due date.
+      final nextDue = account.dueDay! >= now.day
+          ? DateTime(now.year, now.month, account.dueDay!)
+          : DateTime(now.year, now.month + 1, account.dueDay!);
+
+      final name   = account.displayName;
+      final amount = fmt.format(account.balance.abs());
+      final dateLabel = _shortDate(nextDue);
+
+      // T-3 — "due in 3 days"
+      await _scheduleCcNotif(
+        id:    _ccWarningId(account.id),
+        fireAt: nextDue.subtract(const Duration(days: 3)),
+        title: '$name due in 3 days',
+        body:  'Payment of $amount due $dateLabel. Pay on time to avoid charges.',
+      );
+
+      // T-0 — "due today"
+      await _scheduleCcNotif(
+        id:    _ccDueId(account.id),
+        fireAt: nextDue,
+        title: '$name payment due today',
+        body:  '$amount due today. Open MyBudga to record your payment.',
+      );
+    }
+  }
+
+  Future<void> _scheduleCcNotif({
+    required int      id,
+    required DateTime fireAt,
+    required String   title,
+    required String   body,
+  }) async {
+    final loc       = tz.local;
+    final scheduled = tz.TZDateTime(
+        loc, fireAt.year, fireAt.month, fireAt.day, 9, 0);
+    // Skip silently if the fire time is already in the past.
+    if (!scheduled.isAfter(tz.TZDateTime.now(loc))) return;
+    try {
+      await _plugin.zonedSchedule(
+        id,
+        title,
+        body,
+        scheduled,
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            'cc_due_reminders',
+            'Credit Card Due Reminders',
+            channelDescription:
+                'Alerts before and on a credit card payment due date',
+            importance: Importance.high,
+            priority:   Priority.high,
+          ),
+          iOS:   const DarwinNotificationDetails(),
+          macOS: const DarwinNotificationDetails(),
+        ),
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    } catch (_) {}
+  }
+
+  static String _shortDate(DateTime d) {
+    const months = [
+      'Jan','Feb','Mar','Apr','May','Jun',
+      'Jul','Aug','Sep','Oct','Nov','Dec',
+    ];
+    return '${months[d.month - 1]} ${d.day}';
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
