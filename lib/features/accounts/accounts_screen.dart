@@ -59,46 +59,41 @@ DateTime _cycleStartDate(int dueDay) {
 }
 
 // ---------------------------------------------------------------------------
-// Payment status for due-date badge
+// Due status — drives badge border colour
 // ---------------------------------------------------------------------------
 
-enum _PaymentStatus { unpaid, partiallyPaid, fullyPaid }
+enum _DueStatus {
+  paid,      // payment found after cycle start          → green border
+  dueSoon,   // unpaid, due ≤ 7 days from today          → amber border
+  overdue,   // unpaid, this month's due date has passed → red border
+  upcoming,  // unpaid, due > 7 days away                → subtle border
+}
 
-_PaymentStatus _paymentStatus(Account a, Map<String, DateTime> creditDates) {
-  if (a.dueDay == null) return _PaymentStatus.unpaid;
-  if (a.balance >= 0)   return _PaymentStatus.fullyPaid;
+_DueStatus _dueStatus(Account a, Map<String, DateTime> creditDates) {
+  if (a.dueDay == null) return _DueStatus.upcoming;
+
+  // Paid: zero/positive balance OR a payment recorded after the cycle start.
   final lastCredit = creditDates[a.id];
-  // Count any payment made AFTER the previous cycle's due date (cycle start).
-  // This correctly handles early payments (e.g. paying May 17 for a May 20 due).
-  if (lastCredit != null && lastCredit.isAfter(_cycleStartDate(a.dueDay!))) {
-    return _PaymentStatus.partiallyPaid;
-  }
-  return _PaymentStatus.unpaid;
+  final hasPaid = a.balance >= 0 ||
+      (lastCredit != null && lastCredit.isAfter(_cycleStartDate(a.dueDay!)));
+  if (hasPaid) return _DueStatus.paid;
+
+  // Not paid — classify by how far the current month's due date is.
+  final daysLeft = a.dueDay! - DateTime.now().day;
+  if (daysLeft < 0) return _DueStatus.overdue;   // due date already passed this month
+  if (daysLeft <= 7) return _DueStatus.dueSoon;  // due within a week
+  return _DueStatus.upcoming;
 }
 
 // ---------------------------------------------------------------------------
-// 3-tier sort: urgent (red) → partially paid (amber) → fully paid (green)
-//              within each tier, sort by days-until-due
+// Sort — always chronological (soonest due first), regardless of pay status
 // ---------------------------------------------------------------------------
-
-int _sortTier(Account a, Map<String, DateTime> creditDates) {
-  if (a.dueDay == null) return 3; // no due date — keep natural position
-  return switch (_paymentStatus(a, creditDates)) {
-    _PaymentStatus.unpaid        => 0,
-    _PaymentStatus.partiallyPaid => 1,
-    _PaymentStatus.fullyPaid     => 2,
-  };
-}
 
 List<Account> _sortAccounts(
     List<Account> accounts, Map<String, DateTime> creditDates) {
   final sorted = [...accounts];
-  sorted.sort((a, b) {
-    final ta = _sortTier(a, creditDates);
-    final tb = _sortTier(b, creditDates);
-    if (ta != tb) return ta.compareTo(tb);
-    return _daysUntilDue(a.dueDay).compareTo(_daysUntilDue(b.dueDay));
-  });
+  sorted.sort((a, b) =>
+      _daysUntilDue(a.dueDay).compareTo(_daysUntilDue(b.dueDay)));
   return sorted;
 }
 
@@ -625,16 +620,14 @@ class _AccountTile extends ConsumerWidget {
         MediaQuery.orientationOf(context) == Orientation.portrait;
     final creditDates =
         ref.watch(recentCreditDatesProvider).valueOrNull ?? {};
-    final status      = _paymentStatus(account, creditDates);
+    final status = account.dueDay != null
+        ? _dueStatus(account, creditDates)
+        : _DueStatus.upcoming;
 
-    // Portrait + due date → mini calendar / tick badge; otherwise → icon pill
+    // Portrait + due date → date badge with coloured border; otherwise → icon pill
     final showBadge = isPortrait && account.dueDay != null;
     final Widget leading = showBadge
-        ? _DueDateBadge(
-            dueDay: account.dueDay!,
-            color:  iconColor,
-            status: status,
-          )
+        ? _DueDateBadge(dueDay: account.dueDay!, status: status)
         : Container(
             width:  isPortrait ? 30.0 : 40.0,
             height: isPortrait ? 30.0 : 40.0,
@@ -646,14 +639,9 @@ class _AccountTile extends ConsumerWidget {
                 size: isPortrait ? 14.0 : 18.0, color: iconColor),
           );
 
-    // When the badge already shows the due date, drop it from the subtitle.
-    // For paid/partial states add a short note instead.
+    // Subtitle: type name; append due ordinal when badge is not visible.
     final subtitle = showBadge
-        ? switch (status) {
-            _PaymentStatus.fullyPaid     => '${account.type.typeName} · Paid',
-            _PaymentStatus.partiallyPaid => '${account.type.typeName} · Payment received',
-            _PaymentStatus.unpaid        => account.type.typeName,
-          }
+        ? account.type.typeName
         : account.dueDay != null
             ? '${account.type.typeName} · Due ${_ordinal(account.dueDay!)}'
             : account.type.typeName;
@@ -709,43 +697,25 @@ class _AccountTile extends ConsumerWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Due-date badge — replaces the icon in portrait when a due day is set
+// Due-date badge — always shows the upcoming due date with a status border
 // ---------------------------------------------------------------------------
 
 class _DueDateBadge extends StatelessWidget {
-  final int            dueDay;
-  final Color          color;
-  final _PaymentStatus status;
-
-  const _DueDateBadge({
-    required this.dueDay,
-    required this.color,
-    required this.status,
-  });
+  final int        dueDay;
+  final _DueStatus status;
+  const _DueDateBadge({required this.dueDay, required this.status});
 
   @override
   Widget build(BuildContext context) {
-    // Tick badges (fully / partially paid)
-    if (status != _PaymentStatus.unpaid) {
-      final isFullyPaid = status == _PaymentStatus.fullyPaid;
-      final tickColor   = isFullyPaid
-          ? const Color(0xFF4CAF50)   // green
-          : const Color(0xFFFFB300);  // amber
-      return Container(
-        width: 36, height: 40,
-        decoration: BoxDecoration(
-          color: tickColor.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Icon(
-          Icons.check_circle_rounded,
-          size: 22,
-          color: tickColor,
-        ),
-      );
-    }
+    final cs = Theme.of(context).colorScheme;
 
-    // Unpaid — show month + day number
+    final Color borderColor = switch (status) {
+      _DueStatus.paid     => const Color(0xFF4CAF50),   // green
+      _DueStatus.dueSoon  => const Color(0xFFFFB300),   // amber
+      _DueStatus.overdue  => cs.error,                  // red
+      _DueStatus.upcoming => cs.outlineVariant,          // subtle grey
+    };
+
     final now     = DateTime.now();
     final dueDate = dueDay >= now.day
         ? DateTime(now.year, now.month, dueDay)
@@ -755,8 +725,9 @@ class _DueDateBadge extends StatelessWidget {
     return Container(
       width: 36, height: 40,
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
+        color:        borderColor.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(8),
+        border:       Border.all(color: borderColor, width: 1.5),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -764,19 +735,19 @@ class _DueDateBadge extends StatelessWidget {
           Text(
             month,
             style: GoogleFonts.plusJakartaSans(
-              fontSize: 9,
-              fontWeight: FontWeight.w700,
-              color: color.withValues(alpha: 0.75),
+              fontSize:      9,
+              fontWeight:    FontWeight.w700,
+              color:         borderColor,
               letterSpacing: 0.6,
             ),
           ),
           Text(
             '$dueDay',
             style: GoogleFonts.plusJakartaSans(
-              fontSize: 19,
+              fontSize:   18,
               fontWeight: FontWeight.w800,
-              color: color,
-              height: 1.05,
+              color:      borderColor,
+              height:     1.05,
             ),
           ),
         ],

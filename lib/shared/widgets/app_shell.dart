@@ -23,7 +23,7 @@ import '../../features/accounts/accounts_screen.dart'
 // Due-date helpers (mirrors accounts_screen.dart logic)
 // ---------------------------------------------------------------------------
 
-enum _SidebarPayStatus { unpaid, partial, paid }
+enum _SidebarDueStatus { paid, dueSoon, overdue, upcoming }
 
 DateTime _sidebarLastDue(int dueDay) {
   final now = DateTime.now();
@@ -32,21 +32,29 @@ DateTime _sidebarLastDue(int dueDay) {
       : DateTime(now.year, now.month - 1, dueDay);
 }
 
-// Start of the current billing cycle = one month before the last due date.
-// Any payment after this date counts, including early payments.
-DateTime _sidebarCycleStart(int dueDay) {
-  final last = _sidebarLastDue(dueDay);
-  return DateTime(last.year, last.month - 1, last.day);
+_SidebarDueStatus _sidebarDueStatus(Account a, Map<String, DateTime> creditDates) {
+  if (a.dueDay == null) return _SidebarDueStatus.upcoming;
+  // Cycle start = one month before the last due date
+  final last       = _sidebarLastDue(a.dueDay!);
+  final cycleStart = DateTime(last.year, last.month - 1, last.day);
+  final lastCredit = creditDates[a.id];
+  final hasPaid    = a.balance >= 0 ||
+      (lastCredit != null && lastCredit.isAfter(cycleStart));
+  if (hasPaid) return _SidebarDueStatus.paid;
+  final daysLeft = a.dueDay! - DateTime.now().day;
+  if (daysLeft < 0)  return _SidebarDueStatus.overdue;
+  if (daysLeft <= 7) return _SidebarDueStatus.dueSoon;
+  return _SidebarDueStatus.upcoming;
 }
 
-_SidebarPayStatus _sidebarPayStatus(Account a, Map<String, DateTime> creditDates) {
-  if (a.dueDay == null) return _SidebarPayStatus.unpaid;
-  if (a.balance >= 0)   return _SidebarPayStatus.paid;
-  final lastCredit = creditDates[a.id];
-  if (lastCredit != null && lastCredit.isAfter(_sidebarCycleStart(a.dueDay!))) {
-    return _SidebarPayStatus.partial;
-  }
-  return _SidebarPayStatus.unpaid;
+String _ordinal(int n) {
+  if (n >= 11 && n <= 13) return '${n}th';
+  return switch (n % 10) {
+    1 => '${n}st',
+    2 => '${n}nd',
+    3 => '${n}rd',
+    _ => '${n}th',
+  };
 }
 
 // Sidebar balance formatter: always two decimals; compact only for ≥ 1M
@@ -609,7 +617,7 @@ class _SidebarAccountRow extends StatelessWidget {
     final statusAccount = account.balance == effectiveBalance
         ? account
         : account.copyWith(balance: effectiveBalance);
-    final status = hasDue ? _sidebarPayStatus(statusAccount, creditDates) : null;
+    final status = hasDue ? _sidebarDueStatus(statusAccount, creditDates) : null;
 
     // Leading widget: due-date badge for CCs (expanded), or type icon
     Widget leading;
@@ -675,9 +683,10 @@ class _SidebarAccountRow extends StatelessWidget {
     String tooltip = account.displayName;
     if (hasDue) {
       final statusLabel = switch (status!) {
-        _SidebarPayStatus.paid    => 'Paid',
-        _SidebarPayStatus.partial => 'Payment received',
-        _SidebarPayStatus.unpaid  => 'Due ${account.dueDay}',
+        _SidebarDueStatus.paid     => 'Paid',
+        _SidebarDueStatus.dueSoon  => 'Due soon',
+        _SidebarDueStatus.overdue  => 'Overdue',
+        _SidebarDueStatus.upcoming => 'Due ${_ordinal(account.dueDay!)}',
       };
       tooltip = '${account.displayName} · $statusLabel\n$balStr';
     } else {
@@ -704,32 +713,21 @@ class _SidebarAccountRow extends StatelessWidget {
 // ── Due-date badge (compact, for sidebar CC rows) ─────────────────────────────
 
 class _SidebarDueBadge extends StatelessWidget {
-  final int               dueDay;
-  final _SidebarPayStatus status;
+  final int              dueDay;
+  final _SidebarDueStatus status;
   const _SidebarDueBadge({required this.dueDay, required this.status});
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    if (status != _SidebarPayStatus.unpaid) {
-      final isPaid = status == _SidebarPayStatus.paid;
-      final color  = isPaid
-          ? const Color(0xFF4CAF50)   // green
-          : const Color(0xFFFFB300);  // amber
-      return Container(
-        width: 28, height: 32,
-        decoration: BoxDecoration(
-          color:        color.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Center(
-          child: Icon(Icons.check_circle_rounded, size: 18, color: color),
-        ),
-      );
-    }
+    final Color borderColor = switch (status) {
+      _SidebarDueStatus.paid     => const Color(0xFF4CAF50),
+      _SidebarDueStatus.dueSoon  => const Color(0xFFFFB300),
+      _SidebarDueStatus.overdue  => cs.error,
+      _SidebarDueStatus.upcoming => cs.outlineVariant,
+    };
 
-    // Unpaid — mini calendar
     final now     = DateTime.now();
     final dueDate = dueDay >= now.day
         ? DateTime(now.year, now.month, dueDay)
@@ -739,8 +737,9 @@ class _SidebarDueBadge extends StatelessWidget {
     return Container(
       width: 28, height: 32,
       decoration: BoxDecoration(
-        color:        cs.error.withValues(alpha: 0.10),
+        color:        borderColor.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(6),
+        border:       Border.all(color: borderColor, width: 1.5),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -748,18 +747,18 @@ class _SidebarDueBadge extends StatelessWidget {
           Text(
             month,
             style: GoogleFonts.plusJakartaSans(
-              fontSize:     7,
-              fontWeight:   FontWeight.w800,
-              color:        cs.error.withValues(alpha: 0.75),
+              fontSize:      7,
+              fontWeight:    FontWeight.w800,
+              color:         borderColor,
               letterSpacing: 0.4,
             ),
           ),
           Text(
             '$dueDay',
             style: GoogleFonts.plusJakartaSans(
-              fontSize:   15,
+              fontSize:   14,
               fontWeight: FontWeight.w800,
-              color:      cs.error,
+              color:      borderColor,
               height:     1.0,
             ),
           ),
