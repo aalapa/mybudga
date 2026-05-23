@@ -121,6 +121,59 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
     return id;
   }
 
+  /// Creates a real transaction for a scheduled item using caller-supplied
+  /// values and then advances (or deactivates) the schedule.
+  ///
+  /// Called from the edit sheet's "Save & Enter" path where we cannot rely
+  /// on re-reading state (updateScheduled has already invalidated it).
+  Future<void> enterNow({
+    required String scheduledId,
+    required String accountId,
+    required double amount,           // signed: negative = expense
+    required DateTime date,
+    required ScheduledFrequency frequency,
+    required DateTime currentNextDate,
+    String payeeName = '',
+    String? categoryId,
+    String? memo,
+  }) async {
+    final householdId = await ref.read(householdIdProvider.future);
+    final client      = ref.read(supabaseProvider);
+
+    String? payeeId;
+    if (payeeName.trim().isNotEmpty) {
+      payeeId = await _upsertPayee(
+        client:      client,
+        householdId: householdId,
+        name:        payeeName.trim(),
+        categoryId:  categoryId,
+      );
+    }
+
+    await client.from('transactions').insert({
+      'household_id': householdId,
+      'account_id':   accountId,
+      'payee_id':     payeeId,
+      'category_id':  categoryId,
+      'amount':       amount,
+      'date':         _toDateString(date),
+      'memo':         memo?.isNotEmpty == true ? memo : null,
+      'status':       'confirmed',
+    });
+
+    final next = frequency.advance(currentNextDate);
+    if (next == null) {
+      await client.from('scheduled_transactions')
+          .update({'is_active': false}).eq('id', scheduledId);
+    } else {
+      await client.from('scheduled_transactions')
+          .update({'next_date': _toDateString(next)}).eq('id', scheduledId);
+    }
+
+    ref.invalidateSelf();
+    ref.invalidate(accountsProvider);
+  }
+
   Future<void> markAsPaid(String id) async {
     final client = ref.read(supabaseProvider);
     final st     = state.valueOrNull?.scheduled

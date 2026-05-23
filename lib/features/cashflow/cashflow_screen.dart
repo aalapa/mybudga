@@ -964,6 +964,10 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
   bool _remindMe      = false;
   bool _saving        = false;
 
+  // Enter-now (edit mode only) — record this occurrence as a transaction.
+  bool     _enterNow  = false;
+  DateTime _enterDate = DateTime.now();
+
   bool get _isEditing => widget.prefill != null;
 
   @override
@@ -1412,7 +1416,104 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
                           ],
                         ),
                       ),
-                      const SizedBox(height: 28),
+                      const SizedBox(height: 20),
+
+                      // ── Enter-now toggle (edit only, not for transfers) ───
+                      if (_isEditing && !_isTransfer &&
+                          !_accountTbd && _accountId != null) ...[
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: _enterNow
+                                ? cs.primaryContainer.withValues(alpha: 0.35)
+                                : cs.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(12),
+                            border: _enterNow
+                                ? Border.all(
+                                    color: cs.primary.withValues(alpha: 0.3))
+                                : null,
+                          ),
+                          child: Column(
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.add_circle_outline,
+                                      size: 16,
+                                      color: _enterNow
+                                          ? cs.primary
+                                          : cs.onSurfaceVariant),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      'Also record as transaction now',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 13,
+                                        fontWeight: _enterNow
+                                            ? FontWeight.w600
+                                            : FontWeight.w400,
+                                        color: _enterNow
+                                            ? cs.onSurface
+                                            : cs.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                  Switch.adaptive(
+                                    value: _enterNow,
+                                    onChanged: (v) =>
+                                        setState(() => _enterNow = v),
+                                  ),
+                                ],
+                              ),
+                              if (_enterNow) ...[
+                                const SizedBox(height: 8),
+                                InkWell(
+                                  onTap: () async {
+                                    final picked = await showDatePicker(
+                                      context: context,
+                                      initialDate: _enterDate,
+                                      firstDate: DateTime(2020),
+                                      lastDate: DateTime.now()
+                                          .add(const Duration(days: 30)),
+                                    );
+                                    if (picked != null) {
+                                      setState(() => _enterDate = picked);
+                                    }
+                                  },
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 8),
+                                    decoration: BoxDecoration(
+                                      color: cs.surfaceContainerHighest,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.calendar_today_outlined,
+                                            size: 13, color: cs.primary),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'Transaction date: ${DateFormat('MMM d, yyyy').format(_enterDate)}',
+                                          style: GoogleFonts.plusJakartaSans(
+                                            fontSize: 12,
+                                            color: cs.onSurface,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+
+                      const SizedBox(height: 8),
 
                       // Save button
                       SizedBox(
@@ -1425,7 +1526,7 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
                                   child: CircularProgressIndicator(strokeWidth: 2),
                                 )
                               : Text(
-                                  'Save',
+                                  _enterNow ? 'Save & Enter' : 'Save',
                                   style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700),
                                 ),
                         ),
@@ -1617,6 +1718,20 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
           isTransfer:           _isTransfer,
           transferToAccountId:  _isTransfer ? _toAccountId : null,
         );
+        // If the user toggled "Also record as transaction now", enter it.
+        if (_enterNow && !_accountTbd && _accountId != null) {
+          await ref.read(cashflowProvider.notifier).enterNow(
+            scheduledId:     savedId,
+            accountId:       _accountId!,
+            amount:          amount,
+            date:            _enterDate,
+            frequency:       _frequency,
+            currentNextDate: _nextDate,
+            payeeName:       _payeeCtrl.text.trim(),
+            categoryId:      _isTransfer ? null : _categoryId,
+            memo:            memo,
+          );
+        }
       } else {
         savedId = await ref.read(cashflowProvider.notifier).addScheduled(
           accountId:            accountId,
