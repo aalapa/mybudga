@@ -660,9 +660,7 @@ class _SidebarAccountRow extends StatelessWidget {
     final isNeg  = effectiveBalance < 0;
     final balStr = _compactBalance(effectiveBalance);
 
-    final isCC   = account.type == AccountType.creditCard ||
-                   account.type == AccountType.lineOfCredit;
-    final hasDue = isCC && account.dueDay != null;
+    final hasDue = account.dueDay != null;
     // Use effective balance for pay-status so the CC badge stays accurate
     final statusAccount = account.balance == effectiveBalance
         ? account
