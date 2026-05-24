@@ -13,6 +13,7 @@ import '../../shared/providers/categories_provider.dart';
 import '../../shared/providers/payees_provider.dart';
 import '../accounts/accounts_provider.dart';
 import '../cashflow/cashflow_provider.dart';
+import '../accounts/accounts_screen.dart' show showReconcileSheet;
 import 'transactions_provider.dart';
 import '../../core/sms/sms_parser.dart';
 import '../budget/category_icons.dart';
@@ -135,12 +136,11 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 final accountIdFilter =
                     GoRouterState.of(context).uri.queryParameters['account'];
                 if (accountIdFilter == null) return const SizedBox.shrink();
-                final accountName = ref
+                final account = ref
                     .watch(accountsProvider)
                     .valueOrNull
                     ?.where((a) => a.id == accountIdFilter)
-                    .firstOrNull
-                    ?.displayName;
+                    .firstOrNull;
                 return Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
                   child: Row(
@@ -149,7 +149,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                           color: Theme.of(context).colorScheme.primary),
                       const SizedBox(width: 6),
                       Text(
-                        accountName ?? 'Account',
+                        account?.displayName ?? 'Account',
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
@@ -157,6 +157,20 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                         ),
                       ),
                       const Spacer(),
+                      if (account != null) ...[
+                        GestureDetector(
+                          onTap: () => showReconcileSheet(context, account, ref),
+                          child: Text(
+                            'Reconcile',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context).colorScheme.secondary,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                      ],
                       GestureDetector(
                         onTap: () => context.go('/transactions'),
                         child: Text(

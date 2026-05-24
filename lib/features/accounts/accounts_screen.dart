@@ -635,7 +635,7 @@ class _AccountTile extends ConsumerWidget {
 
     return InkWell(
       onTap: () => _showAccountDetail(context, ref, account),
-      onLongPress: () => _showReconcileSheet(context, account, ref),
+      onLongPress: () => showReconcileSheet(context, account, ref),
       onSecondaryTap: () => _showAccountContextMenu(context, ref, account),
       borderRadius: isLast
           ? const BorderRadius.vertical(bottom: Radius.circular(16))
@@ -1379,7 +1379,7 @@ void _showAccountContextMenu(BuildContext context, WidgetRef ref, Account accoun
   ).then((value) {
     if (!context.mounted) return;
     if (value == 'edit')      _showEditAccountSheet(context, account, ref);
-    if (value == 'reconcile') _showReconcileSheet(context, account, ref);
+    if (value == 'reconcile') showReconcileSheet(context, account, ref);
   });
 }
 
@@ -1495,7 +1495,7 @@ class _AccountDetailSheetState extends ConsumerState<_AccountDetailSheet> {
                         Expanded(
                           child: FilledButton.tonal(
                             onPressed: () =>
-                                _showReconcileSheet(context, account, widget.widgetRef),
+                                showReconcileSheet(context, account, widget.widgetRef),
                             child: Text('Reconcile',
                                 style: GoogleFonts.plusJakartaSans(
                                     fontWeight: FontWeight.w700)),
@@ -2273,7 +2273,7 @@ class _EditAccountSheetState extends State<_EditAccountSheet> {
 
 // ---------------------------------------------------------------------------
 
-void _showReconcileSheet(BuildContext context, Account account, WidgetRef ref) {
+void showReconcileSheet(BuildContext context, Account account, WidgetRef ref) {
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
