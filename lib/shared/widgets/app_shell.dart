@@ -253,7 +253,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
       }
     }
     final unclaimedTracking      = trackingList.where((a) => !trackingClaimed.contains(a.id)).toList();
-    final unclaimedTrackingLabel = trackingLabeledSections.isEmpty ? 'TRACKING' : 'OTHER';
+    final unclaimedTrackingLabel = trackingLabeledSections.isEmpty ? 'TRACKING - OFF BUDGET' : 'OTHER - OFF BUDGET';
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
@@ -333,7 +333,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                       // ── Tracking accounts (label-grouped, mirrors accounts screen) ──
                       for (final sec in trackingLabeledSections)
                         _SidebarAccountGroup(
-                          label:             sec.label,
+                          label:             '${sec.label} - OFF BUDGET',
                           accounts:          _sortByDue(sec.accounts),
                           collapsed:         _collapsed,
                           selectedAccountId: currentAccountId,
