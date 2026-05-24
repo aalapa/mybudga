@@ -608,6 +608,8 @@ class _AccountTile extends ConsumerWidget {
     final status = account.dueDay != null
         ? _dueStatus(account, creditDates)
         : _DueStatus.upcoming;
+    final lastReconciled =
+        ref.watch(lastReconciledDatesProvider).valueOrNull?[account.id];
 
     // Portrait + due date → date badge with coloured border; otherwise → icon pill
     final showBadge = isPortrait && account.dueDay != null;
@@ -655,6 +657,14 @@ class _AccountTile extends ConsumerWidget {
                   Text(subtitle,
                       style: GoogleFonts.plusJakartaSans(
                           fontSize: 12, color: cs.onSurfaceVariant)),
+                  if (lastReconciled != null)
+                    Text(
+                      'Reconciled ${DateFormat('MMM d, yyyy').format(lastReconciled)}',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10,
+                          color: cs.onSurfaceVariant.withValues(alpha: 0.55),
+                          fontStyle: FontStyle.italic),
+                    ),
                 ],
               ),
             ),
@@ -2384,6 +2394,7 @@ class _ReconcileSheetState extends ConsumerState<_ReconcileSheet> {
 
       widget.widgetRef.invalidate(transactionsProvider);
       widget.widgetRef.invalidate(accountsProvider);
+      widget.widgetRef.invalidate(lastReconciledDatesProvider);
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) {

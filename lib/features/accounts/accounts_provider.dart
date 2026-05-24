@@ -509,3 +509,35 @@ final futureTxSumsProvider =
   }
   return map;
 });
+
+// ---------------------------------------------------------------------------
+// Last reconciled date per account.
+// Returns Map<accountId, DateTime> — only accounts with at least one
+// reconciled transaction appear. Value is the most-recent reconciled_at.
+// Invalidated explicitly by _ReconcileSheet after a successful finish.
+// ---------------------------------------------------------------------------
+
+final lastReconciledDatesProvider =
+    FutureProvider.autoDispose<Map<String, DateTime>>((ref) async {
+  final householdId = await ref.watch(householdIdProvider.future);
+  final client      = ref.watch(supabaseProvider);
+
+  final res = await client
+      .from('transactions')
+      .select('account_id, reconciled_at')
+      .eq('household_id', householdId)
+      .not('reconciled_at', 'is', null)
+      .isFilter('deleted_at', null)
+      .order('reconciled_at', ascending: false);
+
+  // Keep only the most-recent reconciled_at per account.
+  final map = <String, DateTime>{};
+  for (final r in res as List) {
+    final id   = r['account_id']    as String?;
+    final date = r['reconciled_at'] as String?;
+    if (id != null && date != null && !map.containsKey(id)) {
+      map[id] = DateTime.parse(date);
+    }
+  }
+  return map;
+});
