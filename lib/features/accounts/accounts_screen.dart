@@ -367,6 +367,8 @@ class _NetWorthHeader extends StatelessWidget {
   final VoidCallback? onCcDebtTap;
   final VoidCallback? onLiquidCashTap;
 
+  double get _liquidity => liquidCash + ccDebt;
+
   const _NetWorthHeader({
     required this.netWorth,
     required this.liquidCash,
@@ -455,6 +457,9 @@ class _NetWorthHeader extends StatelessWidget {
               ),
             ],
           ),
+          const SizedBox(height: 8),
+          // Liquidity = liquid cash net of CC obligations
+          _LiquidityBar(liquidity: _liquidity, fmt: fmt),
         ],
       ),
     );
@@ -516,6 +521,58 @@ class _NetWorthStat extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Liquidity bar — full-width derived stat below Liquid Cash + CC Debt
+// ---------------------------------------------------------------------------
+
+class _LiquidityBar extends StatelessWidget {
+  final double liquidity;
+  final NumberFormat fmt;
+  const _LiquidityBar({required this.liquidity, required this.fmt});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs      = Theme.of(context).colorScheme;
+    final isPos   = liquidity >= 0;
+    final color   = isPos ? cs.tertiary : cs.error;
+    final sign    = isPos ? '' : '-';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.balance, size: 15, color: color),
+          const SizedBox(width: 8),
+          Text(
+            'Liquidity',
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 12, color: cs.onSurfaceVariant),
+          ),
+          const Spacer(),
+          Text(
+            '$sign${fmt.format(liquidity.abs())}',
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 14, fontWeight: FontWeight.w700, color: color),
+          ),
+          const SizedBox(width: 4),
+          Tooltip(
+            message: 'Liquid Cash minus CC obligations.\n'
+                'Shows how much cash you actually have after paying off cards.',
+            triggerMode: TooltipTriggerMode.tap,
+            child: Icon(Icons.info_outline, size: 13,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
+          ),
+        ],
       ),
     );
   }
