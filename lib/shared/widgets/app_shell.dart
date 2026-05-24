@@ -559,6 +559,27 @@ class _SidebarAccountGroup extends StatefulWidget {
 class _SidebarAccountGroupState extends State<_SidebarAccountGroup> {
   bool _expanded = true;
 
+  static const _prefPrefix = 'sidebar_grp_';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPref();
+  }
+
+  Future<void> _loadPref() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getBool('$_prefPrefix${widget.label}') ?? true;
+    if (mounted && v != _expanded) setState(() => _expanded = v);
+  }
+
+  Future<void> _toggle() async {
+    final next = !_expanded;
+    setState(() => _expanded = next);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('$_prefPrefix${widget.label}', next);
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -601,8 +622,13 @@ class _SidebarAccountGroupState extends State<_SidebarAccountGroup> {
   }
 
   Widget _buildHeader(ColorScheme cs) {
+    // Net balance of all accounts in this group (respecting future-sum adjustments).
+    final groupTotal = widget.accounts.fold(
+        0.0, (s, a) => s + a.balance - (widget.futureSums[a.id] ?? 0.0));
+    final totalColor = groupTotal < 0 ? cs.error : cs.tertiary;
+
     return InkWell(
-      onTap:        () => setState(() => _expanded = !_expanded),
+      onTap:        _toggle,
       borderRadius: BorderRadius.circular(6),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 10, 10, 3),
@@ -619,8 +645,20 @@ class _SidebarAccountGroupState extends State<_SidebarAccountGroup> {
                 ),
               ),
             ),
+            // Show net group total only when the group is collapsed.
+            if (!_expanded) ...[
+              Text(
+                _compactBalance(groupTotal),
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize:   10,
+                  fontWeight: FontWeight.w600,
+                  color:      totalColor.withValues(alpha: 0.85),
+                ),
+              ),
+              const SizedBox(width: 4),
+            ],
             AnimatedRotation(
-              turns:    _expanded ? 0.0 : -0.25,   // ▾ when expanded, ► when collapsed
+              turns:    _expanded ? 0.0 : -0.25,
               duration: const Duration(milliseconds: 200),
               child: Icon(
                 Icons.expand_more,
