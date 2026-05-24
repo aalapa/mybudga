@@ -124,6 +124,7 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
     ref.invalidateSelf();
     ref.invalidate(payeesProvider);
     ref.invalidate(accountsProvider);
+    ref.invalidate(accountTransactionsProvider);
     ref.invalidate(budgetProvider);
     ref.invalidate(cashflowProvider);
   }
@@ -174,6 +175,7 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
     ref.invalidateSelf();
     ref.invalidate(payeesProvider);
     ref.invalidate(accountsProvider);
+    ref.invalidate(accountTransactionsProvider);
     ref.invalidate(budgetProvider);
     ref.invalidate(cashflowProvider);
   }
@@ -242,6 +244,7 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
 
     ref.invalidateSelf();
     ref.invalidate(accountsProvider);
+    ref.invalidate(accountTransactionsProvider);
     ref.invalidate(cashflowProvider);
   }
 
@@ -251,6 +254,7 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
         .update({'cleared': cleared})
         .eq('id', id);
     ref.invalidateSelf();
+    ref.invalidate(accountTransactionsProvider);
   }
 
   Future<void> updateTransaction(
@@ -288,6 +292,7 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
     ref.invalidateSelf();
     ref.invalidate(payeesProvider);
     ref.invalidate(accountsProvider);
+    ref.invalidate(accountTransactionsProvider);
     ref.invalidate(budgetProvider);
     ref.invalidate(cashflowProvider);
   }
@@ -303,6 +308,7 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
       if (memo?.isNotEmpty == true) 'memo': memo,
     }).eq('id', id);
     ref.invalidateSelf();
+    ref.invalidate(accountTransactionsProvider);
     ref.invalidate(budgetProvider);
   }
 
@@ -363,6 +369,7 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
 
     ref.invalidateSelf();
     ref.invalidate(accountsProvider);
+    ref.invalidate(accountTransactionsProvider);
     ref.invalidate(budgetProvider);
     ref.invalidate(cashflowProvider);
   }
