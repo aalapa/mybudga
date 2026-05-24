@@ -32,3 +32,8 @@ APP_SRC="build/macos/Build/Products/Release/mybudga.app"
 APP_DST="build/macos/Build/Products/Release/MyBudga-${MAJOR}.${MINOR}.${PATCH}.app"
 cp -R "$APP_SRC" "$APP_DST"
 echo "✓ macOS: $APP_DST"
+
+# Remove previous versioned releases now that the new build succeeded
+find build/app/outputs/flutter-apk -name 'MyBudga-*.apk' ! -name "${APK_NAME}" -delete
+find build/macos/Build/Products/Release -maxdepth 1 -name 'MyBudga-*.app' ! -name "MyBudga-${MAJOR}.${MINOR}.${PATCH}.app" -exec rm -rf {} +
+echo "✓ Old releases cleaned up"
