@@ -234,7 +234,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
 // Transaction list body
 // ---------------------------------------------------------------------------
 
-class _TransactionsList extends StatelessWidget {
+class _TransactionsList extends StatefulWidget {
   final List<Transaction> all;
   final String search;
   final _SearchFilter searchFilter;
@@ -249,28 +249,39 @@ class _TransactionsList extends StatelessWidget {
     required this.ref,
   });
 
+  @override
+  State<_TransactionsList> createState() => _TransactionsListState();
+}
+
+class _TransactionsListState extends State<_TransactionsList> {
+  bool _reconciledExpanded = true;
+
   List<Transaction> get _pending {
-    final base = all.where((t) => t.isPendingReview);
-    if (fixedAccountId != null) {
-      return base.where((t) => t.accountId == fixedAccountId).toList();
+    final base = widget.all.where((t) => t.isPendingReview);
+    if (widget.fixedAccountId != null) {
+      return base.where((t) => t.accountId == widget.fixedAccountId).toList();
     }
     return base.toList();
   }
 
-  List<Transaction> get _confirmed {
-    Iterable<Transaction> base = all.where((t) => !t.isPendingReview);
-    if (fixedAccountId != null) {
-      base = base.where((t) => t.accountId == fixedAccountId);
+  // All non-pending transactions for the current account filter (no search).
+  List<Transaction> get _allConfirmed {
+    Iterable<Transaction> base = widget.all.where((t) => !t.isPendingReview);
+    if (widget.fixedAccountId != null) {
+      base = base.where((t) => t.accountId == widget.fixedAccountId);
     }
-    if (search.isEmpty) return base.toList();
-    final q    = search.toLowerCase();
-    final byId = {for (final t in all) t.id: t};
+    return base.toList();
+  }
+
+  // Search-filtered confirmed transactions (reconciled + unreconciled flat).
+  List<Transaction> get _searchConfirmed {
+    final q    = widget.search.toLowerCase();
+    final byId = {for (final t in widget.all) t.id: t};
     String partnerAccount(Transaction t) => t.transferId != null
         ? (byId[t.transferId]?.account?.displayName ?? '').toLowerCase()
         : '';
-    return base.where((t) {
-      if (t.isPendingReview) return false;
-      return switch (searchFilter) {
+    return _allConfirmed.where((t) {
+      return switch (widget.searchFilter) {
         _SearchFilter.all      => t.displayPayee.toLowerCase().contains(q) ||
                                   (t.categoryName ?? '').toLowerCase().contains(q) ||
                                   (t.account?.displayName ?? '').toLowerCase().contains(q) ||
@@ -283,9 +294,9 @@ class _TransactionsList extends StatelessWidget {
     }).toList();
   }
 
-  Map<String, List<Transaction>> get _grouped {
+  Map<String, List<Transaction>> _groupByDate(List<Transaction> txs) {
     final map = <String, List<Transaction>>{};
-    for (final tx in _confirmed) {
+    for (final tx in txs) {
       (map[_dateLabel(tx.date)] ??= []).add(tx);
     }
     return map;
@@ -303,51 +314,181 @@ class _TransactionsList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs      = Theme.of(context).colorScheme;
     final pending = _pending;
-    final grouped = _grouped;
 
-    if (pending.isEmpty && grouped.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.receipt_long_outlined,
-                size: 56, color: Theme.of(context).colorScheme.onSurfaceVariant),
-            const SizedBox(height: 16),
-            Text(search.isNotEmpty ? 'No results for "$search"' : 'No transactions yet',
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 15,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
+    // ── Search mode: flat across all transactions ─────────────────────────────
+    if (widget.search.isNotEmpty) {
+      final confirmed   = _searchConfirmed;
+      final grouped     = _groupByDate(confirmed);
+      final searchTotal = confirmed.fold<double>(0, (s, t) => s + t.amount);
+
+      if (pending.isEmpty && confirmed.isEmpty) {
+        return _emptyState(context, widget.search);
+      }
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
+        children: [
+          if (confirmed.isNotEmpty) ...[
+            _SearchSummaryBar(count: confirmed.length, total: searchTotal),
+            const SizedBox(height: 8),
           ],
-        ),
+          if (pending.isNotEmpty) ...[
+            _PendingReviewSection(transactions: pending, ref: widget.ref),
+            const SizedBox(height: 16),
+          ],
+          for (final entry in grouped.entries) ...[
+            _DateHeader(label: entry.key, transactions: entry.value),
+            const SizedBox(height: 6),
+            _TransactionGroup(transactions: entry.value, ref: widget.ref),
+            const SizedBox(height: 12),
+          ],
+        ],
       );
     }
 
-    final confirmed = _confirmed;
-    final searchTotal = search.isNotEmpty
-        ? confirmed.fold<double>(0, (sum, t) => sum + t.amount)
-        : 0.0;
+    // ── Normal mode: unreconciled by day + reconciled accordion ───────────────
+    final confirmed     = _allConfirmed;
+    final unreconciled  = confirmed.where((t) => !t.isReconciled).toList();
+    final reconciledAll = confirmed.where((t) =>  t.isReconciled).toList();
+
+    if (pending.isEmpty && unreconciled.isEmpty && reconciledAll.isEmpty) {
+      return _emptyState(context, '');
+    }
+
+    // Split reconciled into last session vs older.
+    DateTime? lastSessionDate;
+    List<Transaction> lastSessionTxs = [];
+    int olderCount = 0;
+    DateTime? oldestDate;
+
+    if (reconciledAll.isNotEmpty) {
+      final maxTs = reconciledAll
+          .map((t) => t.reconciledAt!)
+          .reduce((a, b) => a.isAfter(b) ? a : b);
+      lastSessionDate = maxTs;
+
+      lastSessionTxs = reconciledAll.where((t) =>
+          t.reconciledAt!.year  == maxTs.year  &&
+          t.reconciledAt!.month == maxTs.month &&
+          t.reconciledAt!.day   == maxTs.day).toList();
+
+      final older = reconciledAll.where((t) =>
+          !(t.reconciledAt!.year  == maxTs.year  &&
+            t.reconciledAt!.month == maxTs.month &&
+            t.reconciledAt!.day   == maxTs.day)).toList();
+      olderCount = older.length;
+      if (older.isNotEmpty) {
+        oldestDate = older.map((t) => t.date).reduce((a, b) => a.isBefore(b) ? a : b);
+      }
+    }
+
+    final unreconciledGrouped = _groupByDate(unreconciled);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
       children: [
-        if (search.isNotEmpty && confirmed.isNotEmpty) ...[
-          _SearchSummaryBar(count: confirmed.length, total: searchTotal),
-          const SizedBox(height: 8),
-        ],
         if (pending.isNotEmpty) ...[
-          _PendingReviewSection(transactions: pending, ref: ref),
+          _PendingReviewSection(transactions: pending, ref: widget.ref),
           const SizedBox(height: 16),
         ],
-        for (final entry in grouped.entries) ...[
+        for (final entry in unreconciledGrouped.entries) ...[
           _DateHeader(label: entry.key, transactions: entry.value),
           const SizedBox(height: 6),
-          _TransactionGroup(transactions: entry.value, ref: ref),
+          _TransactionGroup(transactions: entry.value, ref: widget.ref),
+          const SizedBox(height: 12),
+        ],
+
+        // ── Reconciled accordion ─────────────────────────────────────────────
+        if (reconciledAll.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Divider(color: cs.outlineVariant.withValues(alpha: 0.4)),
+          const SizedBox(height: 4),
+
+          // Header row
+          InkWell(
+            onTap: () => setState(() => _reconciledExpanded = !_reconciledExpanded),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              child: Row(
+                children: [
+                  Icon(Icons.lock_outline, size: 14, color: cs.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Reconciled · ${DateFormat('MMM d, yyyy').format(lastSessionDate!)}',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: cs.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  AnimatedRotation(
+                    turns:    _reconciledExpanded ? 0.0 : -0.25,
+                    duration: const Duration(milliseconds: 200),
+                    child: Icon(Icons.expand_more, size: 18, color: cs.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Last-session transactions
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: 200),
+            crossFadeState: _reconciledExpanded
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
+            firstChild: Column(
+              children: [
+                const SizedBox(height: 4),
+                _TransactionGroup(
+                  transactions: lastSessionTxs,
+                  ref:          widget.ref,
+                  showDate:     true,
+                ),
+                // Older-count info line
+                if (olderCount > 0)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 10, 4, 0),
+                    child: Text(
+                      '+ $olderCount older reconciled transaction${olderCount == 1 ? '' : 's'}'
+                      '${oldestDate != null ? ' · back to ${DateFormat('MMM yyyy').format(oldestDate)}' : ''}',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            secondChild: const SizedBox.shrink(),
+          ),
           const SizedBox(height: 12),
         ],
       ],
     );
   }
+
+  Widget _emptyState(BuildContext context, String search) => Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.receipt_long_outlined,
+            size: 56, color: Theme.of(context).colorScheme.onSurfaceVariant),
+        const SizedBox(height: 16),
+        Text(
+          search.isNotEmpty ? 'No results for "$search"' : 'No transactions yet',
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 15,
+              color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+      ],
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -713,8 +854,13 @@ List<_DayItem> _toDayItems(List<Transaction> txs) {
 class _TransactionGroup extends StatelessWidget {
   final List<Transaction> transactions;
   final WidgetRef ref;
+  final bool showDate;
 
-  const _TransactionGroup({required this.transactions, required this.ref});
+  const _TransactionGroup({
+    required this.transactions,
+    required this.ref,
+    this.showDate = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -730,7 +876,7 @@ class _TransactionGroup extends StatelessWidget {
         children: items.asMap().entries.map((e) {
           final isLast = e.key == items.length - 1;
           return switch (e.value) {
-            _SingleTx(:final tx)      => _TransactionTile(tx: tx, isLast: isLast, ref: ref),
+            _SingleTx(:final tx)      => _TransactionTile(tx: tx, isLast: isLast, ref: ref, showDate: showDate),
             _SplitGroup(:final parts) => _SplitGroupTile(parts: parts, isLast: isLast, ref: ref),
           };
         }).toList(),
@@ -743,8 +889,9 @@ class _TransactionTile extends StatelessWidget {
   final Transaction tx;
   final bool isLast;
   final WidgetRef ref;
+  final bool showDate;
 
-  const _TransactionTile({required this.tx, required this.isLast, required this.ref});
+  const _TransactionTile({required this.tx, required this.isLast, required this.ref, this.showDate = false});
 
   @override
   Widget build(BuildContext context) {
@@ -803,6 +950,13 @@ class _TransactionTile extends StatelessWidget {
                           fontSize: 11, fontWeight: FontWeight.w600,
                           color: cs.onSurfaceVariant),
                       overflow: TextOverflow.ellipsis,
+                    ),
+                  if (showDate)
+                    Text(
+                      DateFormat('MMM d').format(tx.date),
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          color: cs.onSurfaceVariant.withValues(alpha: 0.6)),
                     ),
                 ],
               ),
