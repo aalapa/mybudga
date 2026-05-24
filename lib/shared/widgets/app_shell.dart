@@ -184,7 +184,8 @@ class _DesktopSidebar extends ConsumerStatefulWidget {
 }
 
 class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
-  bool _collapsed = false;
+  bool  _collapsed      = false;
+  bool? _groupOverride;  // null = individual prefs, false = all collapsed, true = all expanded
 
   static const _prefKeyCollapsed = 'sidebar_collapsed';
   static const _expandedWidth    = 300.0;
@@ -315,6 +316,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                           selectedAccountId: currentAccountId,
                           creditDates:       creditDates,
                           futureSums:        futureSums,
+                          overrideExpanded:  _groupOverride,
                           onAccountTap: (a) =>
                               context.go('/transactions?account=${a.id}'),
                         ),
@@ -327,6 +329,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                           selectedAccountId: currentAccountId,
                           creditDates:       creditDates,
                           futureSums:        futureSums,
+                          overrideExpanded:  _groupOverride,
                           onAccountTap: (a) =>
                               context.go('/transactions?account=${a.id}'),
                         ),
@@ -339,6 +342,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                           selectedAccountId: currentAccountId,
                           creditDates:       creditDates,
                           futureSums:        futureSums,
+                          overrideExpanded:  _groupOverride,
                           onAccountTap: (a) =>
                               context.go('/transactions?account=${a.id}'),
                         ),
@@ -350,6 +354,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                           selectedAccountId: currentAccountId,
                           creditDates:       creditDates,
                           futureSums:        futureSums,
+                          overrideExpanded:  _groupOverride,
                           onAccountTap: (a) =>
                               context.go('/transactions?account=${a.id}'),
                         ),
@@ -391,6 +396,23 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                   letterSpacing: -0.3,
                 ),
               ),
+            ),
+            // Expand / collapse all groups toggle
+            IconButton(
+              icon: Icon(
+                _groupOverride == false
+                    ? Icons.unfold_more
+                    : Icons.unfold_less,
+                size:  18,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+              ),
+              onPressed: () => setState(
+                () => _groupOverride = _groupOverride == false ? true : false,
+              ),
+              tooltip: _groupOverride == false
+                  ? 'Expand all groups'
+                  : 'Collapse all groups',
+              padding: const EdgeInsets.all(8),
             ),
           ],
           if (_collapsed) const Spacer(),
@@ -540,6 +562,7 @@ class _SidebarAccountGroup extends StatefulWidget {
   final String?                   selectedAccountId;
   final Map<String, DateTime>     creditDates;
   final Map<String, double>       futureSums;      // accountId → sum of future txns
+  final bool?                     overrideExpanded; // null = use pref, true/false = force
   final ValueChanged<Account>     onAccountTap;
 
   const _SidebarAccountGroup({
@@ -550,6 +573,7 @@ class _SidebarAccountGroup extends StatefulWidget {
     required this.creditDates,
     required this.futureSums,
     required this.onAccountTap,
+    this.overrideExpanded,
   });
 
   @override
@@ -565,6 +589,18 @@ class _SidebarAccountGroupState extends State<_SidebarAccountGroup> {
   void initState() {
     super.initState();
     _loadPref();
+  }
+
+  @override
+  void didUpdateWidget(_SidebarAccountGroup old) {
+    super.didUpdateWidget(old);
+    final override = widget.overrideExpanded;
+    if (override != null && override != old.overrideExpanded) {
+      setState(() => _expanded = override);
+      SharedPreferences.getInstance().then(
+        (p) => p.setBool('$_prefPrefix${widget.label}', override),
+      );
+    }
   }
 
   Future<void> _loadPref() async {
