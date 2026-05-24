@@ -2136,14 +2136,14 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
 
   void _pickAccount(BuildContext context) {
     final accounts = ref.read(accountsProvider).valueOrNull ?? [];
-    final budget   = accounts.where((a) => !a.isTracking).toList();
+    final active   = accounts.where((a) => a.isActive).toList();
 
     showModalBottomSheet(
       context:            context,
       useSafeArea:        true,
       isScrollControlled: true,
       builder: (_) => _AccountPickerSheet(
-        accounts:        budget,
+        accounts:        active,
         selectedAccount: _selectedAccount,
         onSelect: (a) {
           setState(() => _selectedAccount = a);
