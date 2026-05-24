@@ -3109,6 +3109,11 @@ class _TransferSheetState extends State<_TransferSheet> {
     final cs          = Theme.of(context).colorScheme;
     final accounts    = widget.widgetRef.read(accountsProvider).valueOrNull ?? [];
     final allAccounts = accounts.where((a) => a.isActive).toList();
+    // Credit cards and lines of credit are destinations, not sources —
+    // you pay them off but you don't transfer money out of them.
+    final fromAccounts = allAccounts.where((a) =>
+        a.type != AccountType.creditCard &&
+        a.type != AccountType.lineOfCredit).toList();
 
     // Group label helper for the dropdown items
     Widget accountItem(Account a) => Row(
@@ -3163,14 +3168,14 @@ class _TransferSheetState extends State<_TransferSheet> {
             ),
             const SizedBox(height: 24),
 
-            // From account — all active accounts (budget + tracking)
+            // From account — checking / savings / cash / tracking (no credit cards)
             DropdownButtonFormField<Account>(
               initialValue: _fromAccount,
               decoration: const InputDecoration(
                 labelText: 'From account',
                 prefixIcon: Icon(Icons.arrow_upward, size: 18),
               ),
-              items: allAccounts.map((a) => DropdownMenuItem(
+              items: fromAccounts.map((a) => DropdownMenuItem(
                 value: a,
                 child: accountItem(a),
               )).toList(),
