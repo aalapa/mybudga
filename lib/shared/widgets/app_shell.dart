@@ -780,12 +780,11 @@ class _SidebarDueBadge extends StatelessWidget {
 
     final now = DateTime.now();
     // Overdue → show the MISSED date (this month's, already past).
-    // All other states → show the NEXT upcoming occurrence.
-    final dueDate = status == _SidebarDueStatus.overdue
+    // Always show the NEXT upcoming occurrence — the date you need to act on.
+    // The overdue colour already communicates that you're behind.
+    final dueDate = dueDay >= now.day
         ? DateTime(now.year, now.month, dueDay)
-        : dueDay >= now.day
-            ? DateTime(now.year, now.month, dueDay)
-            : DateTime(now.year, now.month + 1, dueDay);
+        : DateTime(now.year, now.month + 1, dueDay);
     final month = DateFormat('MMM').format(dueDate).toUpperCase();
 
     return Container(
