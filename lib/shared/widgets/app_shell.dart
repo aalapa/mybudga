@@ -225,6 +225,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
     final budgetAccounts = accounts.where((a) => !a.isTracking).toList();
     final trackingList   = accounts.where((a) =>  a.isTracking).toList();
 
+    // ── Budget accounts: match labels ────────────────────────────────────────
     final claimed = <String>{};
     final labeledSections = <({String label, List<Account> accounts})>[];
     for (final lbl in labels) {
@@ -238,6 +239,21 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
     }
     final unclaimed      = budgetAccounts.where((a) => !claimed.contains(a.id)).toList();
     final unclaimedLabel = labels.isEmpty ? 'BUDGET ACCOUNTS' : 'OTHER';
+
+    // ── Tracking accounts: same label matching, independently ────────────────
+    final trackingClaimed = <String>{};
+    final trackingLabeledSections = <({String label, List<Account> accounts})>[];
+    for (final lbl in labels) {
+      final matched = trackingList
+          .where((a) => !trackingClaimed.contains(a.id) && lbl.matches(a))
+          .toList();
+      if (matched.isNotEmpty) {
+        for (final a in matched) trackingClaimed.add(a.id);
+        trackingLabeledSections.add((label: lbl.name.toUpperCase(), accounts: matched));
+      }
+    }
+    final unclaimedTracking      = trackingList.where((a) => !trackingClaimed.contains(a.id)).toList();
+    final unclaimedTrackingLabel = trackingLabeledSections.isEmpty ? 'TRACKING' : 'OTHER';
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
@@ -314,11 +330,22 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
                           onAccountTap: (a) =>
                               context.go('/transactions?account=${a.id}'),
                         ),
-                      // ── Tracking accounts ─────────────────────────
-                      if (trackingList.isNotEmpty)
+                      // ── Tracking accounts (label-grouped, mirrors accounts screen) ──
+                      for (final sec in trackingLabeledSections)
                         _SidebarAccountGroup(
-                          label:             'TRACKING',
-                          accounts:          _sortByDue(trackingList),
+                          label:             sec.label,
+                          accounts:          _sortByDue(sec.accounts),
+                          collapsed:         _collapsed,
+                          selectedAccountId: currentAccountId,
+                          creditDates:       creditDates,
+                          futureSums:        futureSums,
+                          onAccountTap: (a) =>
+                              context.go('/transactions?account=${a.id}'),
+                        ),
+                      if (unclaimedTracking.isNotEmpty)
+                        _SidebarAccountGroup(
+                          label:             unclaimedTrackingLabel,
+                          accounts:          _sortByDue(unclaimedTracking),
                           collapsed:         _collapsed,
                           selectedAccountId: currentAccountId,
                           creditDates:       creditDates,
