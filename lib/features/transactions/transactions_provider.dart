@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/supabase/supabase_provider.dart';
+import '../../shared/models/account.dart';
 import '../../shared/models/transaction.dart';
 import '../../shared/providers/household_provider.dart';
 import '../../shared/providers/payees_provider.dart';
@@ -218,6 +219,27 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
         .update({'transfer_id': debitId})
         .eq('id', creditId);
 
+    // Tracking accounts are off-budget: the DB trigger that recalculates
+    // current_balance on transaction insert intentionally skips them.
+    // Manually adjust so the balance reflects the transfer immediately.
+    final allAccounts = await ref.read(accountsProvider.future);
+    Account? toAcc, fromAcc;
+    for (final a in allAccounts) {
+      if (a.id == toAccountId)   toAcc   = a;
+      if (a.id == fromAccountId) fromAcc = a;
+      if (toAcc != null && fromAcc != null) break;
+    }
+    if (toAcc?.isTracking == true) {
+      await client.from('accounts')
+          .update({'current_balance': toAcc!.balance + amount.abs()})
+          .eq('id', toAccountId);
+    }
+    if (fromAcc?.isTracking == true) {
+      await client.from('accounts')
+          .update({'current_balance': fromAcc!.balance - amount.abs()})
+          .eq('id', fromAccountId);
+    }
+
     ref.invalidateSelf();
     ref.invalidate(accountsProvider);
     ref.invalidate(cashflowProvider);
@@ -289,10 +311,25 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
 
     final row = await client
         .from('transactions')
-        .select('transfer_id')
+        .select('account_id, amount, transfer_id')
         .eq('id', id)
         .maybeSingle();
-    final partnerId = row?['transfer_id'] as String?;
+    final partnerId  = row?['transfer_id'] as String?;
+    final mainAccId  = row?['account_id']  as String?;
+    final mainAmount = (row?['amount'] as num?)?.toDouble() ?? 0.0;
+
+    // Fetch partner row so we can reverse its tracking balance if needed.
+    String? partnerAccId;
+    double  partnerAmount = 0.0;
+    if (partnerId != null) {
+      final pr = await client
+          .from('transactions')
+          .select('account_id, amount')
+          .eq('id', partnerId)
+          .maybeSingle();
+      partnerAccId  = pr?['account_id'] as String?;
+      partnerAmount = (pr?['amount'] as num?)?.toDouble() ?? 0.0;
+    }
 
     final deletedAt = DateTime.now().toIso8601String();
     await client
@@ -305,6 +342,23 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
           .from('transactions')
           .update({'deleted_at': deletedAt})
           .eq('id', partnerId);
+    }
+
+    // The DB trigger that adjusts current_balance skips tracking accounts.
+    // Manually reverse the balance for any tracking account leg.
+    final allAccounts = await ref.read(accountsProvider.future);
+    for (final (accId, delta) in [
+      (mainAccId,    -mainAmount),
+      (partnerAccId, -partnerAmount),
+    ]) {
+      if (accId == null) continue;
+      Account? acc;
+      for (final a in allAccounts) { if (a.id == accId) { acc = a; break; } }
+      if (acc?.isTracking == true) {
+        await client.from('accounts')
+            .update({'current_balance': acc!.balance + delta})
+            .eq('id', accId);
+      }
     }
 
     ref.invalidateSelf();
