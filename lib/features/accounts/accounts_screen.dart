@@ -2322,12 +2322,24 @@ class _ReconcileSheetState extends ConsumerState<_ReconcileSheet> {
     }
   }
 
-  double get _clearedBalance => _txns.fold(0.0, (sum, tx) {
-    final id = tx['id'] as String;
-    return sum + ((_localCleared[id] ?? false)
-        ? (tx['amount'] as num).toDouble()
-        : 0.0);
-  });
+  // Sum of every unreconciled transaction in the list (cleared or not).
+  double get _unreconciledSum =>
+      _txns.fold(0.0, (s, tx) => s + (tx['amount'] as num).toDouble());
+
+  // Baseline = whatever was already locked in previous reconciliations
+  // (= account balance − all currently-unreconciled transactions).
+  double get _reconciledBaseline => widget.account.balance - _unreconciledSum;
+
+  // Cleared balance = baseline + sum of transactions the user has ticked.
+  double get _clearedBalance {
+    final tickedSum = _txns.fold(0.0, (sum, tx) {
+      final id = tx['id'] as String;
+      return sum + ((_localCleared[id] ?? false)
+          ? (tx['amount'] as num).toDouble()
+          : 0.0);
+    });
+    return _reconciledBaseline + tickedSum;
+  }
 
   double get _statementValue {
     final raw = double.tryParse(_statementCtrl.text.replaceAll(',', '')) ?? 0.0;
