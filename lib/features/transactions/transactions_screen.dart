@@ -817,10 +817,10 @@ class _TransactionTile extends StatelessWidget {
                         color: tx.isIncome ? cs.tertiary : cs.onSurface)),
                 if (tx.isReconciled) ...[
                   const SizedBox(height: 2),
-                  Icon(
-                    Icons.lock_outline,
+                  const Icon(
+                    Icons.check_circle,
                     size: 11,
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.45),
+                    color: Color(0xFF4CAF50),
                   ),
                 ],
               ],
