@@ -3106,9 +3106,29 @@ class _TransferSheetState extends State<_TransferSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final cs       = Theme.of(context).colorScheme;
-    final accounts = widget.widgetRef.read(accountsProvider).valueOrNull ?? [];
-    final budgetAccounts = accounts.where((a) => !a.isTracking && a.isActive).toList();
+    final cs          = Theme.of(context).colorScheme;
+    final accounts    = widget.widgetRef.read(accountsProvider).valueOrNull ?? [];
+    final allAccounts = accounts.where((a) => a.isActive).toList();
+
+    // Group label helper for the dropdown items
+    Widget accountItem(Account a) => Row(
+      children: [
+        Expanded(child: Text(a.displayName,
+            style: GoogleFonts.plusJakartaSans(fontSize: 14))),
+        if (a.isTracking)
+          Container(
+            margin: const EdgeInsets.only(left: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: cs.secondaryContainer,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text('tracking',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 10, color: cs.onSecondaryContainer)),
+          ),
+      ],
+    );
 
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
@@ -3143,33 +3163,31 @@ class _TransferSheetState extends State<_TransferSheet> {
             ),
             const SizedBox(height: 24),
 
-            // From account
+            // From account — all active accounts (budget + tracking)
             DropdownButtonFormField<Account>(
               initialValue: _fromAccount,
               decoration: const InputDecoration(
                 labelText: 'From account',
                 prefixIcon: Icon(Icons.arrow_upward, size: 18),
               ),
-              items: budgetAccounts.map((a) => DropdownMenuItem(
+              items: allAccounts.map((a) => DropdownMenuItem(
                 value: a,
-                child: Text(a.displayName,
-                    style: GoogleFonts.plusJakartaSans(fontSize: 14)),
+                child: accountItem(a),
               )).toList(),
               onChanged: (v) => setState(() => _fromAccount = v),
             ),
             const SizedBox(height: 16),
 
-            // To account
+            // To account — all active accounts (budget + tracking)
             DropdownButtonFormField<Account>(
               initialValue: _toAccount,
               decoration: const InputDecoration(
                 labelText: 'To account',
                 prefixIcon: Icon(Icons.arrow_downward, size: 18),
               ),
-              items: budgetAccounts.map((a) => DropdownMenuItem(
+              items: allAccounts.map((a) => DropdownMenuItem(
                 value: a,
-                child: Text(a.displayName,
-                    style: GoogleFonts.plusJakartaSans(fontSize: 14)),
+                child: accountItem(a),
               )).toList(),
               onChanged: (v) => setState(() => _toAccount = v),
             ),
