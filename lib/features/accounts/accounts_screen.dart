@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../shared/models/account.dart';
 import '../../shared/models/transaction.dart';
@@ -253,55 +254,39 @@ class _AccountsBody extends ConsumerWidget {
             sliver: SliverList(
               delegate: SliverChildListDelegate([
                 // ── Labeled sections ──────────────────────────────────────
-                for (final sec in labeledSections) ...[
-                  _SectionHeader(
-                    label:  sec.label.name.toUpperCase(),
-                    total:  sec.accounts.fold(0.0, (s, a) => s + a.balance),
-                    isDebt: sec.accounts.every((a) => a.isCreditCard),
+                for (final sec in labeledSections)
+                  _CollapsibleAccountSection(
+                    label:       sec.label.name.toUpperCase(),
+                    accounts:    _sortAccounts(sec.accounts, creditDates),
+                    isDebt:      sec.accounts.every((a) => a.isCreditCard),
                   ),
-                  const SizedBox(height: 8),
-                  _AccountGroup(accounts: _sortAccounts(sec.accounts, creditDates)),
-                  const SizedBox(height: 20),
-                ],
 
                 // ── Unclaimed budget accounts ("Other") ───────────────────
-                if (unclaimed.isNotEmpty) ...[
-                  _SectionHeader(
-                    label:  labels.isEmpty ? 'BUDGET ACCOUNTS' : 'OTHER',
-                    total:  unclaimed.fold(0.0, (s, a) => s + a.balance),
-                    isDebt: unclaimed.every((a) => a.isCreditCard),
+                if (unclaimed.isNotEmpty)
+                  _CollapsibleAccountSection(
+                    label:    labels.isEmpty ? 'BUDGET ACCOUNTS' : 'OTHER',
+                    accounts: _sortAccounts(unclaimed, creditDates),
+                    isDebt:   unclaimed.every((a) => a.isCreditCard),
                   ),
-                  const SizedBox(height: 8),
-                  _AccountGroup(accounts: _sortAccounts(unclaimed, creditDates)),
-                  const SizedBox(height: 20),
-                ],
 
                 // ── Tracking accounts ─────────────────────────────────────
                 if (effTracking.isNotEmpty) ...[
+                  const SizedBox(height: 4),
                   _SectionHeader(
                     label: 'TRACKING ACCOUNTS',
                     total: effTracking.fold(0.0, (s, a) => s + a.balance),
                   ),
                   const SizedBox(height: 8),
-                  for (final sec in trackingLabeledSections) ...[
-                    _SectionHeader(
-                      label: sec.label.name.toUpperCase(),
-                      total: sec.accounts.fold(0.0, (s, a) => s + a.balance),
+                  for (final sec in trackingLabeledSections)
+                    _CollapsibleAccountSection(
+                      label:    sec.label.name.toUpperCase(),
+                      accounts: _sortAccounts(sec.accounts, creditDates),
                     ),
-                    const SizedBox(height: 6),
-                    _AccountGroup(accounts: _sortAccounts(sec.accounts, creditDates)),
-                    const SizedBox(height: 16),
-                  ],
-                  if (unclaimedTracking.isNotEmpty) ...[
-                    if (trackingLabeledSections.isNotEmpty) ...[
-                      _SectionHeader(
-                        label: 'OTHER',
-                        total: unclaimedTracking.fold(0.0, (s, a) => s + a.balance),
-                      ),
-                      const SizedBox(height: 6),
-                    ],
-                    _AccountGroup(accounts: _sortAccounts(unclaimedTracking, creditDates)),
-                  ],
+                  if (unclaimedTracking.isNotEmpty)
+                    _CollapsibleAccountSection(
+                      label:    trackingLabeledSections.isEmpty ? 'TRACKING' : 'OTHER',
+                      accounts: _sortAccounts(unclaimedTracking, creditDates),
+                    ),
                 ],
               ]),
             ),
@@ -585,15 +570,13 @@ class _LiquidityBar extends StatelessWidget {
 class _SectionHeader extends StatelessWidget {
   final String label;
   final double total;
-  final bool isDebt;
 
-  const _SectionHeader({required this.label, required this.total, this.isDebt = false});
+  const _SectionHeader({required this.label, required this.total});
 
   @override
   Widget build(BuildContext context) {
     final cs  = Theme.of(context).colorScheme;
     final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
-    final color = isDebt ? cs.error : cs.onSurfaceVariant;
 
     return Row(
       children: [
@@ -603,11 +586,124 @@ class _SectionHeader extends StatelessWidget {
                 color: cs.onSurfaceVariant, letterSpacing: 0.8)),
         const Spacer(),
         Text(
-          isDebt ? '-${fmt.format(total.abs())}' : fmt.format(total),
+          fmt.format(total),
           style: GoogleFonts.plusJakartaSans(
-              fontSize: 12, fontWeight: FontWeight.w700, color: color),
+              fontSize: 12, fontWeight: FontWeight.w700, color: cs.onSurfaceVariant),
         ),
       ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Collapsible account section (header + group, persisted state)
+// ---------------------------------------------------------------------------
+
+class _CollapsibleAccountSection extends StatefulWidget {
+  final String label;
+  final List<Account> accounts;
+  final bool isDebt;
+
+  const _CollapsibleAccountSection({
+    required this.label,
+    required this.accounts,
+    this.isDebt = false,
+  });
+
+  @override
+  State<_CollapsibleAccountSection> createState() =>
+      _CollapsibleAccountSectionState();
+}
+
+class _CollapsibleAccountSectionState
+    extends State<_CollapsibleAccountSection> {
+  bool _expanded = true;
+
+  static const _prefPrefix = 'accounts_grp_';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPref();
+  }
+
+  Future<void> _loadPref() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getBool('$_prefPrefix${widget.label}') ?? true;
+    if (mounted && v != _expanded) setState(() => _expanded = v);
+  }
+
+  Future<void> _toggle() async {
+    final next = !_expanded;
+    setState(() => _expanded = next);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('$_prefPrefix${widget.label}', next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs    = Theme.of(context).colorScheme;
+    final fmt   = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final total = widget.accounts.fold(0.0, (s, a) => s + a.balance);
+    final totalColor = widget.isDebt ? cs.error : cs.onSurfaceVariant;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap:        _toggle,
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.label,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize:      11,
+                        fontWeight:    FontWeight.w700,
+                        color:         cs.onSurfaceVariant,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    widget.isDebt
+                        ? '-${fmt.format(total.abs())}'
+                        : fmt.format(total),
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize:   12,
+                      fontWeight: FontWeight.w700,
+                      color:      totalColor,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  AnimatedRotation(
+                    turns:    _expanded ? 0.0 : -0.25,
+                    duration: const Duration(milliseconds: 200),
+                    child: Icon(
+                      Icons.expand_more,
+                      size:  16,
+                      color: cs.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedCrossFade(
+            firstChild:  _AccountGroup(accounts: widget.accounts),
+            secondChild: const SizedBox(width: double.infinity),
+            crossFadeState: _expanded
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
+            duration: const Duration(milliseconds: 200),
+          ),
+        ],
+      ),
     );
   }
 }
