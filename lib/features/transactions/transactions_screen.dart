@@ -13,6 +13,7 @@ import '../../shared/providers/categories_provider.dart';
 import '../../shared/providers/payees_provider.dart';
 import '../accounts/accounts_provider.dart';
 import '../cashflow/cashflow_provider.dart';
+import '../accounts/account_labels_provider.dart';
 import '../accounts/accounts_screen.dart' show showReconcileSheet;
 import 'transactions_provider.dart';
 import '../../core/sms/sms_parser.dart';
@@ -2158,7 +2159,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
 // Account picker sheet (with live search)
 // ---------------------------------------------------------------------------
 
-class _AccountPickerSheet extends StatefulWidget {
+class _AccountPickerSheet extends ConsumerStatefulWidget {
   final List<Account> accounts;
   final Account? selectedAccount;
   final ValueChanged<Account> onSelect;
@@ -2170,10 +2171,10 @@ class _AccountPickerSheet extends StatefulWidget {
   });
 
   @override
-  State<_AccountPickerSheet> createState() => _AccountPickerSheetState();
+  ConsumerState<_AccountPickerSheet> createState() => _AccountPickerSheetState();
 }
 
-class _AccountPickerSheetState extends State<_AccountPickerSheet> {
+class _AccountPickerSheetState extends ConsumerState<_AccountPickerSheet> {
   final _searchCtrl = TextEditingController();
   String _query = '';
 
@@ -2184,17 +2185,70 @@ class _AccountPickerSheetState extends State<_AccountPickerSheet> {
   }
 
   List<Account> get _filtered {
-    if (_query.isEmpty) return widget.accounts;
     final q = _query.toLowerCase();
     return widget.accounts
         .where((a) => a.displayName.toLowerCase().contains(q))
         .toList();
   }
 
+  // Returns a flat list of mixed items: (header: String) or (account: Account).
+  // Used when labels exist and not searching.
+  List<({String? header, Account? account})> _buildGroupedItems(
+      List<AccountLabel> labels) {
+    final budget   = widget.accounts.where((a) => !a.isTracking).toList();
+    final tracking = widget.accounts.where((a) =>  a.isTracking).toList();
+    final items    = <({String? header, Account? account})>[];
+
+    // Budget groups
+    final claimed = <String>{};
+    for (final lbl in labels) {
+      final matched = budget
+          .where((a) => !claimed.contains(a.id) && lbl.matches(a))
+          .toList();
+      if (matched.isNotEmpty) {
+        for (final a in matched) claimed.add(a.id);
+        items.add((header: lbl.name.toUpperCase(), account: null));
+        for (final a in matched) items.add((header: null, account: a));
+      }
+    }
+    final unclaimed = budget.where((a) => !claimed.contains(a.id)).toList();
+    if (unclaimed.isNotEmpty) {
+      items.add((header: labels.isEmpty ? 'BUDGET ACCOUNTS' : 'OTHER', account: null));
+      for (final a in unclaimed) items.add((header: null, account: a));
+    }
+
+    // Tracking groups
+    if (tracking.isNotEmpty) {
+      final trackingClaimed = <String>{};
+      for (final lbl in labels) {
+        final matched = tracking
+            .where((a) => !trackingClaimed.contains(a.id) && lbl.matches(a))
+            .toList();
+        if (matched.isNotEmpty) {
+          for (final a in matched) trackingClaimed.add(a.id);
+          items.add((header: '${lbl.name.toUpperCase()} - OFF BUDGET', account: null));
+          for (final a in matched) items.add((header: null, account: a));
+        }
+      }
+      final unclaimedTracking =
+          tracking.where((a) => !trackingClaimed.contains(a.id)).toList();
+      if (unclaimedTracking.isNotEmpty) {
+        items.add((header: 'TRACKING', account: null));
+        for (final a in unclaimedTracking) items.add((header: null, account: a));
+      }
+    }
+
+    return items;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final cs       = Theme.of(context).colorScheme;
-    final filtered = _filtered;
+    final cs     = Theme.of(context).colorScheme;
+    final labels = ref.watch(accountLabelsProvider);
+    final useGroups = labels.isNotEmpty && _query.isEmpty;
+
+    final flatFiltered  = _filtered;
+    final groupedItems  = useGroups ? _buildGroupedItems(labels) : <({String? header, Account? account})>[];
 
     return DraggableScrollableSheet(
       initialChildSize: 0.5,
@@ -2247,53 +2301,77 @@ class _AccountPickerSheetState extends State<_AccountPickerSheet> {
               ),
             ),
             const Divider(height: 1),
-            // ── Filtered account list ──────────────────────────────────
+            // ── Account list (grouped or flat) ─────────────────────────
             Expanded(
-              child: filtered.isEmpty
-                  ? Center(
-                      child: Text('No accounts match "$_query"',
-                          style: GoogleFonts.plusJakartaSans(
-                              color: cs.onSurfaceVariant)),
-                    )
-                  : ListView.builder(
+              child: useGroups
+                  ? ListView.builder(
                       controller: scrollController,
                       padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
-                      itemCount: filtered.length,
+                      itemCount: groupedItems.length,
                       itemBuilder: (_, i) {
-                        final a          = filtered[i];
-                        final isSelected = a == widget.selectedAccount;
-                        return InkWell(
-                          onTap: () => widget.onSelect(a),
-                          borderRadius: BorderRadius.circular(12),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                                vertical: 13, horizontal: 4),
-                            child: Row(
-                              children: [
-                                Icon(a.type.icon, size: 18,
-                                    color: isSelected
-                                        ? cs.primary
-                                        : cs.onSurfaceVariant),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(a.displayName,
-                                      style: GoogleFonts.plusJakartaSans(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                          color: isSelected
-                                              ? cs.primary
-                                              : cs.onSurface)),
-                                ),
-                                if (isSelected)
-                                  Icon(Icons.check_circle,
-                                      size: 18, color: cs.primary),
-                              ],
+                        final item = groupedItems[i];
+                        if (item.header != null) {
+                          return Padding(
+                            padding: const EdgeInsets.fromLTRB(4, 16, 4, 6),
+                            child: Text(
+                              item.header!,
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize:      11,
+                                fontWeight:    FontWeight.w700,
+                                color:         cs.onSurfaceVariant,
+                                letterSpacing: 0.8,
+                              ),
                             ),
-                          ),
-                        );
+                          );
+                        }
+                        final a          = item.account!;
+                        final isSelected = a == widget.selectedAccount;
+                        return _accountTile(a, isSelected, cs);
                       },
-                    ),
+                    )
+                  : flatFiltered.isEmpty
+                      ? Center(
+                          child: Text('No accounts match "$_query"',
+                              style: GoogleFonts.plusJakartaSans(
+                                  color: cs.onSurfaceVariant)),
+                        )
+                      : ListView.builder(
+                          controller: scrollController,
+                          padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+                          itemCount: flatFiltered.length,
+                          itemBuilder: (_, i) {
+                            final a          = flatFiltered[i];
+                            final isSelected = a == widget.selectedAccount;
+                            return _accountTile(a, isSelected, cs);
+                          },
+                        ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _accountTile(Account a, bool isSelected, ColorScheme cs) {
+    return InkWell(
+      onTap:        () => widget.onSelect(a),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 4),
+        child: Row(
+          children: [
+            Icon(a.type.icon, size: 18,
+                color: isSelected ? cs.primary : cs.onSurfaceVariant),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(a.displayName,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize:   14,
+                      fontWeight: FontWeight.w600,
+                      color: isSelected ? cs.primary : cs.onSurface)),
+            ),
+            if (isSelected)
+              Icon(Icons.check_circle, size: 18, color: cs.primary),
           ],
         ),
       ),
