@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../../shared/models/account.dart';
 import '../../shared/models/category.dart';
@@ -2178,10 +2179,37 @@ class _AccountPickerSheetState extends ConsumerState<_AccountPickerSheet> {
   final _searchCtrl = TextEditingController();
   String _query = '';
 
+  static const _prefKey = 'account_picker_search';
+
+  @override
+  void initState() {
+    super.initState();
+    SharedPreferences.getInstance().then((prefs) {
+      final saved = prefs.getString(_prefKey) ?? '';
+      if (saved.isNotEmpty && mounted) {
+        setState(() {
+          _query = saved;
+          _searchCtrl.text = saved;
+          _searchCtrl.selection = TextSelection.collapsed(offset: saved.length);
+        });
+      }
+    });
+  }
+
   @override
   void dispose() {
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _setQuery(String v) async {
+    setState(() => _query = v);
+    final prefs = await SharedPreferences.getInstance();
+    if (v.isEmpty) {
+      await prefs.remove(_prefKey);
+    } else {
+      await prefs.setString(_prefKey, v);
+    }
   }
 
   List<Account> get _filtered {
@@ -2284,17 +2312,17 @@ class _AccountPickerSheetState extends ConsumerState<_AccountPickerSheet> {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: TextField(
                 controller: _searchCtrl,
-                onChanged: (v) => setState(() => _query = v),
+                onChanged: _setQuery,
                 decoration: InputDecoration(
                   hintText: 'Search accounts…',
                   prefixIcon: const Icon(Icons.search, size: 18),
                   suffixIcon: _query.isNotEmpty
                       ? IconButton(
                           icon: const Icon(Icons.clear, size: 16),
-                          onPressed: () => setState(() {
-                            _query = '';
+                          onPressed: () {
                             _searchCtrl.clear();
-                          }),
+                            _setQuery('');
+                          },
                         )
                       : null,
                 ),
