@@ -536,9 +536,8 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     double income = 0;
     final incomeTxns = <IncomeTxn>[];
     for (final tx in results[2] as List) {
-      final catId      = tx['category_id'] as String?;
-      final transferId = tx['transfer_id']  as String?;
-      final amt        = (tx['amount']      as num).toDouble();
+      final transferId = tx['transfer_id'] as String?;
+      final amt        = (tx['amount']     as num).toDouble();
       // Exclude transfers — they are not income regardless of category.
       if (transferId == null && amt > 0) {
         income += amt;
