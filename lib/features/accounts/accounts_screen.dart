@@ -2545,6 +2545,7 @@ class _ReconcileSheetState extends ConsumerState<_ReconcileSheet> {
 
       widget.widgetRef.invalidate(transactionsProvider);
       widget.widgetRef.invalidate(accountsProvider);
+      widget.widgetRef.invalidate(accountTransactionsProvider);
       widget.widgetRef.invalidate(lastReconciledDatesProvider);
       if (mounted) Navigator.pop(context);
     } catch (e) {
