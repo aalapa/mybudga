@@ -539,8 +539,8 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       final catId      = tx['category_id'] as String?;
       final transferId = tx['transfer_id']  as String?;
       final amt        = (tx['amount']      as num).toDouble();
-      // Exclude transfers — they have no category but are not income.
-      if (catId == null && transferId == null && amt > 0) {
+      // Exclude transfers — they are not income regardless of category.
+      if (transferId == null && amt > 0) {
         income += amt;
         final payee = tx['payees'] as Map<String, dynamic>?;
         incomeTxns.add(IncomeTxn(
