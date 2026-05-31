@@ -439,7 +439,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       // 3. transaction activity per category (includes date + payee for income drill-down)
       client
           .from('transactions')
-          .select('category_id, amount, date, payees(name)')
+          .select('category_id, amount, date, transfer_id, payees(name)')
           .eq('household_id', householdId)
           .gte('date', monthStr)
           .lt('date', nextMonthStr)
@@ -536,9 +536,11 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     double income = 0;
     final incomeTxns = <IncomeTxn>[];
     for (final tx in results[2] as List) {
-      final catId = tx['category_id'] as String?;
-      final amt   = (tx['amount']      as num).toDouble();
-      if (catId == null && amt > 0) {
+      final catId      = tx['category_id'] as String?;
+      final transferId = tx['transfer_id']  as String?;
+      final amt        = (tx['amount']      as num).toDouble();
+      // Exclude transfers — they have no category but are not income.
+      if (catId == null && transferId == null && amt > 0) {
         income += amt;
         final payee = tx['payees'] as Map<String, dynamic>?;
         incomeTxns.add(IncomeTxn(
