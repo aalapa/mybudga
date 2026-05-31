@@ -1074,27 +1074,40 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
     final cs        = Theme.of(context).colorScheme;
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
-    final confirm = await showDialog<bool>(
+
+    // 'skip' = skip this occurrence only, 'all' = delete entire schedule
+    final choice = await showDialog<String>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
-        title: const Text('Delete scheduled transaction?'),
-        content: const Text('This will remove all future occurrences.'),
+        title: const Text('Remove scheduled transaction?'),
+        content: const Text(
+          'Skip just this occurrence and keep future ones, '
+          'or delete the entire schedule?',
+        ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dialogCtx, false),
+            onPressed: () => Navigator.pop(dialogCtx, null),
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(dialogCtx, true),
+            onPressed: () => Navigator.pop(dialogCtx, 'skip'),
+            child: const Text('Skip this one'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, 'all'),
             style: TextButton.styleFrom(foregroundColor: cs.error),
-            child: const Text('Delete'),
+            child: const Text('Delete all'),
           ),
         ],
       ),
     );
-    if (confirm != true || !mounted) return;
+    if (choice == null || !mounted) return;
     try {
-      await ref.read(cashflowProvider.notifier).deleteScheduled(widget.prefill!.id);
+      if (choice == 'skip') {
+        await ref.read(cashflowProvider.notifier).markAsPaid(widget.prefill!.id);
+      } else {
+        await ref.read(cashflowProvider.notifier).deleteScheduled(widget.prefill!.id);
+      }
       navigator.pop();
     } catch (e) {
       messenger.showSnackBar(SnackBar(
