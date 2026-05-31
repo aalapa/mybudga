@@ -302,6 +302,15 @@ class _PanelContentState extends State<_PanelContent> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Carry-forward from previous month
+                if (state.carryForward != 0)
+                  _TbbLine(
+                    sign:       state.carryForward > 0 ? '+' : '−',
+                    value:      state.carryForward.abs(),
+                    label:      'Carried from ${DateFormat('MMM').format(DateTime(state.month.year, state.month.month - 1))}',
+                    valueColor: state.carryForward > 0 ? cs.tertiary : cs.error,
+                  ),
+                if (state.carryForward != 0) const SizedBox(height: 2),
                 // Income line — tappable, expands to show individual transactions
                 _IncomeLine(
                   month:      state.month,
@@ -688,6 +697,7 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
         incomeTxns:    state.incomeTxns,
         totalBudgeted: state.totalBudgeted,
         totalSpent:    state.totalSpent,
+        carryForward:  state.carryForward,
         onPrev: () => notifier.goToMonth(
             DateTime(state.month.year, state.month.month - 1)),
         onNext: () => _checkOverspendBeforeNext(
@@ -817,6 +827,7 @@ class _BudgetHeader extends StatelessWidget {
   final List<IncomeTxn> incomeTxns;
   final double totalBudgeted;
   final double totalSpent;
+  final double carryForward;
   final VoidCallback onPrev;
   final VoidCallback onNext;
   final WidgetRef ref;
@@ -828,6 +839,7 @@ class _BudgetHeader extends StatelessWidget {
     required this.incomeTxns,
     required this.totalBudgeted,
     required this.totalSpent,
+    required this.carryForward,
     required this.onPrev,
     required this.onNext,
     required this.ref,
@@ -900,6 +912,15 @@ class _BudgetHeader extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // ── Breakdown lines ──────────────────────────────────────────
+                if (carryForward != 0) ...[
+                  _TbbLine(
+                    sign:       carryForward > 0 ? '+' : '−',
+                    value:      carryForward.abs(),
+                    label:      'Carried from ${DateFormat('MMM').format(DateTime(month.year, month.month - 1))}',
+                    valueColor: carryForward > 0 ? cs.tertiary : cs.error,
+                  ),
+                  const SizedBox(height: 3),
+                ],
                 _IncomeLine(
                   month:  month,
                   income: income,

@@ -41,6 +41,9 @@ class BudgetState {
   /// Actual spending this month: sum of negative non-transfer budget-account txns.
   final double totalSpent;
 
+  /// TBB carried forward from the previous month (may be negative).
+  final double carryForward;
+
   const BudgetState({
     required this.month,
     required this.groups,
@@ -49,6 +52,7 @@ class BudgetState {
     this.incomeTxns    = const [],
     this.totalBudgeted = 0,
     this.totalSpent    = 0,
+    this.carryForward  = 0,
   });
 
   BudgetState copyWith({
@@ -59,6 +63,7 @@ class BudgetState {
     List<IncomeTxn>?    incomeTxns,
     double?             totalBudgeted,
     double?             totalSpent,
+    double?             carryForward,
   }) => BudgetState(
     month:         month         ?? this.month,
     groups:        groups        ?? this.groups,
@@ -67,6 +72,7 @@ class BudgetState {
     incomeTxns:    incomeTxns    ?? this.incomeTxns,
     totalBudgeted: totalBudgeted ?? this.totalBudgeted,
     totalSpent:    totalSpent    ?? this.totalSpent,
+    carryForward:  carryForward  ?? this.carryForward,
   );
 }
 
@@ -572,18 +578,21 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       if (transferId == null && !isTracking && amt < 0) totalSpent += amt.abs();
     }
 
-    // ── TBB from view ────────────────────────────────────────────────────────
-    double tbb = 0;
+    // ── TBB (cumulative) + carry-forward from previous month ─────────────────
+    double tbb          = 0;
+    double carryForward = 0;
     try {
-      final tbbRes = await client
+      final prevMonthStr = _toMonthString(DateTime(month.year, month.month - 1));
+      final tbbRows = await client
           .from('v_to_be_budgeted')
-          .select('to_be_budgeted')
+          .select('month, to_be_budgeted')
           .eq('household_id', householdId)
-          .eq('month', monthStr)
-          .maybeSingle();
-      tbb = tbbRes != null
-          ? (tbbRes['to_be_budgeted'] as num).toDouble()
-          : 0.0;
+          .inFilter('month', [monthStr, prevMonthStr]);
+      for (final row in tbbRows as List) {
+        final val = (row['to_be_budgeted'] as num).toDouble();
+        if (row['month'] == monthStr)     tbb          = val;
+        if (row['month'] == prevMonthStr) carryForward = val;
+      }
     } catch (_) {}
 
     return BudgetState(
@@ -594,6 +603,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       incomeTxns:    incomeTxns,
       totalBudgeted: totalBudgeted,
       totalSpent:    totalSpent,
+      carryForward:  carryForward,
     );
   }
 
