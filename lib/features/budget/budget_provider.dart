@@ -439,7 +439,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       // 3. transaction activity per category (includes date + payee for income drill-down)
       client
           .from('transactions')
-          .select('category_id, amount, date, transfer_id, payees(name)')
+          .select('category_id, amount, date, transfer_id, payees(name), accounts(is_tracking)')
           .eq('household_id', householdId)
           .gte('date', monthStr)
           .lt('date', nextMonthStr)
@@ -463,8 +463,9 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
 
     final activityMap = <String, double>{};
     for (final tx in results[2] as List) {
-      final catId = tx['category_id'] as String?;
-      if (catId == null) continue;
+      final catId      = tx['category_id'] as String?;
+      final isTracking = (tx['accounts']   as Map?)?['is_tracking'] as bool? ?? false;
+      if (catId == null || isTracking) continue;
       activityMap[catId] =
           (activityMap[catId] ?? 0.0) + (tx['amount'] as num).toDouble();
     }
@@ -537,9 +538,10 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     final incomeTxns = <IncomeTxn>[];
     for (final tx in results[2] as List) {
       final transferId = tx['transfer_id'] as String?;
+      final isTracking = (tx['accounts']   as Map?)?['is_tracking'] as bool? ?? false;
       final amt        = (tx['amount']     as num).toDouble();
-      // Exclude transfers — they are not income regardless of category.
-      if (transferId == null && amt > 0) {
+      // Exclude transfers and tracking-account transactions — neither is budget income.
+      if (transferId == null && !isTracking && amt > 0) {
         income += amt;
         final payee = tx['payees'] as Map<String, dynamic>?;
         incomeTxns.add(IncomeTxn(
