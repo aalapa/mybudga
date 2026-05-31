@@ -16,6 +16,14 @@ enum QuickBudgetScope    { thisMonth, next3, next6, next12 }
 // State
 // ---------------------------------------------------------------------------
 
+/// A single income transaction surfaced in the budget header.
+class IncomeTxn {
+  final double  amount;
+  final String? payeeName;
+  final DateTime date;
+  const IncomeTxn({required this.amount, this.payeeName, required this.date});
+}
+
 class BudgetState {
   final DateTime month;
   final List<BudgetGroupData> groups;
@@ -23,6 +31,9 @@ class BudgetState {
 
   /// Inflows that flow into TBB: transactions with no category (positive amount).
   final double income;
+
+  /// Individual income transactions for the expanded view.
+  final List<IncomeTxn> incomeTxns;
 
   /// Total amount assigned to categories this month.
   final double totalBudgeted;
@@ -32,6 +43,7 @@ class BudgetState {
     required this.groups,
     required this.tbb,
     this.income       = 0,
+    this.incomeTxns   = const [],
     this.totalBudgeted = 0,
   });
 
@@ -40,12 +52,14 @@ class BudgetState {
     List<BudgetGroupData>? groups,
     double?             tbb,
     double?             income,
+    List<IncomeTxn>?    incomeTxns,
     double?             totalBudgeted,
   }) => BudgetState(
     month:         month         ?? this.month,
     groups:        groups        ?? this.groups,
     tbb:           tbb           ?? this.tbb,
     income:        income        ?? this.income,
+    incomeTxns:    incomeTxns    ?? this.incomeTxns,
     totalBudgeted: totalBudgeted ?? this.totalBudgeted,
   );
 }
@@ -422,10 +436,10 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
           .eq('household_id', householdId)
           .eq('month', monthStr),
 
-      // 3. transaction activity per category
+      // 3. transaction activity per category (includes date + payee for income drill-down)
       client
           .from('transactions')
-          .select('category_id, amount')
+          .select('category_id, amount, date, payees(name)')
           .eq('household_id', householdId)
           .gte('date', monthStr)
           .lt('date', nextMonthStr)
@@ -520,11 +534,21 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     // ── Income: uncategorised positive transactions flow straight into TBB ──────
     // (results[2] is already the full confirmed-tx set for the month)
     double income = 0;
+    final incomeTxns = <IncomeTxn>[];
     for (final tx in results[2] as List) {
       final catId = tx['category_id'] as String?;
       final amt   = (tx['amount']      as num).toDouble();
-      if (catId == null && amt > 0) income += amt;
+      if (catId == null && amt > 0) {
+        income += amt;
+        final payee = tx['payees'] as Map<String, dynamic>?;
+        incomeTxns.add(IncomeTxn(
+          amount:    amt,
+          payeeName: payee?['name'] as String?,
+          date:      DateTime.parse(tx['date'] as String),
+        ));
+      }
     }
+    incomeTxns.sort((a, b) => b.date.compareTo(a.date));
 
     // ── Total assigned this month (sum of all budgeted entries) ──────────────
     final totalBudgeted = groups.fold(0.0,
@@ -549,6 +573,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       groups:        groups,
       tbb:           tbb,
       income:        income,
+      incomeTxns:    incomeTxns,
       totalBudgeted: totalBudgeted,
     );
   }

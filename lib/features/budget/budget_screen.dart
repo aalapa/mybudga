@@ -302,12 +302,11 @@ class _PanelContentState extends State<_PanelContent> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Income line
-                _TbbLine(
-                  sign:       '+',
-                  value:      state.income,
-                  label:      'Income for ${DateFormat('MMM').format(state.month)}',
-                  valueColor: cs.tertiary,
+                // Income line — tappable, expands to show individual transactions
+                _IncomeLine(
+                  month:      state.month,
+                  income:     state.income,
+                  txns:       state.incomeTxns,
                 ),
                 const SizedBox(height: 2),
                 // Budgeted line
@@ -678,6 +677,7 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
         month:         state.month,
         tbb:           state.tbb,
         income:        state.income,
+        incomeTxns:    state.incomeTxns,
         totalBudgeted: state.totalBudgeted,
         onPrev: () => notifier.goToMonth(
             DateTime(state.month.year, state.month.month - 1)),
@@ -805,6 +805,7 @@ class _BudgetHeader extends StatelessWidget {
   final DateTime month;
   final double tbb;
   final double income;
+  final List<IncomeTxn> incomeTxns;
   final double totalBudgeted;
   final VoidCallback onPrev;
   final VoidCallback onNext;
@@ -814,6 +815,7 @@ class _BudgetHeader extends StatelessWidget {
     required this.month,
     required this.tbb,
     required this.income,
+    required this.incomeTxns,
     required this.totalBudgeted,
     required this.onPrev,
     required this.onNext,
@@ -887,11 +889,10 @@ class _BudgetHeader extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // ── Breakdown lines ──────────────────────────────────────────
-                _TbbLine(
-                  sign:  '+',
-                  value: income,
-                  label: 'Income for ${DateFormat('MMM').format(month)}',
-                  valueColor: cs.tertiary,
+                _IncomeLine(
+                  month:  month,
+                  income: income,
+                  txns:   incomeTxns,
                 ),
                 const SizedBox(height: 3),
                 _TbbLine(
@@ -949,6 +950,145 @@ class _BudgetHeader extends StatelessWidget {
 }
 
 // ── Single breakdown line: sign · formatted amount · label ────────────────────
+
+// ---------------------------------------------------------------------------
+// Income line — tappable row that expands to list individual income txns
+// ---------------------------------------------------------------------------
+
+class _IncomeLine extends StatefulWidget {
+  final DateTime       month;
+  final double         income;
+  final List<IncomeTxn> txns;
+
+  const _IncomeLine({
+    required this.month,
+    required this.income,
+    required this.txns,
+  });
+
+  @override
+  State<_IncomeLine> createState() => _IncomeLineState();
+}
+
+class _IncomeLineState extends State<_IncomeLine> {
+  bool _expanded = false;
+
+  static final _fmt     = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+  static final _dateFmt = DateFormat('MMM d');
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          onTap: widget.txns.isEmpty
+              ? null
+              : () => setState(() => _expanded = !_expanded),
+          borderRadius: BorderRadius.circular(4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Income for ${DateFormat('MMM').format(widget.month)}',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    color: cs.onSurfaceVariant,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 14,
+                child: Text(
+                  '+',
+                  textAlign: TextAlign.right,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: cs.tertiary.withValues(alpha: 0.7),
+                  ),
+                ),
+              ),
+              Text(
+                _fmt.format(widget.income),
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: cs.tertiary,
+                ),
+              ),
+              if (widget.txns.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4),
+                  child: AnimatedRotation(
+                    turns:    _expanded ? 0.5 : 0.0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Icon(
+                      Icons.expand_more,
+                      size:  14,
+                      color: cs.tertiary.withValues(alpha: 0.7),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        AnimatedCrossFade(
+          crossFadeState: _expanded
+              ? CrossFadeState.showFirst
+              : CrossFadeState.showSecond,
+          duration: const Duration(milliseconds: 200),
+          firstChild: Padding(
+            padding: const EdgeInsets.only(top: 6, bottom: 2),
+            child: Column(
+              children: widget.txns.map((t) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    children: [
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Text(
+                          t.payeeName ?? 'Income',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11,
+                            color: cs.onSurfaceVariant,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      Text(
+                        _dateFmt.format(t.date),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10,
+                          color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _fmt.format(t.amount),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: cs.tertiary,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          secondChild: const SizedBox(width: double.infinity),
+        ),
+      ],
+    );
+  }
+}
 
 class _TbbLine extends StatelessWidget {
   final String sign;
