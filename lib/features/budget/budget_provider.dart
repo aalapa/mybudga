@@ -38,13 +38,17 @@ class BudgetState {
   /// Total amount assigned to categories this month.
   final double totalBudgeted;
 
+  /// Actual spending this month: sum of negative non-transfer budget-account txns.
+  final double totalSpent;
+
   const BudgetState({
     required this.month,
     required this.groups,
     required this.tbb,
-    this.income       = 0,
-    this.incomeTxns   = const [],
+    this.income        = 0,
+    this.incomeTxns    = const [],
     this.totalBudgeted = 0,
+    this.totalSpent    = 0,
   });
 
   BudgetState copyWith({
@@ -54,6 +58,7 @@ class BudgetState {
     double?             income,
     List<IncomeTxn>?    incomeTxns,
     double?             totalBudgeted,
+    double?             totalSpent,
   }) => BudgetState(
     month:         month         ?? this.month,
     groups:        groups        ?? this.groups,
@@ -61,6 +66,7 @@ class BudgetState {
     income:        income        ?? this.income,
     incomeTxns:    incomeTxns    ?? this.incomeTxns,
     totalBudgeted: totalBudgeted ?? this.totalBudgeted,
+    totalSpent:    totalSpent    ?? this.totalSpent,
   );
 }
 
@@ -557,6 +563,15 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     final totalBudgeted = groups.fold(0.0,
         (s, g) => s + g.entries.fold(0.0, (s2, e) => s2 + e.budgeted));
 
+    // ── Actual spending: negative non-transfer budget-account transactions ────
+    double totalSpent = 0;
+    for (final tx in results[2] as List) {
+      final transferId = tx['transfer_id'] as String?;
+      final isTracking = (tx['accounts']   as Map?)?['is_tracking'] as bool? ?? false;
+      final amt        = (tx['amount']     as num).toDouble();
+      if (transferId == null && !isTracking && amt < 0) totalSpent += amt.abs();
+    }
+
     // ── TBB from view ────────────────────────────────────────────────────────
     double tbb = 0;
     try {
@@ -578,6 +593,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       income:        income,
       incomeTxns:    incomeTxns,
       totalBudgeted: totalBudgeted,
+      totalSpent:    totalSpent,
     );
   }
 

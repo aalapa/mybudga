@@ -316,6 +316,14 @@ class _PanelContentState extends State<_PanelContent> {
                   label:      'Budgeted in ${DateFormat('MMM').format(state.month)}',
                   valueColor: cs.onSurfaceVariant,
                 ),
+                const SizedBox(height: 2),
+                // Spent line
+                _TbbLine(
+                  sign:       '~',
+                  value:      state.totalSpent,
+                  label:      'Spent in ${DateFormat('MMM').format(state.month)}',
+                  valueColor: cs.error.withValues(alpha: 0.8),
+                ),
                 const SizedBox(height: 6),
                 // TBB result pill
                 Align(
@@ -679,6 +687,7 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
         income:        state.income,
         incomeTxns:    state.incomeTxns,
         totalBudgeted: state.totalBudgeted,
+        totalSpent:    state.totalSpent,
         onPrev: () => notifier.goToMonth(
             DateTime(state.month.year, state.month.month - 1)),
         onNext: () => _checkOverspendBeforeNext(
@@ -807,6 +816,7 @@ class _BudgetHeader extends StatelessWidget {
   final double income;
   final List<IncomeTxn> incomeTxns;
   final double totalBudgeted;
+  final double totalSpent;
   final VoidCallback onPrev;
   final VoidCallback onNext;
   final WidgetRef ref;
@@ -817,6 +827,7 @@ class _BudgetHeader extends StatelessWidget {
     required this.income,
     required this.incomeTxns,
     required this.totalBudgeted,
+    required this.totalSpent,
     required this.onPrev,
     required this.onNext,
     required this.ref,
@@ -900,6 +911,13 @@ class _BudgetHeader extends StatelessWidget {
                   value: totalBudgeted,
                   label: 'Budgeted in ${DateFormat('MMM').format(month)}',
                   valueColor: cs.onSurfaceVariant,
+                ),
+                const SizedBox(height: 3),
+                _TbbLine(
+                  sign:  '~',
+                  value: totalSpent,
+                  label: 'Spent in ${DateFormat('MMM').format(month)}',
+                  valueColor: cs.error.withValues(alpha: 0.8),
                 ),
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 6),
