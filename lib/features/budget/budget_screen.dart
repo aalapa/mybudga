@@ -67,11 +67,12 @@ class BudgetScreen extends ConsumerWidget {
                   ),
       ),
       // FAB only on mobile — desktop uses group [+] buttons or split view
-      floatingActionButton: (isThreeCol || wideEnough) ? null : FloatingActionButton(
+      floatingActionButton: (isThreeCol || wideEnough) ? null : FloatingActionButton.extended(
         onPressed: () => _showAddCategorySheet(context, ref),
         backgroundColor: cs.primary,
         foregroundColor: cs.onPrimary,
-        child: const Icon(Icons.add),
+        icon:  const Icon(Icons.add),
+        label: const Text('Add Category'),
       ),
     );
   }
@@ -809,6 +810,21 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
           header,
           if (isWide) const SliverToBoxAdapter(child: _ColumnHeaders()),
           ...groupSlivers,
+          // Always-visible "Add category" button at the bottom of the list
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: TextButton.icon(
+                onPressed: () => _showAddCategorySheet(context, ref),
+                icon:  const Icon(Icons.add_circle_outline, size: 16),
+                label: const Text('Add Category'),
+                style: TextButton.styleFrom(
+                  alignment: Alignment.centerLeft,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                ),
+              ),
+            ),
+          ),
           const SliverToBoxAdapter(child: SizedBox(height: 100)),
         ],
       ),

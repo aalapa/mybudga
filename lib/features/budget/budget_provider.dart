@@ -464,6 +464,22 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
           .select()
           .eq('household_id', householdId)
           .eq('is_active', true),
+
+      // 5. all budget_months BEFORE this month (for carry-forward)
+      client
+          .from('budget_months')
+          .select('category_id, budgeted')
+          .eq('household_id', householdId)
+          .lt('month', monthStr),
+
+      // 6. all confirmed non-transfer budget-account transactions BEFORE this month
+      client
+          .from('transactions')
+          .select('category_id, amount, transfer_id, accounts(is_tracking)')
+          .eq('household_id', householdId)
+          .lt('date', monthStr)
+          .eq('status', 'confirmed')
+          .isFilter('deleted_at', null),
     ]);
 
     // Build lookup maps
@@ -486,6 +502,23 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     for (final row in results[3] as List) {
       final g = BudgetGoal.fromJson(row as Map<String, dynamic>);
       goalMap[g.categoryId] = g;
+    }
+
+    // ── Carry-forward: sum all budgeted + activity from months before this one ─
+    final carryForwardMap = <String, double>{};
+    for (final row in results[4] as List) {
+      final catId = row['category_id'] as String?;
+      if (catId == null) continue;
+      carryForwardMap[catId] =
+          (carryForwardMap[catId] ?? 0.0) + (row['budgeted'] as num).toDouble();
+    }
+    for (final tx in results[5] as List) {
+      final catId      = tx['category_id'] as String?;
+      final transferId = tx['transfer_id'] as String?;
+      final isTracking = (tx['accounts']   as Map?)?['is_tracking'] as bool? ?? false;
+      if (catId == null || transferId != null || isTracking) continue;
+      carryForwardMap[catId] =
+          (carryForwardMap[catId] ?? 0.0) + (tx['amount'] as num).toDouble();
     }
 
     // Build groups
@@ -511,7 +544,8 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
         final catId      = c['id'] as String;
         final budgeted   = budgetMap[catId] ?? 0.0;
         final activity   = activityMap[catId] ?? 0.0;
-        final balance    = budgeted + activity;
+        final carry      = carryForwardMap[catId] ?? 0.0;
+        final balance    = carry + budgeted + activity;
         final carryOver  = (c['overspending_behavior'] as String?) == 'carry_forward';
 
         return BudgetEntry(
