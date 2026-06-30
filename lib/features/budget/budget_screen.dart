@@ -4141,10 +4141,24 @@ class _CategorySplitPanel extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(entry!.categoryName,
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 22, fontWeight: FontWeight.w800,
-                      color: cs.onSurface)),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(entry!.categoryName,
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 22, fontWeight: FontWeight.w800,
+                            color: cs.onSurface)),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.delete_outline, color: cs.error, size: 20),
+                    tooltip: 'Delete category',
+                    onPressed: () => _showDeleteCategoryDialog(context, ref, entry!),
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
               const SizedBox(height: 8),
               Row(
                 children: [
