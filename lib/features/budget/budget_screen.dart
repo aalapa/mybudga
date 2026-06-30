@@ -163,7 +163,8 @@ class _ThreeColumnBudget extends ConsumerWidget {
               Expanded(
                 child: _MonthPanel(
                     async: AsyncData(state), isCurrent: true,
-                    month: state.month),
+                    month: state.month,
+                    onAddCategory: () => _showAddCategorySheet(context, ref)),
               ),
               VerticalDivider(
                   width: 1,
@@ -218,9 +219,10 @@ class _MonthPanel extends StatelessWidget {
   final bool isCurrent;
   final bool isPast;
   final DateTime month;
+  final VoidCallback? onAddCategory;
   const _MonthPanel(
       {required this.async, required this.isCurrent, required this.month,
-       this.isPast = false});
+       this.isPast = false, this.onAddCategory});
 
   @override
   Widget build(BuildContext context) {
@@ -235,7 +237,7 @@ class _MonthPanel extends StatelessWidget {
           child: Icon(Icons.error_outline,
               color: cs.onSurfaceVariant.withValues(alpha: 0.4))),
       AsyncData(:final value) => _PanelContent(
-          state: value, isCurrent: isCurrent),
+          state: value, isCurrent: isCurrent, onAddCategory: onAddCategory),
       _ => const SizedBox.shrink(),
     };
     if (!isPast) return inner;
@@ -248,7 +250,8 @@ class _MonthPanel extends StatelessWidget {
 class _PanelContent extends StatefulWidget {
   final BudgetState state;
   final bool isCurrent;
-  const _PanelContent({required this.state, required this.isCurrent});
+  final VoidCallback? onAddCategory;
+  const _PanelContent({required this.state, required this.isCurrent, this.onAddCategory});
 
   @override
   State<_PanelContent> createState() => _PanelContentState();
@@ -383,6 +386,21 @@ class _PanelContentState extends State<_PanelContent> {
             },
           ),
         ),
+        if (widget.onAddCategory != null)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+              child: TextButton.icon(
+                onPressed: widget.onAddCategory,
+                icon:  const Icon(Icons.add_circle_outline, size: 16),
+                label: const Text('Add Category'),
+                style: TextButton.styleFrom(
+                  alignment: Alignment.centerLeft,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }
