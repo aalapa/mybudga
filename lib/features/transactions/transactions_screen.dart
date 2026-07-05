@@ -1253,12 +1253,13 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
       _date                 = p.date;
       _isIncome             = p.isIncome;
     } else {
-      // Default to first budget account
+      // Sync default: first budget account. Then async-override with last-used.
       final accounts       = widget.widgetRef.read(accountsProvider).valueOrNull ?? [];
-      final budgetAccounts = accounts.where((a) => !a.isTracking && !a.isCreditCard);
+      final budgetAccounts = accounts.where((a) => !a.isTracking && !a.isCreditCard).toList();
       _selectedAccount     = budgetAccounts.isNotEmpty
           ? budgetAccounts.first
           : accounts.isNotEmpty ? accounts.first : null;
+      _loadLastUsedAccount(accounts);
 
       if (sms != null) {
         // Override with SMS-parsed values
@@ -1285,6 +1286,14 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
         }
       }
     }
+  }
+
+  Future<void> _loadLastUsedAccount(List<Account> accounts) async {
+    final prefs   = await SharedPreferences.getInstance();
+    final lastId  = prefs.getString('last_used_account_id');
+    if (lastId == null || !mounted) return;
+    final matched = accounts.where((a) => a.id == lastId && a.isActive).firstOrNull;
+    if (matched != null && mounted) setState(() => _selectedAccount = matched);
   }
 
   @override
@@ -1444,6 +1453,12 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                 : _memoCtrl.text.trim(),
           );
         }
+      }
+      // Persist last-used account for next time (only for new transactions)
+      if (p == null && _selectedAccount != null) {
+        SharedPreferences.getInstance().then(
+          (prefs) => prefs.setString('last_used_account_id', _selectedAccount!.id),
+        );
       }
       if (mounted) Navigator.pop(context);
     } catch (e) {
