@@ -85,14 +85,9 @@ class DashboardScreen extends ConsumerWidget {
                     sub: '${fmt.format(assets)} assets',
                   )),
                   const SizedBox(width: 16),
-                  Expanded(child: _StatCard(
-                    label: 'Savings Rate',
-                    value: '${(savingsRate * 100).toStringAsFixed(0)}%',
-                    icon: Icons.savings_outlined,
-                    color: savingsRate < 0 ? cs.error : cs.secondary,
-                    sub: lifetimeRate == null
-                        ? 'This month'
-                        : 'This month  ·  Lifetime ${(lifetimeRate * 100).toStringAsFixed(0)}%',
+                  Expanded(child: _SavingsRateCard(
+                    monthly:  savingsRate,
+                    lifetime: lifetimeRate,
                   )),
                 ],
               ),
@@ -221,6 +216,109 @@ class _StatCard extends StatelessWidget {
                   fontSize: 11, color: cs.onSurfaceVariant)),
         ],
       ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Savings Rate card — monthly + lifetime side by side, centered
+// ---------------------------------------------------------------------------
+
+class _SavingsRateCard extends StatelessWidget {
+  final double  monthly;
+  final double? lifetime;
+
+  const _SavingsRateCard({required this.monthly, this.lifetime});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs    = Theme.of(context).colorScheme;
+    final color = monthly < 0 ? cs.error : cs.secondary;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Icon row ──────────────────────────────────────────────────
+          Container(
+            width: 36, height: 36,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(Icons.savings_outlined, size: 18, color: color),
+          ),
+          const SizedBox(height: 10),
+          // ── Label ─────────────────────────────────────────────────────
+          Text('Savings Rate',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13, fontWeight: FontWeight.w600,
+                  color: cs.onSurface)),
+          const SizedBox(height: 8),
+          // ── Two-rate row ───────────────────────────────────────────────
+          IntrinsicHeight(
+            child: Row(
+              children: [
+                Expanded(child: _RateColumn(
+                  rate:  monthly,
+                  label: 'This month',
+                  color: color,
+                )),
+                if (lifetime != null) ...[
+                  VerticalDivider(
+                    width: 24,
+                    thickness: 0.5,
+                    color: cs.outlineVariant.withValues(alpha: 0.5),
+                  ),
+                  Expanded(child: _RateColumn(
+                    rate:  lifetime!,
+                    label: 'Lifetime',
+                    color: lifetime! < 0 ? cs.error : cs.secondary,
+                  )),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RateColumn extends StatelessWidget {
+  final double rate;
+  final String label;
+  final Color  color;
+
+  const _RateColumn({
+    required this.rate,
+    required this.label,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Text(
+          '${(rate * 100).toStringAsFixed(0)}%',
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 22, fontWeight: FontWeight.w800, color: color),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 10, color: cs.onSurfaceVariant),
+        ),
+      ],
     );
   }
 }
