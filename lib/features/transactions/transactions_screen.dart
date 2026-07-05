@@ -1054,11 +1054,27 @@ class _PayeeAvatar extends StatelessWidget {
   final int? iconCodePoint;
   const _PayeeAvatar({required this.payee, required this.color, this.iconCodePoint});
 
+  static IconData? _wellKnownIcon(String name) {
+    final lower = name.toLowerCase().trim();
+    if (lower.contains('transfer'))   return Icons.swap_horiz_rounded;
+    if (lower.contains('interest'))   return Icons.percent_rounded;
+    if (lower.contains('update') ||
+        lower.contains('adjustment')) return Icons.tune_rounded;
+    if (lower.contains('fee'))        return Icons.receipt_long_outlined;
+    if (lower.contains('refund'))     return Icons.undo_rounded;
+    if (lower.contains('salary') ||
+        lower.contains('payroll') ||
+        lower.contains('paycheck'))   return Icons.work_outline_rounded;
+    if (lower.contains('dividend'))   return Icons.trending_up_rounded;
+    if (lower.contains('reward'))     return Icons.card_giftcard_outlined;
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final iconData = iconCodePoint != null
         ? iconDataFromCodePoint(iconCodePoint!)
-        : null;
+        : _wellKnownIcon(payee);
 
     return Container(
       width: 40, height: 40,

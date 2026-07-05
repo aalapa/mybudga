@@ -1849,6 +1849,29 @@ class _AccountDetailSheetState extends ConsumerState<_AccountDetailSheet> {
   }
 }
 
+Widget _payeeAvatar(String payee, Color color) {
+  final lower = payee.toLowerCase().trim();
+  IconData? icon;
+  if (lower.contains('transfer'))            icon = Icons.swap_horiz_rounded;
+  else if (lower.contains('interest'))       icon = Icons.percent_rounded;
+  else if (lower.contains('update') ||
+           lower.contains('adjustment'))     icon = Icons.tune_rounded;
+  else if (lower.contains('fee'))            icon = Icons.receipt_long_outlined;
+  else if (lower.contains('refund'))         icon = Icons.undo_rounded;
+  else if (lower.contains('salary') ||
+           lower.contains('payroll') ||
+           lower.contains('paycheck'))       icon = Icons.work_outline_rounded;
+  else if (lower.contains('dividend'))       icon = Icons.trending_up_rounded;
+
+  return icon != null
+      ? Icon(icon, size: 18, color: color)
+      : Text(
+          payee.isNotEmpty ? payee[0].toUpperCase() : '?',
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 14, fontWeight: FontWeight.w800, color: color),
+        );
+}
+
 class _TxGroup extends StatelessWidget {
   final String label;
   final List<Transaction> transactions;
@@ -1952,14 +1975,7 @@ class _TxGroup extends StatelessWidget {
                             borderRadius: BorderRadius.circular(10),
                           ),
                           alignment: Alignment.center,
-                          child: Text(
-                            tx.displayPayee.isNotEmpty
-                                ? tx.displayPayee[0].toUpperCase()
-                                : '?',
-                            style: GoogleFonts.plusJakartaSans(
-                                fontSize: 14, fontWeight: FontWeight.w800,
-                                color: cs.primary),
-                          ),
+                          child: _payeeAvatar(tx.displayPayee, cs.primary),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
