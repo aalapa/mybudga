@@ -13,6 +13,8 @@ import '../../shared/models/transaction.dart';
 import '../../shared/providers/categories_provider.dart';
 import '../../shared/providers/payees_provider.dart';
 import '../accounts/accounts_provider.dart';
+import '../budget/budget_provider.dart' show budgetProvider;
+import '../../shared/models/budget_entry.dart' show BudgetEntry;
 import '../cashflow/cashflow_provider.dart';
 import '../accounts/account_labels_provider.dart';
 import '../accounts/accounts_screen.dart' show showReconcileSheet;
@@ -2072,6 +2074,10 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                       ),
                     ],
                   ],
+                  // Budget bar — shows category spend status when a category is selected
+                  if (_selectedCategoryId != null && !_isIncome)
+                    _CategoryBudgetBar(categoryId: _selectedCategoryId!),
+
                   const SizedBox(height: 12),
 
                   // Account picker
@@ -2228,6 +2234,96 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
           setState(() => _selectedAccount = a);
           Navigator.pop(context);
         },
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Category budget bar — shown in the edit sheet when a category is selected
+// ---------------------------------------------------------------------------
+
+class _CategoryBudgetBar extends ConsumerWidget {
+  final String categoryId;
+  const _CategoryBudgetBar({required this.categoryId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs      = Theme.of(context).colorScheme;
+    final budget  = ref.watch(budgetProvider).valueOrNull;
+    if (budget == null) return const SizedBox.shrink();
+
+    BudgetEntry? entry;
+    for (final g in budget.groups) {
+      for (final e in g.entries) {
+        if (e.categoryId == categoryId) { entry = e; break; }
+      }
+      if (entry != null) break;
+    }
+    if (entry == null || entry.budgeted <= 0) return const SizedBox.shrink();
+
+    final spent   = entry.spent.abs();
+    final pct     = (spent / entry.budgeted).clamp(0.0, double.infinity);
+    final pctBar  = pct.clamp(0.0, 1.0);
+    final fmt     = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+
+    final Color barColor;
+    if (pct >= 1.0) {
+      barColor = cs.error;
+    } else if (pct >= 0.85) {
+      barColor = const Color(0xFFF59E0B); // amber
+    } else {
+      barColor = cs.tertiary;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: barColor.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: barColor.withValues(alpha: 0.2)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    entry.categoryName,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11, fontWeight: FontWeight.w600,
+                        color: barColor),
+                  ),
+                ),
+                Text(
+                  '${fmt.format(spent)} of ${fmt.format(entry.budgeted)}',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11, color: barColor),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${(pct * 100).toStringAsFixed(0)}%',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11, fontWeight: FontWeight.w700,
+                      color: barColor),
+                ),
+              ],
+            ),
+            const SizedBox(height: 5),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value:           pctBar,
+                minHeight:       5,
+                backgroundColor: barColor.withValues(alpha: 0.15),
+                valueColor:      AlwaysStoppedAnimation(barColor),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
