@@ -338,3 +338,40 @@ class _BudgetAgg {
   double amount;
   _BudgetAgg({required this.id, required this.name, required this.amount});
 }
+
+// ---------------------------------------------------------------------------
+// Lifetime savings rate — all-time income vs expenses, excluding transfers
+// and tracking accounts. Returns a value in [-1, 1].
+// ---------------------------------------------------------------------------
+
+final lifetimeSavingsRateProvider =
+    FutureProvider.autoDispose<double>((ref) async {
+  final householdId = await ref.watch(householdIdProvider.future);
+  final client      = ref.watch(supabaseProvider);
+
+  final res = await client
+      .from('transactions')
+      .select('amount, transfer_id, accounts(is_tracking)')
+      .eq('household_id', householdId)
+      .eq('status', 'confirmed')
+      .isFilter('deleted_at', null);
+
+  double income   = 0;
+  double expenses = 0;
+
+  for (final r in res as List) {
+    final transferId = r['transfer_id'] as String?;
+    final isTracking = (r['accounts'] as Map?)?['is_tracking'] as bool? ?? false;
+    if (transferId != null || isTracking) continue;
+    final amount = (r['amount'] as num).toDouble();
+    if (amount > 0) {
+      income += amount;
+    } else {
+      expenses += amount.abs();
+    }
+  }
+
+  return income > 0
+      ? ((income - expenses) / income).clamp(-1.0, 1.0)
+      : 0.0;
+});

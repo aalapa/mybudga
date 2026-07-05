@@ -22,7 +22,8 @@ class DashboardScreen extends ConsumerWidget {
     final report1  = ref.watch(reportsProvider(1)).valueOrNull;
     final report3  = ref.watch(reportsProvider(3)).valueOrNull;
 
-    final tbb = budget?.tbb ?? 0.0;
+    final tbb          = budget?.tbb ?? 0.0;
+    final lifetimeRate = ref.watch(lifetimeSavingsRateProvider).valueOrNull;
 
     double assets = 0, liabilities = 0;
     for (final a in accounts.where((a) => a.isActive)) {
@@ -89,7 +90,9 @@ class DashboardScreen extends ConsumerWidget {
                     value: '${(savingsRate * 100).toStringAsFixed(0)}%',
                     icon: Icons.savings_outlined,
                     color: savingsRate < 0 ? cs.error : cs.secondary,
-                    sub: 'This month',
+                    sub: lifetimeRate == null
+                        ? 'This month'
+                        : 'This month  ·  Lifetime ${(lifetimeRate * 100).toStringAsFixed(0)}%',
                   )),
                 ],
               ),
