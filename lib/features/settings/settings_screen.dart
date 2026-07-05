@@ -940,6 +940,57 @@ class _AppearanceCard extends ConsumerWidget {
                 ],
               ],
             ),
+
+            const SizedBox(height: 20),
+            const Divider(height: 1),
+            const SizedBox(height: 14),
+
+            // ── Sidebar colour ────────────────────────────────────────────
+            Row(
+              children: [
+                Icon(Icons.view_sidebar_outlined,
+                    size: 18, color: cs.onSurfaceVariant),
+                const SizedBox(width: 10),
+                Text('Sidebar Colour',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14, fontWeight: FontWeight.w600,
+                        color: cs.onSurface)),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              settings.mode == ThemeMode.light
+                  ? 'Darker options work best with light theme'
+                  : 'Lighter options work best with dark theme',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11, color: cs.onSurfaceVariant),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing:    10,
+              runSpacing: 10,
+              children: [
+                // Default option
+                _SidebarColorSwatch(
+                  color:      null,
+                  label:      'Default',
+                  isSelected: settings.sidebarColor == null,
+                  onTap:      () => notifier.setSidebarColor(null),
+                  cs:         cs,
+                ),
+                for (final entry in (settings.mode == ThemeMode.light
+                    ? sidebarColorsForLight
+                    : sidebarColorsForDark))
+                  _SidebarColorSwatch(
+                    color:      entry.color,
+                    label:      entry.label,
+                    isSelected: settings.sidebarColor?.toARGB32() ==
+                        entry.color.toARGB32(),
+                    onTap:      () => notifier.setSidebarColor(entry.color),
+                    cs:         cs,
+                  ),
+              ],
+            ),
           ],
         ),
       ),
@@ -1373,6 +1424,64 @@ class _HueBarPainter extends CustomPainter {
 }
 
 // ── Single colour swatch circle ───────────────────────────────────────────────
+
+// ── Sidebar colour swatch ─────────────────────────────────────────────────────
+
+class _SidebarColorSwatch extends StatelessWidget {
+  final Color?       color;     // null = Default
+  final String       label;
+  final bool         isSelected;
+  final VoidCallback onTap;
+  final ColorScheme  cs;
+
+  const _SidebarColorSwatch({
+    required this.color,
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+    required this.cs,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = color ?? cs.surfaceContainerLow;
+    return Tooltip(
+      message: label,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          width:  42,
+          height: 42,
+          decoration: BoxDecoration(
+            color:        bg,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isSelected
+                  ? cs.primary
+                  : cs.outline.withValues(alpha: 0.35),
+              width: isSelected ? 2.5 : 1,
+            ),
+            boxShadow: isSelected
+                ? [BoxShadow(color: cs.primary.withValues(alpha: 0.3),
+                    blurRadius: 6)]
+                : null,
+          ),
+          child: color == null
+              ? Center(child: Text('A',
+                  style: TextStyle(fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: cs.onSurfaceVariant)))
+              : isSelected
+                  ? Icon(Icons.check, size: 18,
+                      color: color!.computeLuminance() > 0.5
+                          ? Colors.black87 : Colors.white)
+                  : null,
+        ),
+      ),
+    );
+  }
+}
 
 class _ColorSwatch extends StatelessWidget {
   final Color color;

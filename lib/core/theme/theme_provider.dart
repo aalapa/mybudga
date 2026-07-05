@@ -3,10 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // ── Pref keys ──────────────────────────────────────────────────────────────
-const _kThemeMode  = 'pref_theme_mode';   // ThemeMode.index
-const _kSeedColor  = 'pref_seed_color';   // ARGB int
-const _kCardStyle  = 'pref_card_style';   // CardStyle.index
-const _kCardRadius = 'pref_card_radius';  // CardRadius.index
+const _kThemeMode    = 'pref_theme_mode';    // ThemeMode.index
+const _kSeedColor    = 'pref_seed_color';    // ARGB int
+const _kCardStyle    = 'pref_card_style';    // CardStyle.index
+const _kCardRadius   = 'pref_card_radius';   // CardRadius.index
+const _kSidebarColor = 'pref_sidebar_color'; // ARGB int, 0 = default
 
 // ── Default seed ────────────────────────────────────────────────────────────
 const _kDefaultSeedValue = 0xFF5C00F2; // Electric Indigo
@@ -39,6 +40,27 @@ extension CardRadiusExt on CardRadius {
   };
 }
 
+// ── Sidebar colour options (shown in settings, adapt to theme mode) ──────────
+/// Light options — use when theme is dark so sidebar stands out.
+const sidebarColorsForDark = [
+  (color: Color(0xFFF5F5F5), label: 'Snow'),
+  (color: Color(0xFFF0EBE3), label: 'Cream'),
+  (color: Color(0xFFE8EAF6), label: 'Lavender'),
+  (color: Color(0xFFE3F2FD), label: 'Ice Blue'),
+  (color: Color(0xFFE8F5E9), label: 'Mint'),
+  (color: Color(0xFFFFF3E0), label: 'Peach'),
+];
+
+/// Dark options — use when theme is light so sidebar stands out.
+const sidebarColorsForLight = [
+  (color: Color(0xFF1A1A2E), label: 'Deep Navy'),
+  (color: Color(0xFF263238), label: 'Slate'),
+  (color: Color(0xFF1B5E20), label: 'Forest'),
+  (color: Color(0xFF0D47A1), label: 'Royal'),
+  (color: Color(0xFF4A148C), label: 'Plum'),
+  (color: Color(0xFF37474F), label: 'Charcoal'),
+];
+
 // ── Preset colour palette (18 colours, two rows of 9) ───────────────────────
 const appColorPalette = [
   (color: Color(0xFF5C00F2), label: 'Indigo'),
@@ -68,12 +90,15 @@ class ThemeSettings {
   final Color      seedColor;
   final CardStyle  cardStyle;
   final CardRadius cardRadius;
+  /// null = use default theme surface; non-null = custom sidebar background.
+  final Color?     sidebarColor;
 
   const ThemeSettings({
     required this.mode,
     required this.seedColor,
-    this.cardStyle  = CardStyle.flat,
-    this.cardRadius = CardRadius.standard,
+    this.cardStyle   = CardStyle.flat,
+    this.cardRadius  = CardRadius.standard,
+    this.sidebarColor,
   });
 
   ThemeSettings copyWith({
@@ -81,11 +106,14 @@ class ThemeSettings {
     Color?      seedColor,
     CardStyle?  cardStyle,
     CardRadius? cardRadius,
+    Color?      sidebarColor,
+    bool        clearSidebarColor = false,
   }) => ThemeSettings(
-    mode:       mode       ?? this.mode,
-    seedColor:  seedColor  ?? this.seedColor,
-    cardStyle:  cardStyle  ?? this.cardStyle,
-    cardRadius: cardRadius ?? this.cardRadius,
+    mode:         mode       ?? this.mode,
+    seedColor:    seedColor  ?? this.seedColor,
+    cardStyle:    cardStyle  ?? this.cardStyle,
+    cardRadius:   cardRadius ?? this.cardRadius,
+    sidebarColor: clearSidebarColor ? null : (sidebarColor ?? this.sidebarColor),
   );
 }
 
@@ -113,6 +141,9 @@ class ThemeNotifier extends StateNotifier<ThemeSettings> {
           cardRadius: CardRadius.values[
               (_prefs.getInt(_kCardRadius) ?? CardRadius.standard.index)
                   .clamp(0, CardRadius.values.length - 1)],
+          sidebarColor: _prefs.getInt(_kSidebarColor) is int
+              ? Color(_prefs.getInt(_kSidebarColor)!)
+              : null,
         ));
 
   Future<void> setMode(ThemeMode mode) async {
@@ -133,6 +164,16 @@ class ThemeNotifier extends StateNotifier<ThemeSettings> {
   Future<void> setCardRadius(CardRadius radius) async {
     state = state.copyWith(cardRadius: radius);
     await _prefs.setInt(_kCardRadius, radius.index);
+  }
+
+  Future<void> setSidebarColor(Color? color) async {
+    if (color == null) {
+      state = state.copyWith(clearSidebarColor: true);
+      await _prefs.remove(_kSidebarColor);
+    } else {
+      state = state.copyWith(sidebarColor: color);
+      await _prefs.setInt(_kSidebarColor, color.toARGB32());
+    }
   }
 }
 

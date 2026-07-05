@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../core/theme/theme_provider.dart' show themeProvider;
 import '../../features/accounts/accounts_provider.dart'
     show accountsProvider, recentCreditDatesProvider,
          futureTxSumsProvider, todayBalanceProvider,
@@ -213,6 +214,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
   @override
   Widget build(BuildContext context) {
     final cs               = Theme.of(context).colorScheme;
+    final sidebarBg        = ref.watch(themeProvider).sidebarColor ?? cs.surfaceContainerLow;
     final accounts         = ref.watch(accountsProvider).valueOrNull ?? [];
     final labels           = ref.watch(accountLabelsProvider);
     final creditDates      = ref.watch(recentCreditDatesProvider).valueOrNull ?? {};
@@ -261,7 +263,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
       curve:    Curves.easeInOut,
       width:    _collapsed ? _collapsedWidth : _expandedWidth,
       decoration: BoxDecoration(
-        color:  cs.surfaceContainerLow,
+        color:  sidebarBg,
         border: Border(
           right: BorderSide(
             color: cs.outlineVariant.withValues(alpha: 0.35),
