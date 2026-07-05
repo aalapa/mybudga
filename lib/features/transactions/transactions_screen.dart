@@ -890,10 +890,11 @@ class _TransactionGroup extends StatelessWidget {
       ),
       child: Column(
         children: items.asMap().entries.map((e) {
-          final isLast = e.key == items.length - 1;
+          final isLast  = e.key == items.length - 1;
+          final isOdd   = e.key.isOdd;
           return switch (e.value) {
-            _SingleTx(:final tx)      => _TransactionTile(tx: tx, isLast: isLast, ref: ref, showDate: showDate),
-            _SplitGroup(:final parts) => _SplitGroupTile(parts: parts, isLast: isLast, ref: ref),
+            _SingleTx(:final tx)      => _TransactionTile(tx: tx, isLast: isLast, isOdd: isOdd, ref: ref, showDate: showDate),
+            _SplitGroup(:final parts) => _SplitGroupTile(parts: parts, isLast: isLast, isOdd: isOdd, ref: ref),
           };
         }).toList(),
       ),
@@ -904,17 +905,29 @@ class _TransactionGroup extends StatelessWidget {
 class _TransactionTile extends StatelessWidget {
   final Transaction tx;
   final bool isLast;
+  final bool isOdd;
   final WidgetRef ref;
   final bool showDate;
 
-  const _TransactionTile({required this.tx, required this.isLast, required this.ref, this.showDate = false});
+  const _TransactionTile({required this.tx, required this.isLast, required this.ref, this.isOdd = false, this.showDate = false});
 
   @override
   Widget build(BuildContext context) {
     final cs  = Theme.of(context).colorScheme;
     final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
 
-    return InkWell(
+    final rowBg = isOdd
+        ? cs.onSurface.withValues(alpha: 0.04)
+        : Colors.transparent;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: rowBg,
+        borderRadius: isLast
+            ? const BorderRadius.vertical(bottom: Radius.circular(16))
+            : BorderRadius.zero,
+      ),
+      child: InkWell(
       onTap: () => showEditTransactionSheet(context, ref, prefill: tx),
       onLongPress: tx.isTransfer ? null : () async {
         if (tx.isReconciled) {
@@ -998,7 +1011,8 @@ class _TransactionTile extends StatelessWidget {
           ],
         ),
       ),
-    );
+      ), // InkWell
+    ); // Container
   }
 }
 
@@ -2710,12 +2724,14 @@ class _SplitLineRow extends StatelessWidget {
 class _SplitGroupTile extends StatelessWidget {
   final List<Transaction> parts;
   final bool isLast;
+  final bool isOdd;
   final WidgetRef ref;
 
   const _SplitGroupTile({
     required this.parts,
     required this.isLast,
     required this.ref,
+    this.isOdd = false,
   });
 
   @override
@@ -2724,8 +2740,18 @@ class _SplitGroupTile extends StatelessWidget {
     final fmt   = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
     final first = parts.first;
     final total = parts.fold(0.0, (s, t) => s + t.amount);
+    final rowBg = isOdd
+        ? cs.onSurface.withValues(alpha: 0.04)
+        : Colors.transparent;
 
-    return Column(
+    return Container(
+      decoration: BoxDecoration(
+        color: rowBg,
+        borderRadius: isLast
+            ? const BorderRadius.vertical(bottom: Radius.circular(16))
+            : BorderRadius.zero,
+      ),
+      child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Header row
@@ -2832,7 +2858,8 @@ class _SplitGroupTile extends StatelessWidget {
               height: 1,
               color: cs.outlineVariant.withValues(alpha: 0.5)),
       ],
-    );
+      ), // Column
+    ); // Container
   }
 }
 
