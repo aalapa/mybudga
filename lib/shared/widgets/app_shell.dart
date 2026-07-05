@@ -258,6 +258,21 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
     final unclaimedTracking      = trackingList.where((a) => !trackingClaimed.contains(a.id)).toList();
     final unclaimedTrackingLabel = trackingLabeledSections.isEmpty ? 'TRACKING - OFF BUDGET' : 'OTHER - OFF BUDGET';
 
+    // Compute foreground color that contrasts with the custom sidebar background.
+    final isLightBg   = sidebarBg.computeLuminance() > 0.5;
+    final sidebarFg   = isLightBg ? const Color(0xFF1A1A1A) : Colors.white;
+    final sidebarFgSub = sidebarFg.withValues(alpha: 0.6);
+
+    // Override the theme inside the sidebar so all widgets pick up the right
+    // text/icon colors automatically.
+    final sidebarTheme = Theme.of(context).copyWith(
+      colorScheme: cs.copyWith(
+        onSurface:        sidebarFg,
+        onSurfaceVariant: sidebarFgSub,
+      ),
+      iconTheme: IconThemeData(color: sidebarFgSub),
+    );
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       curve:    Curves.easeInOut,
@@ -271,14 +286,16 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
           ),
         ),
       ),
-      child: ClipRect(
+      child: Theme(
+        data: sidebarTheme,
+        child: ClipRect(
         child: SafeArea(
           right: false,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // ── Header / collapse toggle ──────────────────────────
-              _buildHeader(cs),
+              _buildHeader(),
               const SizedBox(height: 4),
               // ── Nav items ─────────────────────────────────────────
               for (int i = 0; i < widget.tabs.length; i++)
@@ -376,10 +393,14 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
           ),
         ),
       ),
+      ),  // Theme
     );
   }
 
-  Widget _buildHeader(ColorScheme cs) {
+  Widget _buildHeader() {
+    // Read from context so the Theme override inside the sidebar applies.
+    return Builder(builder: (context) {
+    final cs = Theme.of(context).colorScheme;
     return SizedBox(
       height: 48,
       child: Row(
@@ -431,6 +452,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
         ],
       ),
     );
+    }); // Builder
   }
 }
 
