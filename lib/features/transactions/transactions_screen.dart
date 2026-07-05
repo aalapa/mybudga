@@ -14,6 +14,8 @@ import '../../shared/providers/categories_provider.dart';
 import '../../shared/providers/payees_provider.dart';
 import '../accounts/accounts_provider.dart';
 import '../budget/budget_provider.dart' show budgetProvider;
+import '../../shared/providers/household_provider.dart' show householdIdProvider;
+import '../../core/supabase/supabase_provider.dart' show supabaseProvider;
 import '../../shared/models/budget_entry.dart' show BudgetEntry;
 import '../cashflow/cashflow_provider.dart';
 import '../accounts/account_labels_provider.dart';
@@ -2240,6 +2242,65 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
 }
 
 // ---------------------------------------------------------------------------
+// Category milestone provider — last month's 80% / 100% hit dates
+// ---------------------------------------------------------------------------
+
+/// Returns a record describing when last month's budget milestones were hit:
+///   hit80:    date the running spend first crossed 80 % of budgeted (or null)
+///   breached: date the running spend first crossed 100 % (or null)
+final _categoryMilestonesProvider = FutureProvider.autoDispose
+    .family<({DateTime? hit80, DateTime? breached}), String>((ref, categoryId) async {
+  final householdId = await ref.watch(householdIdProvider.future);
+  final client      = ref.watch(supabaseProvider);
+
+  final now       = DateTime.now();
+  final prevFirst = DateTime(now.year, now.month - 1, 1);
+  final thisFirst = DateTime(now.year, now.month, 1);
+  final prevStr   = '${prevFirst.year}-${prevFirst.month.toString().padLeft(2,'0')}-01';
+  final thisStr   = '${thisFirst.year}-${thisFirst.month.toString().padLeft(2,'0')}-01';
+
+  // Fetch budgeted amount for last month
+  final budgetRow = await client
+      .from('budget_months')
+      .select('budgeted')
+      .eq('household_id', householdId)
+      .eq('category_id', categoryId)
+      .eq('month', prevStr)
+      .maybeSingle();
+
+  final budgeted = budgetRow != null
+      ? (budgetRow['budgeted'] as num).toDouble()
+      : 0.0;
+  if (budgeted <= 0) return (hit80: null, breached: null);
+
+  // Fetch expense transactions for that category last month, sorted by date
+  final txns = await client
+      .from('transactions')
+      .select('date, amount')
+      .eq('household_id', householdId)
+      .eq('category_id', categoryId)
+      .eq('status', 'confirmed')
+      .isFilter('deleted_at', null)
+      .gte('date', prevStr)
+      .lt('date', thisStr)
+      .lt('amount', 0) // expenses only
+      .order('date', ascending: true);
+
+  double running = 0;
+  DateTime? hit80;
+  DateTime? breached;
+
+  for (final r in txns as List) {
+    running += (r['amount'] as num).toDouble().abs();
+    final date = DateTime.parse(r['date'] as String);
+    if (hit80 == null && running / budgeted >= 0.80) hit80 = date;
+    if (breached == null && running / budgeted >= 1.0) { breached = date; break; }
+  }
+
+  return (hit80: hit80, breached: breached);
+});
+
+// ---------------------------------------------------------------------------
 // Category budget bar — shown in the edit sheet when a category is selected
 // ---------------------------------------------------------------------------
 
@@ -2249,8 +2310,9 @@ class _CategoryBudgetBar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cs      = Theme.of(context).colorScheme;
-    final budget  = ref.watch(budgetProvider).valueOrNull;
+    final cs         = Theme.of(context).colorScheme;
+    final budget     = ref.watch(budgetProvider).valueOrNull;
+    final milestones = ref.watch(_categoryMilestonesProvider(categoryId)).valueOrNull;
     if (budget == null) return const SizedBox.shrink();
 
     BudgetEntry? entry;
@@ -2322,10 +2384,33 @@ class _CategoryBudgetBar extends ConsumerWidget {
                 valueColor:      AlwaysStoppedAnimation(barColor),
               ),
             ),
+            // ── Last month milestone line ──────────────────────────
+            if (milestones != null &&
+                (milestones.hit80 != null || milestones.breached != null)) ...[
+              const SizedBox(height: 6),
+              Text(
+                _buildMilestoneLine(milestones),
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 10,
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  static String _buildMilestoneLine(
+      ({DateTime? hit80, DateTime? breached}) m) {
+    final fmt = DateFormat('MMM d');
+    final parts = <String>[];
+    if (m.hit80 != null)    parts.add('hit 80% ${fmt.format(m.hit80!)}');
+    if (m.breached != null) parts.add('breached ${fmt.format(m.breached!)}');
+    final body = parts.join(' · ');
+    return 'Last month: $body';
   }
 }
 
