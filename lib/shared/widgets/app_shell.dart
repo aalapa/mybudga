@@ -297,6 +297,12 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
               // ── Header / collapse toggle ──────────────────────────
               _buildHeader(),
               const SizedBox(height: 4),
+              // ── Scrollable body: nav + divider + account groups ───
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
               // ── Nav items ─────────────────────────────────────────
               for (int i = 0; i < widget.tabs.length; i++)
                 _SidebarNavRow(
@@ -314,11 +320,7 @@ class _DesktopSidebarState extends ConsumerState<_DesktopSidebar> {
               ),
               const SizedBox(height: 6),
               // ── Account groups ────────────────────────────────────
-              Expanded(
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+
                       // "As of today" toggle — only when sidebar is expanded
                       if (!_collapsed)
                         _SidebarTodayToggle(
