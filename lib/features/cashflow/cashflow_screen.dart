@@ -414,12 +414,14 @@ class _BalanceCard extends StatelessWidget {
 class _CashflowTile extends ConsumerWidget {
   final _ProjectedEntry entry;
   final bool isDanger;
+  final bool isOdd;
   final WidgetRef ref;
 
   const _CashflowTile({
     required this.entry,
     required this.isDanger,
     required this.ref,
+    this.isOdd = false,
   });
 
   @override
@@ -431,6 +433,10 @@ class _CashflowTile extends ConsumerWidget {
     final hasReminder  = wRef.watch(billRemindersProvider)
         .contains(entry.scheduledTx.id);
 
+    final zebraColor = isOdd
+        ? cs.onSurface.withValues(alpha: 0.04)
+        : Colors.transparent;
+
     return InkWell(
       onTap: () => showAddScheduledSheet(context, ref, prefill: entry.scheduledTx),
       onLongPress: () => _showTileActions(context, ref, entry),
@@ -438,9 +444,15 @@ class _CashflowTile extends ConsumerWidget {
       child: Container(
         margin: const EdgeInsets.only(bottom: 2),
         decoration: BoxDecoration(
-          color: cs.surfaceContainerHigh,
+          color: isDanger
+              ? cs.surfaceContainerHigh
+              : cs.surfaceContainerHigh.withValues(alpha: 1.0),
           borderRadius: BorderRadius.circular(12),
           border: isDanger ? Border.all(color: cs.error.withValues(alpha: 0.3)) : null,
+        ),
+        foregroundDecoration: BoxDecoration(
+          color: zebraColor,
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -740,9 +752,10 @@ class _EventDayRow extends StatelessWidget {
             ),
           ),
         ),
-        ...day.events.map((e) => _CashflowTile(
-              entry:    e,
-              isDanger: e.runningBalance < 500,
+        ...day.events.asMap().entries.map((en) => _CashflowTile(
+              entry:    en.value,
+              isDanger: en.value.runningBalance < 500,
+              isOdd:    en.key.isOdd,
               ref:      ref,
             )),
         Padding(

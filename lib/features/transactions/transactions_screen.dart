@@ -957,38 +957,62 @@ class _TransactionTile extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    tx.isTransfer ? 'Transfer' : (tx.displayPayee.isNotEmpty ? tx.displayPayee : 'Unknown'),
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface),
-                  ),
-                  if (tx.categoryName != null)
-                    Text(
-                      tx.categoryName!,
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 12, color: cs.onSurfaceVariant),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  if (tx.account != null)
-                    Text(
-                      tx.account!.displayName,
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 11, fontWeight: FontWeight.w600,
-                          color: cs.onSurfaceVariant),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  if (showDate)
-                    Text(
-                      DateFormat('MMM d').format(tx.date),
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 11,
-                          color: cs.onSurfaceVariant.withValues(alpha: 0.6)),
-                    ),
-                ],
-              ),
+              child: Builder(builder: (context) {
+                final isWide = MediaQuery.sizeOf(context).width >= 600;
+                final payee  = tx.isTransfer
+                    ? 'Transfer'
+                    : tx.displayPayee.isNotEmpty ? tx.displayPayee : 'Unknown';
+                // Build subtitle parts
+                final parts = <String>[
+                  if (tx.categoryName != null) tx.categoryName!,
+                  if (tx.account != null) tx.account!.displayName,
+                  if (showDate) DateFormat('MMM d').format(tx.date),
+                ];
+                if (isWide && parts.isNotEmpty) {
+                  // Desktop: payee + all subtitle parts on one line
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(payee,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 14, fontWeight: FontWeight.w600,
+                              color: cs.onSurface)),
+                      Text(
+                        parts.join('  ·  '),
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11, color: cs.onSurfaceVariant),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  );
+                }
+                // Mobile: stacked
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(payee,
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 14, fontWeight: FontWeight.w600,
+                            color: cs.onSurface)),
+                    if (tx.categoryName != null)
+                      Text(tx.categoryName!,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12, color: cs.onSurfaceVariant),
+                          overflow: TextOverflow.ellipsis),
+                    if (tx.account != null)
+                      Text(tx.account!.displayName,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11, fontWeight: FontWeight.w600,
+                              color: cs.onSurfaceVariant),
+                          overflow: TextOverflow.ellipsis),
+                    if (showDate)
+                      Text(DateFormat('MMM d').format(tx.date),
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              color: cs.onSurfaceVariant.withValues(alpha: 0.6))),
+                  ],
+                );
+              }),
             ),
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,

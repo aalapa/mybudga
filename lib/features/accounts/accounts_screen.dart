@@ -1899,7 +1899,18 @@ class _TxGroup extends StatelessWidget {
               children: transactions.asMap().entries.map((e) {
                 final tx     = e.value;
                 final isLast = e.key == transactions.length - 1;
-                return InkWell(
+                final isOdd  = e.key.isOdd;
+                final rowBg  = isOdd
+                    ? cs.onSurface.withValues(alpha: 0.04)
+                    : Colors.transparent;
+                return Container(
+                  decoration: BoxDecoration(
+                    color: rowBg,
+                    borderRadius: isLast
+                        ? const BorderRadius.vertical(bottom: Radius.circular(14))
+                        : BorderRadius.zero,
+                  ),
+                  child: InkWell(
                   borderRadius: isLast
                       ? const BorderRadius.vertical(bottom: Radius.circular(14))
                       : BorderRadius.zero,
@@ -1982,7 +1993,8 @@ class _TxGroup extends StatelessWidget {
                       ],
                     ),
                   ),
-                );
+                  ), // InkWell
+                ); // Container
               }).toList(),
             ),
           ),
