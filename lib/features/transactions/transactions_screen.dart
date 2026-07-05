@@ -1306,6 +1306,27 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
     super.dispose();
   }
 
+  /// Looks at all past transactions for [payeeName] and switches
+  /// _selectedAccount to whichever account was used most often.
+  void _applyFrequentAccountForPayee(String payeeName) {
+    if (payeeName.trim().isEmpty) return;
+    final txns     = ref.read(transactionsProvider).valueOrNull ?? [];
+    final accounts = widget.widgetRef.read(accountsProvider).valueOrNull ?? [];
+    final q        = payeeName.trim().toLowerCase();
+
+    final freq = <String, int>{};
+    for (final tx in txns) {
+      if ((tx.payeeName ?? '').toLowerCase() == q) {
+        freq[tx.accountId] = (freq[tx.accountId] ?? 0) + 1;
+      }
+    }
+    if (freq.isEmpty) return;
+
+    final topId = freq.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
+    final topAcc = accounts.where((a) => a.id == topId && a.isActive).firstOrNull;
+    if (topAcc != null) setState(() => _selectedAccount = topAcc);
+  }
+
   void _onNumpad(String key) {
     setState(() {
       if (_isCentsMode) {
@@ -1823,6 +1844,8 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                     controller: _payeeCtrl,
                     textCapitalization: TextCapitalization.words,
                     onChanged: (v) => setState(() => _showSuggestions = v.isNotEmpty),
+                    onEditingComplete: () =>
+                        _applyFrequentAccountForPayee(_payeeCtrl.text),
                     decoration: const InputDecoration(
                       labelText: 'Payee',
                       prefixIcon: Icon(Icons.storefront_outlined, size: 18),
@@ -1848,6 +1871,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                               _selectedCategoryId      = s.categoryId;
                               _selectedCategoryName    = s.categoryName;
                             });
+                            _applyFrequentAccountForPayee(s.name);
                           },
                           borderRadius: BorderRadius.circular(12),
                           child: Padding(
