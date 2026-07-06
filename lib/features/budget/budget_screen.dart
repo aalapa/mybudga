@@ -4305,16 +4305,38 @@ Future<void> _checkOverspendBeforeNext(
     return;
   }
 
-  final resolved = await showModalBottomSheet<bool>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    builder: (_) => _OverspendSheet(
-      entries:      overspent,
-      currentMonth: currentState.month,
-      notifier:     notifier,
-    ),
-  );
+  final isWide = MediaQuery.sizeOf(context).width >= 800;
+
+  final bool? resolved;
+  if (isWide) {
+    // Desktop: use a dialog so it's clearly visible
+    resolved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: SizedBox(
+          width: 480,
+          child: _OverspendSheet(
+            entries:      overspent,
+            currentMonth: currentState.month,
+            notifier:     notifier,
+          ),
+        ),
+      ),
+    );
+  } else {
+    resolved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => _OverspendSheet(
+        entries:      overspent,
+        currentMonth: currentState.month,
+        notifier:     notifier,
+      ),
+    );
+  }
   if (resolved == true) notifier.goToMonth(nextMonth);
 }
 
@@ -4373,57 +4395,84 @@ class _OverspendSheetState extends State<_OverspendSheet> {
         color: cs.surfaceContainerHigh,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      padding: EdgeInsets.fromLTRB(
-          24, 12, 24, MediaQuery.viewInsetsOf(context).bottom + 24),
+      // constrain height so it never exceeds 85% of screen
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Center(
-            child: Container(
-              width: 40, height: 4,
-              decoration: BoxDecoration(
-                color: cs.onSurfaceVariant.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(2),
+          // ── Fixed header ───────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40, height: 4,
+                    decoration: BoxDecoration(
+                      color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded, size: 22, color: cs.error),
+                    const SizedBox(width: 8),
+                    Text('Overspending in $monthLabel',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 20, fontWeight: FontWeight.w800,
+                            color: cs.onSurface)),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text('Resolve before moving to next month.',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13, color: cs.onSurfaceVariant)),
+                const SizedBox(height: 20),
+              ],
+            ),
+          ),
+          // ── Scrollable category list ───────────────────────────────
+          Flexible(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final e in widget.entries) ...[
+                    _OverspendRow(
+                      entry:     e,
+                      fmt:       fmt,
+                      coveredFromTbb: _decisions[e.categoryId] ?? false,
+                      onToggle: (v) =>
+                          setState(() => _decisions[e.categoryId] = v),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                ],
               ),
             ),
           ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Icon(Icons.warning_amber_rounded, size: 22, color: cs.error),
-              const SizedBox(width: 8),
-              Text('Overspending in $monthLabel',
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 20, fontWeight: FontWeight.w800,
-                      color: cs.onSurface)),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text('Resolve before moving to next month.',
-              style: GoogleFonts.plusJakartaSans(
-                  fontSize: 13, color: cs.onSurfaceVariant)),
-          const SizedBox(height: 20),
-          for (final e in widget.entries) ...[
-            _OverspendRow(
-              entry:     e,
-              fmt:       fmt,
-              coveredFromTbb: _decisions[e.categoryId] ?? false,
-              onToggle: (v) => setState(() => _decisions[e.categoryId] = v),
+          // ── Fixed bottom button ────────────────────────────────────
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+                24, 8, 24, MediaQuery.viewInsetsOf(context).bottom + 24),
+            child: FilledButton(
+              onPressed: _saving ? null : _apply,
+              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+              child: _saving
+                  ? const SizedBox(
+                      width: 20, height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : Text('Continue to Next Month',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontWeight: FontWeight.w700)),
             ),
-            const SizedBox(height: 12),
-          ],
-          const SizedBox(height: 8),
-          FilledButton(
-            onPressed: _saving ? null : _apply,
-            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-            child: _saving
-                ? const SizedBox(
-                    width: 20, height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : Text('Continue to Next Month',
-                    style: GoogleFonts.plusJakartaSans(
-                        fontWeight: FontWeight.w700)),
           ),
         ],
       ),
