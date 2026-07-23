@@ -14,6 +14,8 @@ import '../../shared/providers/categories_provider.dart';
 import '../../shared/providers/payees_provider.dart';
 import '../accounts/accounts_provider.dart';
 import '../budget/budget_provider.dart' show budgetProvider;
+import '../trips/trip_provider.dart';
+import '../trips/trip_spend_provider.dart';
 import '../../shared/providers/household_provider.dart' show householdIdProvider;
 import '../../core/supabase/supabase_provider.dart' show supabaseProvider;
 import '../../shared/models/budget_entry.dart' show BudgetEntry;
@@ -1319,6 +1321,18 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
           : accounts.isNotEmpty ? accounts.first : null;
       _loadLastUsedAccount(accounts);
 
+      // Auto pre-fill category from active trip mode
+      final trip = widget.widgetRef.read(tripProvider).valueOrNull;
+      if (trip != null && trip.effectivelyActive && trip.categoryId != null) {
+        final cats = widget.widgetRef.read(flatCategoriesProvider);
+        final cat  = cats.where((c) => c.id == trip.categoryId).firstOrNull;
+        if (cat != null) {
+          _selectedCategoryId   = cat.id;
+          _selectedCategoryName = cat.name;
+          _categoryCtrl.text    = cat.name;
+        }
+      }
+
       if (sms != null) {
         // Override with SMS-parsed values
         _rightCents = (sms.amount.abs() * 100).round();
@@ -2021,6 +2035,8 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                           visualDensity: VisualDensity.compact),
                     ),
                   ] else ...[
+                    // ── Trip mode banner ──────────────────────────────
+                    _TripBanner(),
                     // Normal single-category field
                     TextField(
                       controller: _categoryCtrl,
@@ -2252,6 +2268,84 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
           setState(() => _selectedAccount = a);
           Navigator.pop(context);
         },
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Trip mode banner — shown above category field when trip is active
+// ---------------------------------------------------------------------------
+
+class _TripBanner extends ConsumerWidget {
+  const _TripBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs    = Theme.of(context).colorScheme;
+    final trip  = ref.watch(tripProvider).valueOrNull;
+    if (trip == null || !trip.effectivelyActive) return const SizedBox.shrink();
+
+    final spend = ref.watch(tripSpendProvider).valueOrNull ?? 0.0;
+    final fmt   = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+
+    final parts = <String>[];
+    if (trip.tripName != null) parts.add(trip.tripName!);
+    if (trip.budget != null) {
+      parts.add('${fmt.format(spend)} of ${fmt.format(trip.budget!)}');
+    } else if (spend > 0) {
+      parts.add('${fmt.format(spend)} spent');
+    }
+    if (trip.daysLeft != null) {
+      parts.add('${trip.daysLeft} days left');
+    }
+
+    final pct = (trip.budget != null && trip.budget! > 0)
+        ? (spend / trip.budget!).clamp(0.0, 1.0)
+        : null;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: cs.primaryContainer.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: cs.primary.withValues(alpha: 0.25)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.flight_takeoff_rounded,
+                    size: 14, color: cs.primary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    parts.join('  ·  '),
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11, fontWeight: FontWeight.w600,
+                        color: cs.primary),
+                  ),
+                ),
+              ],
+            ),
+            if (pct != null) ...[
+              const SizedBox(height: 5),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: LinearProgressIndicator(
+                  value:           pct,
+                  minHeight:       4,
+                  backgroundColor: cs.primary.withValues(alpha: 0.15),
+                  valueColor:      AlwaysStoppedAnimation(
+                      pct >= 1.0 ? cs.error : cs.primary),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

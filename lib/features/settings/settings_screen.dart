@@ -15,6 +15,7 @@ import '../../core/theme/theme_provider.dart';
 import '../../shared/models/account.dart';
 import '../../shared/models/scheduled_transaction.dart';
 import '../../shared/providers/categories_provider.dart';
+import '../trips/trip_provider.dart';
 import '../../shared/providers/household_provider.dart';
 import '../../shared/providers/payees_provider.dart';
 import '../accounts/accounts_provider.dart';
@@ -504,6 +505,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
         children: [
+          // ── Trip Mode ──────────────────────────────────────────────────────
+          _sectionLabel(context, 'TRIP MODE'),
+          const SizedBox(height: 8),
+          const _TripCard(),
+          const SizedBox(height: 24),
+
           // ── Appearance ─────────────────────────────────────────────────────
           _sectionLabel(context, 'APPEARANCE'),
           const SizedBox(height: 8),
@@ -993,6 +1000,402 @@ class _AppearanceCard extends ConsumerWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Trip Mode card
+// ---------------------------------------------------------------------------
+
+class _TripCard extends ConsumerStatefulWidget {
+  const _TripCard();
+  @override
+  ConsumerState<_TripCard> createState() => _TripCardState();
+}
+
+class _TripCardState extends ConsumerState<_TripCard> {
+  bool _saving = false;
+
+  Future<void> _openSheet(TripSettings current) async {
+    await showModalBottomSheet(
+      context:            context,
+      isScrollControlled: true,
+      useSafeArea:        true,
+      builder: (_) => _TripEditSheet(current: current),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs   = Theme.of(context).colorScheme;
+    final trip = ref.watch(tripProvider).valueOrNull ?? TripSettings.empty;
+    final fmt  = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final dateFmt = DateFormat('MMM d');
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.flight_takeoff_rounded,
+                    size: 18, color: cs.onSurfaceVariant),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text('Trip Mode',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 14, fontWeight: FontWeight.w600,
+                          color: cs.onSurface)),
+                ),
+                Switch.adaptive(
+                  value: trip.effectivelyActive,
+                  onChanged: _saving ? null : (v) async {
+                    if (v && trip.categoryId == null) {
+                      // Must configure first
+                      await _openSheet(trip);
+                    } else {
+                      setState(() => _saving = true);
+                      await ref.read(tripProvider.notifier).save(
+                        isActive:   v,
+                        tripName:   trip.tripName,
+                        categoryId: trip.categoryId,
+                        startDate:  trip.startDate,
+                        endDate:    trip.endDate,
+                        budget:     trip.budget,
+                      );
+                      setState(() => _saving = false);
+                    }
+                  },
+                ),
+              ],
+            ),
+            if (trip.tripName != null || trip.categoryId != null) ...[
+              const SizedBox(height: 10),
+              const Divider(height: 1),
+              const SizedBox(height: 10),
+              // Trip summary
+              if (trip.tripName != null)
+                Text(trip.tripName!,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13, fontWeight: FontWeight.w700,
+                        color: cs.onSurface)),
+              if (trip.startDate != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  [
+                    dateFmt.format(trip.startDate!),
+                    if (trip.endDate != null)
+                      '→ ${dateFmt.format(trip.endDate!)}',
+                    if (trip.daysLeft != null)
+                      '(${trip.daysLeft} days left)',
+                  ].join(' '),
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, color: cs.onSurfaceVariant),
+                ),
+              ],
+              if (trip.budget != null) ...[
+                const SizedBox(height: 2),
+                Text('Budget: ${fmt.format(trip.budget)}',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, color: cs.onSurfaceVariant)),
+              ],
+            ],
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => _openSheet(trip),
+              icon:  const Icon(Icons.edit_outlined, size: 16),
+              label: Text(trip.categoryId == null
+                  ? 'Set up trip'
+                  : 'Edit trip'),
+              style: OutlinedButton.styleFrom(
+                textStyle: GoogleFonts.plusJakartaSans(fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Trip edit sheet
+// ---------------------------------------------------------------------------
+
+class _TripEditSheet extends ConsumerStatefulWidget {
+  final TripSettings current;
+  const _TripEditSheet({required this.current});
+  @override
+  ConsumerState<_TripEditSheet> createState() => _TripEditSheetState();
+}
+
+class _TripEditSheetState extends ConsumerState<_TripEditSheet> {
+  late final _nameCtrl   = TextEditingController(text: widget.current.tripName ?? '');
+  late final _budgetCtrl = TextEditingController(
+      text: widget.current.budget != null
+          ? widget.current.budget!.toStringAsFixed(0)
+          : '');
+  String?   _categoryId;
+  String?   _categoryName;
+  DateTime? _startDate;
+  DateTime? _endDate;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _categoryId  = widget.current.categoryId;
+    _startDate   = widget.current.startDate;
+    _endDate     = widget.current.endDate;
+    // Resolve category name
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final cats = ref.read(flatCategoriesProvider);
+      final cat  = cats.where((c) => c.id == _categoryId).firstOrNull;
+      if (cat != null) setState(() => _categoryName = cat.name);
+    });
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _budgetCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickCategory() async {
+    final groups = ref.read(categoriesProvider).valueOrNull ?? [];
+    final cs     = Theme.of(context).colorScheme;
+    final picked = await showModalBottomSheet<({String id, String name})>(
+      context:            context,
+      isScrollControlled: true,
+      useSafeArea:        true,
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.6,
+        maxChildSize: 0.9,
+        builder: (_, ctrl) => Container(
+          decoration: BoxDecoration(
+            color: cs.surfaceContainerLow,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: ListView(
+            controller: ctrl,
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+            children: [
+              Text('Select Category',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 18, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 12),
+              for (final g in groups) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Text(g.name.toUpperCase(),
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11, fontWeight: FontWeight.w700,
+                          color: cs.onSurfaceVariant, letterSpacing: 0.6)),
+                ),
+                for (final c in g.categories)
+                  ListTile(
+                    title: Text(c.name,
+                        style: GoogleFonts.plusJakartaSans(fontSize: 14)),
+                    trailing: _categoryId == c.id
+                        ? Icon(Icons.check, color: cs.primary)
+                        : null,
+                    onTap: () => Navigator.pop(ctx, (id: c.id, name: c.name)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked != null) {
+      setState(() {
+        _categoryId   = picked.id;
+        _categoryName = picked.name;
+      });
+    }
+  }
+
+  Future<void> _pickDate({required bool isStart}) async {
+    final now  = DateTime.now();
+    final init = isStart
+        ? (_startDate ?? now)
+        : (_endDate ?? (_startDate ?? now).add(const Duration(days: 7)));
+    final picked = await showDatePicker(
+      context:      context,
+      initialDate:  init,
+      firstDate:    DateTime(2020),
+      lastDate:     DateTime(2030),
+    );
+    if (picked != null) {
+      setState(() {
+        if (isStart) _startDate = picked;
+        else          _endDate   = picked;
+      });
+    }
+  }
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    try {
+      final budget = double.tryParse(_budgetCtrl.text.replaceAll(',', ''));
+      await ref.read(tripProvider.notifier).save(
+        isActive:   true,
+        tripName:   _nameCtrl.text.trim().isEmpty ? null : _nameCtrl.text.trim(),
+        categoryId: _categoryId,
+        startDate:  _startDate,
+        endDate:    _endDate,
+        budget:     budget,
+      );
+      if (mounted) Navigator.pop(context);
+    } catch (_) {
+      setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs      = Theme.of(context).colorScheme;
+    final dateFmt = DateFormat('MMM d, yyyy');
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+          24, 16, 24, MediaQuery.viewInsetsOf(context).bottom + 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text('Trip Setup',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 20, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 20),
+
+          // Trip name
+          TextField(
+            controller: _nameCtrl,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(
+              labelText: 'Trip name (optional)',
+              hintText: 'e.g. Florida 2026',
+              prefixIcon: Icon(Icons.flight_takeoff_rounded, size: 18),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Category
+          InkWell(
+            onTap: _pickCategory,
+            borderRadius: BorderRadius.circular(12),
+            child: InputDecorator(
+              decoration: const InputDecoration(
+                labelText: 'Trip category',
+                prefixIcon: Icon(Icons.label_outline, size: 18),
+              ),
+              child: Text(
+                _categoryName ?? 'Tap to select…',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 14,
+                    color: _categoryId != null
+                        ? cs.onSurface
+                        : cs.onSurfaceVariant),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Dates
+          Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: () => _pickDate(isStart: true),
+                  borderRadius: BorderRadius.circular(12),
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Start date',
+                      prefixIcon: Icon(Icons.calendar_today_outlined, size: 16),
+                    ),
+                    child: Text(
+                      _startDate != null
+                          ? dateFmt.format(_startDate!)
+                          : 'Optional',
+                      style: GoogleFonts.plusJakartaSans(fontSize: 13,
+                          color: _startDate != null
+                              ? cs.onSurface : cs.onSurfaceVariant),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: InkWell(
+                  onTap: () => _pickDate(isStart: false),
+                  borderRadius: BorderRadius.circular(12),
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'End date',
+                      prefixIcon: Icon(Icons.event_outlined, size: 16),
+                    ),
+                    child: Text(
+                      _endDate != null
+                          ? dateFmt.format(_endDate!)
+                          : 'Optional',
+                      style: GoogleFonts.plusJakartaSans(fontSize: 13,
+                          color: _endDate != null
+                              ? cs.onSurface : cs.onSurfaceVariant),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Budget
+          TextField(
+            controller: _budgetCtrl,
+            keyboardType: const TextInputType.numberWithOptions(decimal: false),
+            decoration: const InputDecoration(
+              labelText: 'Total trip budget (optional)',
+              hintText: 'e.g. 2000',
+              prefixIcon: Icon(Icons.attach_money, size: 18),
+              prefixText: '\$ ',
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          FilledButton(
+            onPressed: _categoryId == null || _saving ? null : _save,
+            style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(52)),
+            child: _saving
+                ? const SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2,
+                        color: Colors.white))
+                : Text('Save & Activate',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w700)),
+          ),
+        ],
       ),
     );
   }
