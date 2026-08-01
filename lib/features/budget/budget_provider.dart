@@ -83,6 +83,12 @@ class BudgetState {
 class BudgetNotifier extends AsyncNotifier<BudgetState> {
   DateTime _month = _firstOfMonth(DateTime.now());
 
+  /// Upper bound on history rows pulled for carry-forward. PostgREST applies
+  /// its own `max-rows` cap when one is configured, and a truncated history
+  /// yields silently wrong balances — so we request an explicit cap and treat
+  /// hitting it as an error rather than trusting a short result.
+  static const _kHistoryRowCap = 100000;
+
   @override
   Future<BudgetState> build() async {
     final householdId = await ref.watch(householdIdProvider.future);
@@ -470,23 +476,60 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
           .from('budget_months')
           .select('category_id, budgeted, month')
           .eq('household_id', householdId)
-          .lt('month', monthStr),
+          .lt('month', monthStr)
+          .limit(_kHistoryRowCap),
 
-      // 6. all confirmed non-transfer budget-account transactions BEFORE this month
+      // 6. all confirmed budget-account transactions BEFORE this month
       client
           .from('transactions')
           .select('category_id, amount, transfer_id, date, accounts(is_tracking)')
           .eq('household_id', householdId)
           .lt('date', monthStr)
           .eq('status', 'confirmed')
-          .isFilter('deleted_at', null),
+          .isFilter('deleted_at', null)
+          .limit(_kHistoryRowCap),
     ]);
+
+    // Carry-forward and TBB are both running totals over *all* history, so a
+    // truncated result set would produce silently wrong balances. Fail loudly
+    // instead — the cap is far above any realistic personal-budget history.
+    if ((results[4] as List).length >= _kHistoryRowCap ||
+        (results[5] as List).length >= _kHistoryRowCap) {
+      throw StateError(
+        'Budget history exceeded $_kHistoryRowCap rows; carry-forward would be '
+        'incomplete. Aggregate older months before loading the budget.',
+      );
+    }
+
+    // ── Per-category settings (drive how balances roll between months) ────────
+    // Built first because the visible-category set gates every budgeted sum
+    // below: money assigned to a hidden or deleted category must not be
+    // subtracted from TBB, or it disappears from the books entirely.
+    final visibleCatIds = <String>{};
+    final rolloverMap   = <String, String>{}; // catId → rollover_behavior
+    final overspendMap  = <String, String>{}; // catId → overspending_behavior
+    final ccLinkMap     = <String, String>{}; // catId → linked_account_id
+    for (final gRaw in results[0] as List) {
+      for (final cRaw in ((gRaw as Map)['categories'] as List? ?? [])) {
+        final c = cRaw as Map<String, dynamic>;
+        if (c['is_hidden'] == true) continue;
+        final catId = c['id'] as String;
+        visibleCatIds.add(catId);
+        rolloverMap[catId]  =
+            (c['rollover_behavior'] as String?) ?? 'rollover';
+        overspendMap[catId] =
+            (c['overspending_behavior'] as String?) ?? 'reduce_tbb';
+        final ccAccId = c['linked_account_id'] as String?;
+        if (ccAccId != null) ccLinkMap[catId] = ccAccId;
+      }
+    }
 
     // Build lookup maps
     final budgetMap = <String, double>{};
     for (final row in results[1] as List) {
-      budgetMap[row['category_id'] as String] =
-          (row['budgeted'] as num).toDouble();
+      final catId = row['category_id'] as String;
+      if (!visibleCatIds.contains(catId)) continue;
+      budgetMap[catId] = (row['budgeted'] as num).toDouble();
     }
 
     final activityMap = <String, double>{};
@@ -504,32 +547,17 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       goalMap[g.categoryId] = g;
     }
 
-    // ── Per-category settings (drive how balances roll between months) ────────
-    final rolloverMap  = <String, String>{}; // catId → rollover_behavior
-    final overspendMap = <String, String>{}; // catId → overspending_behavior
-    final ccLinkMap    = <String, String>{}; // catId → linked_account_id
-    for (final gRaw in results[0] as List) {
-      for (final cRaw in ((gRaw as Map)['categories'] as List? ?? [])) {
-        final c     = cRaw as Map<String, dynamic>;
-        final catId = c['id'] as String;
-        rolloverMap[catId]  =
-            (c['rollover_behavior'] as String?) ?? 'rollover';
-        overspendMap[catId] =
-            (c['overspending_behavior'] as String?) ?? 'reduce_tbb';
-        final ccAccId = c['linked_account_id'] as String?;
-        if (ccAccId != null) ccLinkMap[catId] = ccAccId;
-      }
-    }
-
     // ── Past budgeted + activity, bucketed by category and month ─────────────
     // Both are needed per-month (not as a flat sum) so the running balance can
     // be clamped at each month boundary — see the walk below.
     final pastBudget   = <String, Map<String, double>>{}; // catId → 'YYYY-MM' → budgeted
     final pastActivity = <String, Map<String, double>>{}; // catId → 'YYYY-MM' → activity
+    // Uncategorised inflows per past month — the other half of the TBB total.
+    final pastInflowByMonth = <String, double>{};
 
     for (final row in results[4] as List) {
       final catId = row['category_id'] as String?;
-      if (catId == null) continue;
+      if (catId == null || !visibleCatIds.contains(catId)) continue;
       final mKey = _monthKeyOf(row['month'] as String);
       (pastBudget[catId] ??= {})[mKey] =
           ((pastBudget[catId]![mKey]) ?? 0.0) + (row['budgeted'] as num).toDouble();
@@ -538,10 +566,19 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       final catId      = tx['category_id'] as String?;
       final transferId = tx['transfer_id'] as String?;
       final isTracking = (tx['accounts']   as Map?)?['is_tracking'] as bool? ?? false;
-      if (catId == null || transferId != null || isTracking) continue;
-      final mKey = _monthKeyOf(tx['date'] as String);
+      final amt        = (tx['amount']     as num).toDouble();
+      final mKey       = _monthKeyOf(tx['date'] as String);
+
+      // Uncategorised inflow → straight to TBB, never to a category.
+      if (catId == null) {
+        if (transferId == null && !isTracking && amt > 0) {
+          pastInflowByMonth[mKey] = (pastInflowByMonth[mKey] ?? 0.0) + amt;
+        }
+        continue;
+      }
+      if (transferId != null || isTracking) continue;
       (pastActivity[catId] ??= {})[mKey] =
-          ((pastActivity[catId]![mKey]) ?? 0.0) + (tx['amount'] as num).toDouble();
+          ((pastActivity[catId]![mKey]) ?? 0.0) + amt;
     }
 
     // ── CC payment: YNAB-style linked envelope ───────────────────────────────────
@@ -574,8 +611,16 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
             .inFilter('account_id', ccAccountIds)
             .lt('date', monthStr)
             .eq('status', 'confirmed')
-            .isFilter('deleted_at', null),
+            .isFilter('deleted_at', null)
+            .limit(_kHistoryRowCap),
       ]);
+
+      if ((ccTxResults[1] as List).length >= _kHistoryRowCap) {
+        throw StateError(
+          'Credit-card history exceeded $_kHistoryRowCap rows; the payment '
+          'envelope would be incomplete.',
+        );
+      }
 
       // Accumulate: CC activity = -sum(CC txns) so spending adds, payments deduct.
       final ccCurAct  = <String, double>{};
@@ -605,6 +650,11 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     // category is set to 'reduce_tbb' (the default), where the shortfall is
     // absorbed by TBB in the month it happens and the next month starts clean.
     final carryForwardMap = <String, double>{};
+    // Whatever a category stops carrying has to land somewhere or the books
+    // stop balancing: clamping an overspend to 0 without charging TBB would
+    // conjure that money out of nothing. Negative = TBB absorbed a shortfall,
+    // positive = a zero_out category handed its surplus back.
+    double tbbAdjust = 0;
     final allCatIds = {...pastBudget.keys, ...pastActivity.keys};
     for (final catId in allCatIds) {
       final budgets    = pastBudget[catId]   ?? const <String, double>{};
@@ -619,9 +669,14 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
         final endBalance =
             running + (budgets[m] ?? 0.0) + (activities[m] ?? 0.0);
         if (rollover == 'zero_out') {
-          running = 0; // category never carries a balance between months
-        } else if (overspend == 'reduce_tbb') {
-          running = endBalance < 0 ? 0.0 : endBalance; // shortfall hit TBB already
+          // Category never carries: the whole balance returns to the pool.
+          tbbAdjust += endBalance;
+          running    = 0;
+        } else if (overspend == 'reduce_tbb' && endBalance < 0) {
+          // Shortfall is absorbed by TBB in the month it happened; the
+          // category starts the next month clean.
+          tbbAdjust += endBalance;
+          running    = 0;
         } else {
           running = endBalance; // carry_forward: the negative follows the category
         }
@@ -692,11 +747,15 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     double income = 0;
     final incomeTxns = <IncomeTxn>[];
     for (final tx in results[2] as List) {
+      final catId      = tx['category_id'] as String?;
       final transferId = tx['transfer_id'] as String?;
       final isTracking = (tx['accounts']   as Map?)?['is_tracking'] as bool? ?? false;
       final amt        = (tx['amount']     as num).toDouble();
-      // Exclude transfers and tracking-account transactions — neither is budget income.
-      if (transferId == null && !isTracking && amt > 0) {
+      // Exclude transfers and tracking-account transactions — neither is budget
+      // income. Also exclude *categorised* inflows (e.g. a refund booked to
+      // Groceries): those already raise that category's Available, so counting
+      // them here would credit the same money twice.
+      if (catId == null && transferId == null && !isTracking && amt > 0) {
         income += amt;
         final payee = tx['payees'] as Map<String, dynamic>?;
         incomeTxns.add(IncomeTxn(
@@ -708,9 +767,11 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     }
     incomeTxns.sort((a, b) => b.date.compareTo(a.date));
 
-    // ── Total assigned this month (sum of all budgeted entries) ──────────────
-    final totalBudgeted = groups.fold(0.0,
-        (s, g) => s + g.entries.fold(0.0, (s2, e) => s2 + e.budgeted));
+    // ── Total assigned this month ────────────────────────────────────────────
+    // Summed from budgetMap (already gated on visibleCatIds) rather than from
+    // the rendered groups, so this is exactly the figure TBB subtracts even
+    // when a group renders empty.
+    final totalBudgeted = budgetMap.values.fold(0.0, (s, v) => s + v);
 
     // ── Actual spending: negative non-transfer budget-account transactions ────
     double totalSpent = 0;
@@ -722,21 +783,23 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     }
 
     // ── TBB (cumulative) + carry-forward from previous month ─────────────────
-    double tbb          = 0;
-    double carryForward = 0;
-    try {
-      final prevMonthStr = _toMonthString(DateTime(month.year, month.month - 1));
-      final tbbRows = await client
-          .from('v_to_be_budgeted')
-          .select('month, to_be_budgeted')
-          .eq('household_id', householdId)
-          .inFilter('month', [monthStr, prevMonthStr]);
-      for (final row in tbbRows as List) {
-        final val = (row['to_be_budgeted'] as num).toDouble();
-        if (row['month'] == monthStr)     tbb          = val;
-        if (row['month'] == prevMonthStr) carryForward = val;
-      }
-    } catch (_) {}
+    // Computed here rather than read from v_to_be_budgeted. That view is keyed
+    // off `select distinct month from budget_months`, so any month you have not
+    // budgeted in yet produces no row at all — and the old code then reported
+    // TBB as $0 instead of the surplus actually carried into it. Deriving it
+    // from the same rows that build the categories also guarantees the header
+    // arithmetic (carried + income − budgeted) matches the total shown.
+    // `tbbAdjust` carries the shortfalls TBB absorbed (and any zero_out surplus
+    // handed back) during the walk above, which keeps
+    //   sum(category balances) + TBB == cash in budget accounts
+    // true in every month. Current-month overspending is deliberately *not*
+    // charged here: it shows as a red category now and only reaches TBB once
+    // the month rolls over, which is what YNAB does.
+    final carryForward = pastInflowByMonth.values.fold(0.0, (s, v) => s + v) -
+        pastBudget.values.fold(
+            0.0, (s, m) => s + m.values.fold(0.0, (s2, v) => s2 + v)) +
+        tbbAdjust;
+    final tbb = carryForward + income - totalBudgeted;
 
     return BudgetState(
       month:         month,

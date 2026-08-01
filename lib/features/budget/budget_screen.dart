@@ -343,16 +343,8 @@ class _PanelContentState extends State<_PanelContent> {
                   label:      'Budgeted in ${DateFormat('MMM').format(state.month)}',
                   valueColor: cs.onSurfaceVariant,
                 ),
-                const SizedBox(height: 2),
-                // Spent line
-                _TbbLine(
-                  sign:       '~',
-                  value:      state.totalSpent,
-                  label:      'Spent in ${DateFormat('MMM').format(state.month)}',
-                  valueColor: cs.error.withValues(alpha: 0.8),
-                ),
                 const SizedBox(height: 6),
-                // TBB result pill
+                // TBB result pill — closes the carried + income − budgeted sum
                 Align(
                   alignment: Alignment.centerRight,
                   child: Container(
@@ -375,6 +367,20 @@ class _PanelContentState extends State<_PanelContent> {
                       ),
                     ),
                   ),
+                ),
+                // Spending sits outside the equation: it never reaches TBB
+                // (money leaves a category, not the unassigned pool), so
+                // showing it above the "=" made the sum look broken.
+                const SizedBox(height: 6),
+                Divider(
+                    height: 1,
+                    color: cs.outlineVariant.withValues(alpha: 0.5)),
+                const SizedBox(height: 4),
+                _TbbLine(
+                  sign:       '',
+                  value:      state.totalSpent,
+                  label:      'Spent in ${DateFormat('MMM').format(state.month)}',
+                  valueColor: cs.error.withValues(alpha: 0.8),
                 ),
               ],
             ),
@@ -629,10 +635,11 @@ class _PanelEntryRow extends StatelessWidget {
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
-                _BatteryBar(
-                  budgeted: entry.budgeted,
-                  spent:    entry.spent,
-                ),
+                if (entry.showsBudgetProgress)
+                  _BatteryBar(
+                    budgeted: entry.budgeted,
+                    spent:    entry.spent,
+                  ),
               ],
             ),
           ),
@@ -1038,13 +1045,6 @@ class _BudgetHeader extends StatelessWidget {
                   label: 'Budgeted in ${DateFormat('MMM').format(month)}',
                   valueColor: cs.onSurfaceVariant,
                 ),
-                const SizedBox(height: 3),
-                _TbbLine(
-                  sign:  '~',
-                  value: totalSpent,
-                  label: 'Spent in ${DateFormat('MMM').format(month)}',
-                  valueColor: cs.error.withValues(alpha: 0.8),
-                ),
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 6),
                   child: Divider(
@@ -1083,6 +1083,21 @@ class _BudgetHeader extends StatelessWidget {
                           color: tbbColor.withValues(alpha: 0.7)),
                     ),
                   ],
+                ),
+                // Spending sits outside the equation: it never reaches TBB
+                // (money leaves a category, not the unassigned pool), so
+                // showing it above the "=" made the sum look broken.
+                Padding(
+                  padding: const EdgeInsets.only(top: 8, bottom: 4),
+                  child: Divider(
+                      height: 1,
+                      color: cs.outlineVariant.withValues(alpha: 0.5)),
+                ),
+                _TbbLine(
+                  sign:  '',
+                  value: totalSpent,
+                  label: 'Spent in ${DateFormat('MMM').format(month)}',
+                  valueColor: cs.error.withValues(alpha: 0.8),
                 ),
               ],
             ),
@@ -1790,10 +1805,11 @@ class _CategoryTableRow extends ConsumerWidget {
                           color: cs.onSurface,
                         ),
                       ),
-                      _BatteryBar(
-                        budgeted: entry.budgeted,
-                        spent:    entry.spent,
-                      ),
+                      if (entry.showsBudgetProgress)
+                        _BatteryBar(
+                          budgeted: entry.budgeted,
+                          spent:    entry.spent,
+                        ),
                     ],
                   ),
                 ),
@@ -2727,7 +2743,11 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
             Row(
               children: [
                 _StatCell(label: 'Budgeted', value: fmt.format(widget.entry.budgeted),       color: cs.primary),
-                _StatCell(label: 'Spent',    value: fmt.format(widget.entry.spent),           color: cs.onSurface),
+                // A CC envelope is filled by card spending rather than drained
+                // by it, so "Spent" would always read $0 here.
+                widget.entry.isCcPayment
+                    ? _StatCell(label: 'Reserved', value: fmt.format(widget.entry.reserved), color: cs.onSurface)
+                    : _StatCell(label: 'Spent',    value: fmt.format(widget.entry.spent),    color: cs.onSurface),
                 _StatCell(
                   label: isOverspent ? 'Overspent' : 'Remaining',
                   value: fmt.format(widget.entry.balance.abs()),
@@ -2737,21 +2757,21 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
             ),
             const SizedBox(height: 20),
 
-            SizedBox(
-              width: double.infinity,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: LinearProgressIndicator(
-                  value: widget.entry.budgeted > 0
-                      ? (widget.entry.spent / widget.entry.budgeted).clamp(0.0, 1.0)
-                      : 0.0,
-                  minHeight: 8,
-                  backgroundColor: cs.surfaceContainerHighest,
-                  valueColor: AlwaysStoppedAnimation(isOverspent ? cs.error : cs.primary),
+            if (widget.entry.showsBudgetProgress) ...[
+              SizedBox(
+                width: double.infinity,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: LinearProgressIndicator(
+                    value: (widget.entry.spent / widget.entry.budgeted).clamp(0.0, 1.0),
+                    minHeight: 8,
+                    backgroundColor: cs.surfaceContainerHighest,
+                    valueColor: AlwaysStoppedAnimation(isOverspent ? cs.error : cs.primary),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 24),
+              const SizedBox(height: 24),
+            ],
 
             // CC payment link section — shown for CC payment envelopes
             if (widget.entry.isCcPayment) ...[

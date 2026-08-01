@@ -114,6 +114,15 @@ class BudgetEntry {
   });
 
   double get spent => activity < 0 ? activity.abs() : 0;
+
+  /// CC payment envelopes accumulate *positive* activity — card spending
+  /// reserves money to pay the bill rather than consuming a budget. That makes
+  /// [spent] permanently 0 for them, so a consumption bar would read as an
+  /// empty battery no matter how heavily the card is used.
+  bool get showsBudgetProgress => !isCcPayment && budgeted > 0;
+
+  /// Money reserved into a CC payment envelope by card spending this month.
+  double get reserved => isCcPayment && activity > 0 ? activity : 0;
 }
 
 class BudgetGroupData {
