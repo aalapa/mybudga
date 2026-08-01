@@ -2368,6 +2368,77 @@ class _InlineAddRowState extends ConsumerState<_InlineAddRow> {
 // Expanded transactions panel
 // ---------------------------------------------------------------------------
 
+// ── Sort order for a category's transaction list ─────────────────────────────
+
+enum _TxSort {
+  dateDesc, dateAsc, amountDesc, amountAsc;
+
+  bool get isDate   => this == dateDesc   || this == dateAsc;
+  bool get isAmount => this == amountDesc || this == amountAsc;
+  bool get isDesc   => this == dateDesc   || this == amountDesc;
+}
+
+/// Per-category so sorting one list does not reorder another, and so the
+/// choice survives collapsing and reopening the row.
+final _catTxSortProvider =
+    StateProvider.family<_TxSort, String>((ref, _) => _TxSort.dateDesc);
+
+List<CategoryTransaction> _sortTxs(List<CategoryTransaction> txs, _TxSort s) {
+  final out = [...txs];
+  switch (s) {
+    case _TxSort.dateDesc:   out.sort((a, b) => b.date.compareTo(a.date));
+    case _TxSort.dateAsc:    out.sort((a, b) => a.date.compareTo(b.date));
+    // By magnitude: these lists are almost all expenses, so "largest spend
+    // first" is the useful reading, and a stray refund sorts by size too.
+    case _TxSort.amountDesc: out.sort((a, b) => b.amount.abs().compareTo(a.amount.abs()));
+    case _TxSort.amountAsc:  out.sort((a, b) => a.amount.abs().compareTo(b.amount.abs()));
+  }
+  return out;
+}
+
+class _TxSortChip extends StatelessWidget {
+  final String label;
+  final bool active;
+  final bool desc;
+  final VoidCallback onTap;
+  const _TxSortChip({
+    required this.label,
+    required this.active,
+    required this.desc,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                color: active ? cs.primary : cs.onSurfaceVariant,
+              ),
+            ),
+            if (active) ...[
+              const SizedBox(width: 2),
+              Icon(desc ? Icons.arrow_downward : Icons.arrow_upward,
+                  size: 11, color: cs.primary),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _CategoryTxPanel extends ConsumerWidget {
   final BudgetEntry entry;
   final DateTime month;
@@ -2386,6 +2457,7 @@ class _CategoryTxPanel extends ConsumerWidget {
     final cs     = Theme.of(context).colorScheme;
     final txAsync = ref.watch(
         categoryTransactionsProvider((entry.categoryId, monthKey)));
+    final sort    = ref.watch(_catTxSortProvider(entry.categoryId));
 
     return Container(
       color: cs.surfaceContainerHigh,
@@ -2452,8 +2524,45 @@ class _CategoryTxPanel extends ConsumerWidget {
                           fontSize: 12, color: cs.onSurfaceVariant),
                     ),
                   )
-                else
-                  ...txs.map((tx) => _CategoryTxRow(tx: tx)),
+                else ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 2, 12, 2),
+                    child: Row(
+                      children: [
+                        Text('Sort',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.6,
+                              color: cs.onSurfaceVariant
+                                  .withValues(alpha: 0.7),
+                            )),
+                        const SizedBox(width: 6),
+                        _TxSortChip(
+                          label:  'Date',
+                          active: sort.isDate,
+                          desc:   sort.isDesc,
+                          onTap: () => ref
+                              .read(_catTxSortProvider(entry.categoryId).notifier)
+                              .state = sort == _TxSort.dateDesc
+                                  ? _TxSort.dateAsc
+                                  : _TxSort.dateDesc,
+                        ),
+                        _TxSortChip(
+                          label:  'Amount',
+                          active: sort.isAmount,
+                          desc:   sort.isDesc,
+                          onTap: () => ref
+                              .read(_catTxSortProvider(entry.categoryId).notifier)
+                              .state = sort == _TxSort.amountDesc
+                                  ? _TxSort.amountAsc
+                                  : _TxSort.amountDesc,
+                        ),
+                      ],
+                    ),
+                  ),
+                  ..._sortTxs(txs, sort).map((tx) => _CategoryTxRow(tx: tx)),
+                ],
                 // ── Insight card (Path C) ──────────────────────────────────
                 _PatternInsightCard(entry: entry, txs: txs),
               ],
