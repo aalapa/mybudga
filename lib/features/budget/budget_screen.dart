@@ -18,6 +18,7 @@ import 'category_icons.dart';
 const _kColW      = 82.0; // numeric column width — single-column view
 const _kPanelColW = 68.0; // numeric column width — 3-column comparison panels
 const _k3ColBreak = 1100.0; // min width to activate 3-column layout
+const _kCarrySlotW = 20.0;  // trailing slot for the overspend-carry arrow
 
 class BudgetScreen extends ConsumerWidget {
   const BudgetScreen({super.key});
@@ -465,6 +466,7 @@ class _PanelColHeaders extends StatelessWidget {
           _PanelColLabel('ACTIVITY', total: totalActivity, cs: cs),
           _PanelColLabel('AVAIL',    bg: cs.tertiary.withValues(alpha: 0.07),
               total: totalAvailable, cs: cs),
+          const SizedBox(width: _kCarrySlotW),
         ],
       ),
     );
@@ -571,6 +573,7 @@ class _PanelGroupRow extends StatelessWidget {
               totalAvailable < 0 ? cs.error : cs.onSurfaceVariant,
               bg: cs.tertiary.withValues(alpha: 0.07),
             ),
+            const SizedBox(width: _kCarrySlotW),
           ],
         ),
       ),
@@ -648,6 +651,14 @@ class _PanelEntryRow extends StatelessWidget {
           _PanelNum(entry.activity, cs.onSurfaceVariant),
           _PanelNum(entry.balance, availColor, bold: true,
               bg: cs.tertiary.withValues(alpha: 0.07)),
+          // Fixed-width slot so the numeric columns stay tabulated whether or
+          // not a given row is overspent.
+          SizedBox(
+            width: _kCarrySlotW,
+            child: isOverspent && !entry.isCcPayment
+                ? _CarryOverspendArrow(entry: entry)
+                : null,
+          ),
         ],
       ),
     );
@@ -1301,6 +1312,60 @@ class _TbbLine extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
+// Overspend carry arrow — inline toggle on an overspent category row
+// ---------------------------------------------------------------------------
+
+/// Appears on the row only while a category is overspent, because that is the
+/// only time the setting changes anything.
+///
+/// Off (the default): the shortfall is covered by To Be Budgeted when the month
+/// rolls over, and the category starts next month clean.
+/// On: the negative balance follows the category into next month instead.
+class _CarryOverspendArrow extends ConsumerWidget {
+  final BudgetEntry entry;
+  const _CarryOverspendArrow({required this.entry});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final on = entry.carryOverspend;
+
+    return Tooltip(
+      message: on
+          ? 'Overspending carries into next month.\nTap to cover it from To Be Budgeted instead.'
+          : 'Overspending is covered by To Be Budgeted.\nTap to carry it into next month instead.',
+      child: InkWell(
+        onTap: () => ref
+            .read(budgetProvider.notifier)
+            .setCarryOverspend(entry.categoryId, !on),
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+          child: Container(
+            padding: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              color: on ? cs.error.withValues(alpha: 0.18) : null,
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(
+                color: on
+                    ? cs.error.withValues(alpha: 0.55)
+                    : cs.onSurfaceVariant.withValues(alpha: 0.35),
+                width: 0.9,
+              ),
+            ),
+            child: Icon(
+              Icons.east,
+              size: 12,
+              color: on ? cs.error : cs.onSurfaceVariant.withValues(alpha: 0.55),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // CC account link tile — shown in CC payment category detail sheet
 // ---------------------------------------------------------------------------
 
@@ -1825,7 +1890,10 @@ class _CategoryTableRow extends ConsumerWidget {
                       bg: cs.primary.withValues(alpha: 0.07)),
                 _NumCell(entry.balance, availColor, bold: true,
                     bg: cs.tertiary.withValues(alpha: 0.07)),
-                const SizedBox(width: 4),
+                if (isOverspent && !entry.isCcPayment)
+                  _CarryOverspendArrow(entry: entry)
+                else
+                  const SizedBox(width: 4),
                 Icon(
                   isExpanded ? Icons.expand_less : Icons.expand_more,
                   size: 16,
