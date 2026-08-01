@@ -325,7 +325,7 @@ begin
 
     if v_group_id is null then
         insert into category_groups (household_id, name, sort_order)
-        values (new.household_id, 'Credit Card Payments', 9999)
+        values (new.household_id, 'Credit Card Payments', 0)
         returning id into v_group_id;
     end if;
 

@@ -2262,14 +2262,12 @@ class _InlineBudgetAmountState extends ConsumerState<_InlineBudgetAmount> {
         child: SizedBox(
           width: widget.width,
           child: Text(
-            widget.abbreviate
-                ? _PanelNum.fmtAbbrev(0)
-                : fmt.format(0),
+            'N/A',
             textAlign: TextAlign.right,
             style: GoogleFonts.plusJakartaSans(
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w500,
-              color: cs.onSurfaceVariant.withValues(alpha: 0.4),
+              color: cs.onSurfaceVariant.withValues(alpha: 0.45),
             ),
           ),
         ),
@@ -3225,7 +3223,13 @@ class _CategoryDetailSheetState extends ConsumerState<_CategoryDetailSheet> {
                     value: fmt.format(entry.carriedIn),
                     color: entry.carriedIn < 0 ? cs.error : cs.tertiary,
                   ),
-                _StatCell(label: 'Budgeted', value: fmt.format(entry.budgeted),       color: cs.primary),
+                _StatCell(
+                  label: 'Budgeted',
+                  value: entry.ccAccountId != null
+                      ? 'N/A'
+                      : fmt.format(entry.budgeted),
+                  color: entry.ccAccountId != null ? cs.onSurfaceVariant : cs.primary,
+                ),
                 // A CC envelope is filled by card spending rather than drained
                 // by it, so "Spent" would always read $0 here.
                 entry.isCcPayment

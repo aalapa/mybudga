@@ -166,7 +166,9 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
         final grpRes = await client.from('category_groups').insert({
           'household_id': householdId,
           'name':         'Credit Card Payments',
-          'sort_order':   9999,
+          // Above the seeded groups (10, 20, ...) so card payments lead the
+          // budget — they are the first thing to settle each month.
+          'sort_order':   0,
         }).select('id').single();
         groupId = grpRes['id'] as String;
       }
