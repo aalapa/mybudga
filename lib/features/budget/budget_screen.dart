@@ -115,11 +115,19 @@ class _ThreeColumnBudget extends ConsumerWidget {
                     backgroundColor: cs.surfaceContainerHigh),
               ),
               const Spacer(),
-              _MonthChip(month: prevMonth,  isCurrent: false),
+              _MonthChip(
+                month: prevMonth, isCurrent: false,
+                onTap: () => notifier.goToMonth(prevMonth)),
               const SizedBox(width: 12),
               _MonthChip(month: state.month, isCurrent: true),
               const SizedBox(width: 12),
-              _MonthChip(month: nextMonth,  isCurrent: false),
+              _MonthChip(
+                month: nextMonth, isCurrent: false,
+                onTap: () => _checkOverspendBeforeNext(
+                    context,
+                    ref.read(budgetProvider).valueOrNull!,
+                    notifier,
+                    nextMonth)),
               const Spacer(),
               IconButton(
                 onPressed: () => _checkOverspendBeforeNext(
@@ -186,26 +194,30 @@ class _ThreeColumnBudget extends ConsumerWidget {
 class _MonthChip extends StatelessWidget {
   final DateTime month;
   final bool isCurrent;
-  const _MonthChip({required this.month, required this.isCurrent});
+  final VoidCallback? onTap;
+  const _MonthChip({required this.month, required this.isCurrent, this.onTap});
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-      decoration: BoxDecoration(
-        color: isCurrent
-            ? cs.primaryContainer
-            : cs.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        DateFormat(isCurrent ? 'MMMM yyyy' : 'MMM yyyy').format(month),
-        style: GoogleFonts.plusJakartaSans(
-          fontSize: isCurrent ? 14 : 12,
-          fontWeight: isCurrent ? FontWeight.w800 : FontWeight.w500,
-          color: isCurrent ? cs.onPrimaryContainer : cs.onSurfaceVariant,
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: isCurrent
+              ? cs.primaryContainer
+              : cs.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          DateFormat(isCurrent ? 'MMMM yyyy' : 'MMM yyyy').format(month),
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: isCurrent ? 14 : 12,
+            fontWeight: isCurrent ? FontWeight.w800 : FontWeight.w500,
+            color: isCurrent ? cs.onPrimaryContainer : cs.onSurfaceVariant,
+          ),
         ),
       ),
     );
@@ -826,7 +838,17 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
       child: CustomScrollView(
         slivers: [
           header,
-          if (isWide) const SliverToBoxAdapter(child: _ColumnHeaders()),
+          SliverToBoxAdapter(
+            child: _ColumnHeaders(
+              isWide:         isWide,
+              totalBudgeted:  state.totalBudgeted,
+              totalActivity:  state.groups
+                  .expand((g) => g.entries)
+                  .fold(0.0, (s, e) => s + e.activity),
+              totalAvailable: state.groups
+                  .fold(0.0, (acc, g) => acc + g.balance),
+            ),
+          ),
           ...groupSlivers,
           // Always-visible "Add category" button at the bottom of the list
           SliverToBoxAdapter(
@@ -1330,17 +1352,27 @@ class _BatteryPainter extends CustomPainter {
 }
 
 // ---------------------------------------------------------------------------
-// Column headers (wide screens only)
+// Column headers
 // ---------------------------------------------------------------------------
 
 class _ColumnHeaders extends StatelessWidget {
-  const _ColumnHeaders();
+  final bool   isWide;
+  final double totalBudgeted;
+  final double totalActivity;
+  final double totalAvailable;
+
+  const _ColumnHeaders({
+    required this.isWide,
+    required this.totalBudgeted,
+    required this.totalActivity,
+    required this.totalAvailable,
+  });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 6, 16, 6),
+      padding: const EdgeInsets.fromLTRB(20, 4, 16, 4),
       decoration: BoxDecoration(
         border: Border(
           bottom: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.5)),
@@ -1349,9 +1381,13 @@ class _ColumnHeaders extends StatelessWidget {
       child: Row(
         children: [
           const Expanded(child: SizedBox()),
-          _ColLabel('BUDGETED', bg: cs.primary.withValues(alpha: 0.07)),
-          _ColLabel('ACTIVITY'),
-          _ColLabel('AVAILABLE', bg: cs.tertiary.withValues(alpha: 0.07)),
+          _ColLabel(isWide ? 'BUDGETED' : 'BUDGET',
+              bg: cs.primary.withValues(alpha: 0.07),
+              total: totalBudgeted, cs: cs),
+          if (isWide) _ColLabel('ACTIVITY', total: totalActivity, cs: cs),
+          _ColLabel(isWide ? 'AVAILABLE' : 'AVAIL',
+              bg: cs.tertiary.withValues(alpha: 0.07),
+              total: totalAvailable, cs: cs),
         ],
       ),
     );
@@ -1361,21 +1397,47 @@ class _ColumnHeaders extends StatelessWidget {
 class _ColLabel extends StatelessWidget {
   final String text;
   final Color? bg;
-  const _ColLabel(this.text, {this.bg});
+  final double? total;
+  final ColorScheme cs;
+  const _ColLabel(this.text, {required this.cs, this.bg, this.total});
+
+  static String _fmtTotal(double v) {
+    final abs = v.abs();
+    final s = abs >= 1000
+        ? '\$${(abs / 1000).toStringAsFixed(1)}k'
+        : '\$${abs.toStringAsFixed(0)}';
+    return v < 0 ? '-$s' : s;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final label = SizedBox(
+    final Widget label = SizedBox(
       width: _kColW,
-      child: Text(
-        text,
-        textAlign: TextAlign.right,
-        style: GoogleFonts.plusJakartaSans(
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-          letterSpacing: 0.6,
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            text,
+            textAlign: TextAlign.right,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+              color: cs.onSurfaceVariant,
+              letterSpacing: 0.6,
+            ),
+          ),
+          if (total != null)
+            Text(
+              _fmtTotal(total!),
+              textAlign: TextAlign.right,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: total! < 0 ? cs.error : cs.onSurface,
+              ),
+            ),
+        ],
       ),
     );
     if (bg == null) return label;
@@ -1465,11 +1527,9 @@ class _GroupHeaderRow extends StatelessWidget {
               ),
             ),
             // Numeric columns
-            if (isWide) ...[
-              _NumCell(groupBudgeted, cs.onSurfaceVariant, bold: true,
-                  bg: cs.primary.withValues(alpha: 0.07)),
-              _NumCell(groupActivity, cs.onSurfaceVariant, bold: true),
-            ],
+            _NumCell(groupBudgeted, cs.onSurfaceVariant, bold: true,
+                bg: cs.primary.withValues(alpha: 0.07)),
+            if (isWide) _NumCell(groupActivity, cs.onSurfaceVariant, bold: true),
             _NumCell(
               groupAvailable,
               groupAvailable < 0 ? cs.error : cs.onSurfaceVariant,
@@ -1573,7 +1633,9 @@ class _CategoryTableRow extends ConsumerWidget {
                     child: _InlineBudgetAmount(entry: entry),
                   ),
                   _NumCell(entry.activity, cs.onSurfaceVariant),
-                ],
+                ] else
+                  _NumCell(entry.budgeted, cs.onSurface,
+                      bg: cs.primary.withValues(alpha: 0.07)),
                 _NumCell(entry.balance, availColor, bold: true,
                     bg: cs.tertiary.withValues(alpha: 0.07)),
                 const SizedBox(width: 4),
