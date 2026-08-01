@@ -3151,7 +3151,15 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
           color:        cs.surfaceContainerHigh,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         ),
+        // Capped and scrollable: this sheet has outgrown a phone screen
+        // (stats, progress, CC link, budget field, goal card, Make Inactive,
+        // carry toggle) and an unscrolled Column silently clipped everything
+        // below the fold — including Make Inactive.
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+        ),
         padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+        child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3335,6 +3343,7 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
                 ),
               ),
           ],
+        ),
         ),
       ),
     );
@@ -3542,7 +3551,13 @@ class _SetGoalSheetState extends State<_SetGoalSheet> {
           color:        cs.surfaceContainerHigh,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         ),
+        // Scrollable + capped: with the keyboard up this sheet exceeds the
+        // viewport, and an unscrolled Column clips whatever falls below.
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+        ),
         padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+        child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3650,6 +3665,7 @@ class _SetGoalSheetState extends State<_SetGoalSheet> {
                       style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -3766,7 +3782,13 @@ class _QuickBudgetSheetState extends State<_QuickBudgetSheet> {
           color:        cs.surfaceContainerHigh,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         ),
+        // Scrollable + capped: with the keyboard up this sheet exceeds the
+        // viewport, and an unscrolled Column clips whatever falls below.
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+        ),
         padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+        child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3846,6 +3868,7 @@ class _QuickBudgetSheetState extends State<_QuickBudgetSheet> {
                       style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -4434,7 +4457,13 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
           color:        cs.surfaceContainerHigh,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         ),
+        // Scrollable + capped: with the keyboard up this sheet exceeds the
+        // viewport, and an unscrolled Column clips whatever falls below.
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+        ),
         padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+        child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -4561,6 +4590,7 @@ class _AddCategorySheetState extends ConsumerState<_AddCategorySheet> {
                       style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -4786,24 +4816,30 @@ class _BudgetSplitViewState extends ConsumerState<_BudgetSplitView> {
     final cs = Theme.of(context).colorScheme;
     return Row(
       children: [
-        // Left: budget panel (fixed 520px so the list reads comfortably)
-        SizedBox(
-          width: 520,
+        // The budget list keeps the full width until a category is selected.
+        // The detail panel used to be built unconditionally, so its "Select a
+        // category" placeholder sat here claiming half the screen with nothing
+        // in it.
+        Expanded(
           child: _BudgetBody(
             state:            widget.state,
             onCategoryTap:    _onDetailTap,
             onCategorySelect: _onSelect,
           ),
         ),
-        VerticalDivider(
-            width: 1, color: cs.outlineVariant.withValues(alpha: 0.4)),
-        // Right: transaction detail panel
-        Expanded(
-          child: _CategorySplitPanel(
-            entry:        _selected,
-            currentMonth: widget.state.month,
+        // Right: transactions for the selected category. Tapping that category
+        // again clears the selection and closes this.
+        if (_selected != null) ...[
+          VerticalDivider(
+              width: 1, color: cs.outlineVariant.withValues(alpha: 0.4)),
+          SizedBox(
+            width: 460,
+            child: _CategorySplitPanel(
+              entry:        _selected,
+              currentMonth: widget.state.month,
+            ),
           ),
-        ),
+        ],
       ],
     );
   }
