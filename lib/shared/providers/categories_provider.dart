@@ -13,6 +13,11 @@ final categoriesProvider = FutureProvider<List<CategoryGroup>>((ref) async {
       .eq('household_id', householdId)
       .eq('is_hidden', false)
       .isFilter('deleted_at', null)
+      // The two filters above apply to the group. Without these the embedded
+      // categories ignore their own flags, so inactive and deleted categories
+      // keep showing up in the transaction picker.
+      .eq('categories.is_hidden', false)
+      .isFilter('categories.deleted_at', null)
       .order('sort_order')
       .order('sort_order', referencedTable: 'categories');
 

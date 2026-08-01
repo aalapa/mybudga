@@ -335,6 +335,22 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     ref.invalidateSelf();
   }
 
+  /// Marks a category active/inactive (is_hidden). An inactive category drops
+  /// out of the budget and the transaction picker but keeps all its history.
+  ///
+  /// Any balance it was holding returns to TBB: its budgeted amounts stop
+  /// being subtracted while its spending is still charged, so the unspent
+  /// remainder flows back to the pool rather than being stranded.
+  Future<void> setCategoryActive(String categoryId, bool active) async {
+    final client = ref.read(supabaseProvider);
+    await client
+        .from('categories')
+        .update({'is_hidden': !active})
+        .eq('id', categoryId);
+    ref.invalidate(categoriesProvider);
+    ref.invalidateSelf();
+  }
+
   Future<void> deleteCategory(String categoryId) async {
     final client = ref.read(supabaseProvider);
     await client.from('categories').update({
@@ -899,3 +915,45 @@ final categoryTransactionsProvider = FutureProvider.autoDispose
     }).toList();
   },
 );
+
+
+// ---------------------------------------------------------------------------
+// Inactive (hidden) categories — for the reactivate sheet
+// ---------------------------------------------------------------------------
+
+class InactiveCategory {
+  final String id;
+  final String name;
+  final String groupName;
+  const InactiveCategory({
+    required this.id,
+    required this.name,
+    required this.groupName,
+  });
+}
+
+final inactiveCategoriesProvider =
+    FutureProvider.autoDispose<List<InactiveCategory>>((ref) async {
+  // Re-runs whenever the budget does, so the list updates as soon as a
+  // category is activated or deactivated.
+  ref.watch(budgetProvider);
+  final householdId = await ref.watch(householdIdProvider.future);
+  final client      = ref.watch(supabaseProvider);
+
+  final res = await client
+      .from('categories')
+      .select('id, name, category_groups(name)')
+      .eq('household_id', householdId)
+      .eq('is_hidden', true)
+      .isFilter('deleted_at', null)
+      .order('name');
+
+  return (res as List).map((r) {
+    final g = r['category_groups'] as Map<String, dynamic>?;
+    return InactiveCategory(
+      id:        r['id']   as String,
+      name:      r['name'] as String,
+      groupName: g?['name'] as String? ?? '',
+    );
+  }).toList();
+});

@@ -415,14 +415,35 @@ class _PanelContentState extends State<_PanelContent> {
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-              child: TextButton.icon(
-                onPressed: widget.onAddCategory,
-                icon:  const Icon(Icons.add_circle_outline, size: 16),
-                label: const Text('Add Category'),
-                style: TextButton.styleFrom(
-                  alignment: Alignment.centerLeft,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextButton.icon(
+                    onPressed: widget.onAddCategory,
+                    icon:  const Icon(Icons.add_circle_outline, size: 16),
+                    label: const Text('Add Category'),
+                    style: TextButton.styleFrom(
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 10),
+                    ),
+                  ),
+                  Consumer(builder: (ctx, r, _) {
+                    final n = r.watch(inactiveCategoriesProvider)
+                        .valueOrNull?.length ?? 0;
+                    if (n == 0) return const SizedBox.shrink();
+                    return TextButton.icon(
+                      onPressed: () => _showInactiveCategoriesSheet(ctx, r),
+                      icon:  const Icon(Icons.archive_outlined, size: 15),
+                      label: Text('Inactive ($n)'),
+                      style: TextButton.styleFrom(
+                        alignment: Alignment.centerLeft,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 10),
+                      ),
+                    );
+                  }),
+                ],
               ),
             ),
           ),
@@ -933,14 +954,36 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-              child: TextButton.icon(
-                onPressed: () => _showAddCategorySheet(context, ref),
-                icon:  const Icon(Icons.add_circle_outline, size: 16),
-                label: const Text('Add Category'),
-                style: TextButton.styleFrom(
-                  alignment: Alignment.centerLeft,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                ),
+              child: Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: () => _showAddCategorySheet(context, ref),
+                    icon:  const Icon(Icons.add_circle_outline, size: 16),
+                    label: const Text('Add Category'),
+                    style: TextButton.styleFrom(
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 10),
+                    ),
+                  ),
+                  const Spacer(),
+                  // Only surfaced when there is something to restore, so an
+                  // inactive category is never a dead end.
+                  Consumer(builder: (ctx, r, _) {
+                    final n = r.watch(inactiveCategoriesProvider)
+                        .valueOrNull?.length ?? 0;
+                    if (n == 0) return const SizedBox.shrink();
+                    return TextButton.icon(
+                      onPressed: () => _showInactiveCategoriesSheet(ctx, r),
+                      icon:  const Icon(Icons.archive_outlined, size: 15),
+                      label: Text('Inactive ($n)'),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 10),
+                      ),
+                    );
+                  }),
+                ],
               ),
             ),
           ),
@@ -1338,6 +1381,120 @@ String _availBreakdown(BudgetEntry e, DateTime month) {
       '${e.isCcPayment ? 'reserved' : e.activity < 0 ? 'spent' : 'inflow'}\n');
   b.write('= ${f.format(e.balance)} available');
   return b.toString();
+}
+
+// ---------------------------------------------------------------------------
+// Inactive categories sheet — browse and reactivate
+// ---------------------------------------------------------------------------
+
+void _showInactiveCategoriesSheet(BuildContext context, WidgetRef ref) {
+  showModalBottomSheet(
+    context:            context,
+    isScrollControlled: true,
+    useSafeArea:        true,
+    builder:            (_) => const _InactiveCategoriesSheet(),
+  );
+}
+
+class _InactiveCategoriesSheet extends ConsumerWidget {
+  const _InactiveCategoriesSheet();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs    = Theme.of(context).colorScheme;
+    final async = ref.watch(inactiveCategoriesProvider);
+
+    return Container(
+      decoration: BoxDecoration(
+        color:        cs.surfaceContainerHigh,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+      constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color:        cs.onSurfaceVariant.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text('Inactive Categories',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 20, fontWeight: FontWeight.w800,
+                  color: cs.onSurface)),
+          const SizedBox(height: 4),
+          Text(
+            'Hidden from the budget and the transaction picker. '
+            'History is kept, and any leftover balance returned to '
+            'To Be Budgeted.',
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 12, color: cs.onSurfaceVariant),
+          ),
+          const SizedBox(height: 16),
+          Flexible(
+            child: async.when(
+              loading: () => const Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              ),
+              error: (e, _) => Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text('Could not load: $e',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, color: cs.error)),
+              ),
+              data: (cats) => cats.isEmpty
+                  ? Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 24),
+                      child: Text('No inactive categories.',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13, color: cs.onSurfaceVariant)),
+                    )
+                  : ListView.separated(
+                      shrinkWrap: true,
+                      itemCount:  cats.length,
+                      separatorBuilder: (_, __) => Divider(
+                          height: 1,
+                          color: cs.outlineVariant.withValues(alpha: 0.4)),
+                      itemBuilder: (ctx, i) {
+                        final c = cats[i];
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(c.name,
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: cs.onSurface)),
+                          subtitle: c.groupName.isEmpty
+                              ? null
+                              : Text(c.groupName,
+                                  style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 11,
+                                      color: cs.onSurfaceVariant)),
+                          trailing: TextButton.icon(
+                            onPressed: () => ref
+                                .read(budgetProvider.notifier)
+                                .setCategoryActive(c.id, true),
+                            icon:  const Icon(Icons.undo, size: 15),
+                            label: const Text('Reactivate'),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3095,6 +3252,36 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
                 ),
               ),
             const SizedBox(height: 16),
+
+            // Make inactive — keeps history, returns any balance to TBB
+            if (!widget.entry.isCcPayment) ...[
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await widget.ref
+                      .read(budgetProvider.notifier)
+                      .setCategoryActive(widget.entry.categoryId, false);
+                  if (context.mounted) Navigator.pop(context);
+                },
+                icon: const Icon(Icons.archive_outlined, size: 16),
+                label: Text('Make Inactive',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w600)),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Hides it from the budget and the transaction picker. '
+                'History is kept and any leftover balance returns to '
+                'To Be Budgeted. Reactivate any time from the budget screen.',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11, color: cs.onSurfaceVariant),
+              ),
+              const SizedBox(height: 16),
+            ],
 
             // Carry overspend toggle
             if (!widget.entry.isCcPayment)
