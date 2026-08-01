@@ -657,8 +657,11 @@ class _PanelEntryRow extends StatelessWidget {
             ),
           ),
           _PanelNum(entry.activity, cs.onSurfaceVariant),
-          _PanelNum(entry.balance, availColor, bold: true,
-              bg: cs.tertiary.withValues(alpha: 0.07)),
+          Tooltip(
+            message: _availBreakdown(entry, month),
+            child: _PanelNum(entry.balance, availColor, bold: true,
+                bg: cs.tertiary.withValues(alpha: 0.07)),
+          ),
           // Fixed-width slot so the numeric columns stay tabulated whether or
           // not a given row is overspent.
           SizedBox(
@@ -1320,6 +1323,23 @@ class _TbbLine extends StatelessWidget {
   }
 }
 
+/// Spells out how Available was reached. Available is
+/// carried-in + budgeted + activity, but only the last two have columns, so
+/// a row with a carry-in looks like broken arithmetic without this.
+String _availBreakdown(BudgetEntry e, DateTime month) {
+  final f  = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+  final prev = DateFormat('MMM').format(DateTime(month.year, month.month - 1));
+  final b = StringBuffer();
+  if (e.carriedIn != 0) {
+    b.write('${f.format(e.carriedIn)} carried in from $prev\n');
+  }
+  b.write('${e.budgeted < 0 ? '−' : '+'} ${f.format(e.budgeted.abs())} budgeted\n');
+  b.write('${e.activity < 0 ? '−' : '+'} ${f.format(e.activity.abs())} '
+      '${e.isCcPayment ? 'reserved' : e.activity < 0 ? 'spent' : 'inflow'}\n');
+  b.write('= ${f.format(e.balance)} available');
+  return b.toString();
+}
+
 // ---------------------------------------------------------------------------
 // Overspend carry arrow — inline toggle on an overspent category row
 // ---------------------------------------------------------------------------
@@ -1897,8 +1917,11 @@ class _CategoryTableRow extends ConsumerWidget {
                 ] else
                   _NumCell(entry.budgeted, cs.onSurface,
                       bg: cs.primary.withValues(alpha: 0.07)),
-                _NumCell(entry.balance, availColor, bold: true,
-                    bg: cs.tertiary.withValues(alpha: 0.07)),
+                Tooltip(
+                  message: _availBreakdown(entry, month),
+                  child: _NumCell(entry.balance, availColor, bold: true,
+                      bg: cs.tertiary.withValues(alpha: 0.07)),
+                ),
                 if (isOverspent && !entry.isCcPayment)
                   _CarryOverspendArrow(entry: entry)
                 else
@@ -2369,6 +2392,35 @@ class _CategoryTxPanel extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── Carried-in line ──
+          // Available = carried-in + budgeted + activity, but only the latter
+          // two get columns; without this the row reads as bad arithmetic.
+          if (entry.carriedIn != 0)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 16, 0),
+              child: Row(
+                children: [
+                  Text(
+                    'Carried in from '
+                    '${DateFormat('MMM').format(DateTime(month.year, month.month - 1))}',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: cs.onSurfaceVariant),
+                  ),
+                  const Spacer(),
+                  Text(
+                    NumberFormat.currency(symbol: '\$', decimalDigits: 2)
+                        .format(entry.carriedIn),
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: entry.carriedIn < 0 ? cs.error : cs.tertiary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           // ── Inline budget editor (primary on narrow, secondary on wide) ──
           _InlineBudgetAmount(entry: entry, compact: false),
           // ── Transaction list ──
@@ -2839,6 +2891,12 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
             // Stats row
             Row(
               children: [
+                if (widget.entry.carriedIn != 0)
+                  _StatCell(
+                    label: 'Carried in',
+                    value: fmt.format(widget.entry.carriedIn),
+                    color: widget.entry.carriedIn < 0 ? cs.error : cs.tertiary,
+                  ),
                 _StatCell(label: 'Budgeted', value: fmt.format(widget.entry.budgeted),       color: cs.primary),
                 // A CC envelope is filled by card spending rather than drained
                 // by it, so "Spent" would always read $0 here.

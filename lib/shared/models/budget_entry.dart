@@ -91,6 +91,10 @@ class BudgetEntry {
   final double balance;    // budgeted + activity
   final bool isCcPayment;
   final bool carryOverspend;
+  /// Balance rolled in from previous months. Available is
+  /// [carriedIn] + [budgeted] + [activity], so without this the three
+  /// displayed columns look like they do not add up.
+  final double carriedIn;
   final BudgetGoal? goal;
   final int? iconCodePoint;
   /// Non-null for CC payment envelopes — the linked CC account ID.
@@ -108,6 +112,7 @@ class BudgetEntry {
     required this.balance,
     required this.isCcPayment,
     required this.carryOverspend,
+    this.carriedIn = 0,
     this.goal,
     this.iconCodePoint,
     this.ccAccountId,

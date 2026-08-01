@@ -740,6 +740,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
           balance:             balance,
           isCcPayment:         c['is_cc_payment'] as bool? ?? false,
           carryOverspend:      carryOver,
+          carriedIn:           carry,
           goal:                goalMap[catId],
           iconCodePoint:       c['icon_codepoint'] as int?,
           ccAccountId:         c['linked_account_id'] as String?,
