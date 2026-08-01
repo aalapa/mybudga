@@ -447,10 +447,14 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       // 1. category groups + categories
       client
           .from('category_groups')
-          .select('id, name, sort_order, categories(id, name, sort_order, icon_codepoint, is_cc_payment, overspending_behavior, rollover_behavior, is_hidden, linked_account_id)')
+          .select('id, name, sort_order, categories(id, name, sort_order, icon_codepoint, is_cc_payment, overspending_behavior, rollover_behavior, is_hidden, deleted_at, linked_account_id)')
           .eq('household_id', householdId)
           .eq('is_hidden', false)
           .isFilter('deleted_at', null)
+          // deleted_at above applies to the group; the embedded categories
+          // need their own filter or soft-deleted ones keep rendering (and
+          // keep counting against TBB).
+          .isFilter('categories.deleted_at', null)
           .order('sort_order')
           .order('sort_order', referencedTable: 'categories'),
 
@@ -542,8 +546,13 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     final activityMap = <String, double>{};
     for (final tx in results[2] as List) {
       final catId      = tx['category_id'] as String?;
+      final transferId = tx['transfer_id'] as String?;
       final isTracking = (tx['accounts']   as Map?)?['is_tracking'] as bool? ?? false;
-      if (catId == null || isTracking) continue;
+      // Must match the past-month filter below. No code path currently writes
+      // a category onto a transfer, but if one ever did (or data is edited
+      // directly), the amount would count this month and then vanish when the
+      // month rolled over, silently shifting the category's Available.
+      if (catId == null || transferId != null || isTracking) continue;
       activityMap[catId] =
           (activityMap[catId] ?? 0.0) + (tx['amount'] as num).toDouble();
     }
@@ -701,7 +710,8 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       // Sort categories client-side — the nested .order() on a PostgREST
       // embedded relation is not reliably honoured by all client versions.
       final catsRaw = (gMap['categories'] as List? ?? [])
-          .where((c) => (c as Map)['is_hidden'] != true)
+          .where((c) =>
+              (c as Map)['is_hidden'] != true && c['deleted_at'] == null)
           .toList()
           ..sort((a, b) {
             final ao = (a as Map)['sort_order'] as int? ?? 0;
