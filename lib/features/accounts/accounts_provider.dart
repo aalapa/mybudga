@@ -5,6 +5,7 @@ import '../../core/supabase/supabase_provider.dart';
 import '../../shared/models/account.dart';
 import '../../shared/models/transaction.dart';
 import '../../shared/providers/household_provider.dart';
+import '../../shared/providers/categories_provider.dart';
 
 class AccountsNotifier extends AsyncNotifier<List<Account>> {
   @override
@@ -56,6 +57,18 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
     final householdId = await ref.read(householdIdProvider.future);
     final client      = ref.read(supabaseProvider);
 
+    final isCcType = type == AccountType.creditCard ||
+                     type == AccountType.lineOfCredit;
+
+    // A card opened with money already owed records that debt as a real charge
+    // on the card (see below) rather than as a bare opening balance. The charge
+    // is what makes the debt visible to the payment envelope, which is computed
+    // from the card's transactions. The account therefore opens at zero and the
+    // charge produces the balance via update_account_balance(); seeding both
+    // would land the card at twice what is owed.
+    final seedsDebt = isCcType && !isTracking && startingBalance != 0;
+    final openingBalance = seedsDebt ? 0.0 : startingBalance;
+
     // Insert the account and get its new ID back.
     final res = await client.from('accounts').insert({
       'household_id':     householdId,
@@ -64,8 +77,8 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
       'account_type':     type.toDb,
       'is_tracking':      isTracking,
       'last_four':        lastFour?.isNotEmpty == true ? lastFour : null,
-      'starting_balance': startingBalance,
-      'current_balance':  startingBalance,
+      'starting_balance': openingBalance,
+      'current_balance':  openingBalance,
       if (startDate != null)
         'start_date': '${startDate.year}-'
             '${startDate.month.toString().padLeft(2, '0')}-'
@@ -90,14 +103,12 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
         type == AccountType.lineOfCredit ||
         type == AccountType.mortgage ||
         type == AccountType.loan;
-    if (isLiability && startingBalance != 0) {
+    if (isLiability && startingBalance != 0 && !seedsDebt) {
       await client.from('accounts')
           .update({'current_balance': startingBalance, 'starting_balance': startingBalance})
           .eq('id', res['id'] as String);
     }
 
-    final isCcType = type == AccountType.creditCard ||
-                     type == AccountType.lineOfCredit;
     if (!isTracking && !isCcType && startingBalance != 0) {
       final txDate  = startDate ?? DateTime.now();
       final dateStr = '${txDate.year}-'
@@ -120,6 +131,71 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
     // the create_cc_payment_category() DB trigger creates it in the
     // "Credit Card Payments" group with linked_account_id pointing back here.
     // Do not create one from Dart or the card ends up with two envelopes.
+
+    // Debt carried in from before budgeting gets its own category, because no
+    // future charge will ever fund it — it predates every category you have.
+    // Recording it as a charge on the card routes it through the normal path:
+    // the payment envelope reserves it like any other charge, so the envelope
+    // matches what is actually owed without any special-casing in the budget.
+    //
+    // The category is carry_forward on purpose. It opens at minus the balance,
+    // and under the default reduce_tbb the month-end walk would charge that
+    // whole shortfall to To Be Budgeted and wipe it out. Carrying it instead
+    // leaves the negative with the category, to be paid down by assigning to
+    // it over time.
+    if (seedsDebt) {
+      final accountId = res['id'] as String;
+      final label     = (nickname?.trim().isNotEmpty == true
+          ? nickname!.trim()
+          : name.trim());
+
+      // Same group the CC payment trigger uses, created here for a line of
+      // credit since that trigger only fires for credit_card.
+      final grpRows = await client
+          .from('category_groups')
+          .select('id')
+          .eq('household_id', householdId)
+          .eq('name', 'Credit Card Payments')
+          .isFilter('deleted_at', null)
+          .limit(1);
+
+      final String groupId;
+      if ((grpRows as List).isNotEmpty) {
+        groupId = grpRows[0]['id'] as String;
+      } else {
+        final grpRes = await client.from('category_groups').insert({
+          'household_id': householdId,
+          'name':         'Credit Card Payments',
+          'sort_order':   9999,
+        }).select('id').single();
+        groupId = grpRes['id'] as String;
+      }
+
+      final catRes = await client.from('categories').insert({
+        'household_id':          householdId,
+        'category_group_id':     groupId,
+        'name':                  '$label pre-budget debt',
+        'overspending_behavior': 'carry_forward',
+        'sort_order':            20,
+      }).select('id').single();
+
+      final txDate  = startDate ?? DateTime.now();
+      final dateStr = '${txDate.year}-'
+          '${txDate.month.toString().padLeft(2, '0')}-'
+          '${txDate.day.toString().padLeft(2, '0')}';
+
+      await client.from('transactions').insert({
+        'household_id': householdId,
+        'account_id':   accountId,
+        'category_id':  catRes['id'] as String,
+        'amount':       -startingBalance.abs(),
+        'date':         dateStr,
+        'status':       'confirmed',
+        'memo':         'Balance carried in before budgeting',
+      });
+
+      ref.invalidate(categoriesProvider);
+    }
 
     ref.invalidateSelf();
   }

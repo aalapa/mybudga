@@ -625,6 +625,13 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     for (final row in results[1] as List) {
       final catId = row['category_id'] as String;
       if (!visibleCatIds.contains(catId)) continue;
+      // A card-linked envelope is funded solely by that card's charges, so an
+      // assigned amount is never part of it. Dropping it here rather than just
+      // from the balance also keeps it out of totalBudgeted, so anything
+      // previously assigned flows back to TBB instead of being stranded in an
+      // envelope that no longer counts it. Debt predating the budget is
+      // handled by its own pre-budget debt category, not by assigning here.
+      if (ccLinkMap.containsKey(catId)) continue;
       budgetMap[catId] = (row['budgeted'] as num).toDouble();
     }
 
@@ -660,6 +667,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     for (final row in results[4] as List) {
       final catId = row['category_id'] as String?;
       if (catId == null || !visibleCatIds.contains(catId)) continue;
+      if (ccLinkMap.containsKey(catId)) continue; // see budgetMap above
       final mKey = _monthKeyOf(row['month'] as String);
       (pastBudget[catId] ??= {})[mKey] =
           ((pastBudget[catId]![mKey]) ?? 0.0) + (row['budgeted'] as num).toDouble();

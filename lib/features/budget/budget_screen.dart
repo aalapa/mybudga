@@ -2254,6 +2254,28 @@ class _InlineBudgetAmountState extends ConsumerState<_InlineBudgetAmount> {
       );
     }
 
+    // A card-linked envelope is funded by the card's charges, never by
+    // assignment, so there is nothing to edit here.
+    if (widget.entry.ccAccountId != null) {
+      return Tooltip(
+        message: 'Funded automatically by charges on the linked card',
+        child: SizedBox(
+          width: widget.width,
+          child: Text(
+            widget.abbreviate
+                ? _PanelNum.fmtAbbrev(0)
+                : fmt.format(0),
+            textAlign: TextAlign.right,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: cs.onSurfaceVariant.withValues(alpha: 0.4),
+            ),
+          ),
+        ),
+      );
+    }
+
     return GestureDetector(
       onTap: _startEdit,
       // Without this the hit test defers to the child, so only the digits
@@ -3240,99 +3262,64 @@ class _CategoryDetailSheetState extends ConsumerState<_CategoryDetailSheet> {
               const SizedBox(height: 16),
             ],
 
-            // Over-funding warning. Charges on the card already move money into
-            // this envelope, so anything assigned here sits on top of that —
-            // the envelope shows more than the card is owed and TBB is short by
-            // the difference. Only genuinely wanted for paying down debt that
-            // predates budgeting.
-            if (entry.ccAccountId != null && entry.budgeted > 0) ...[
+            // A card-linked envelope has no Budget field: charging the card is
+            // what funds it, and assigning on top would fund the same bill
+            // twice. Debt from before budgeting lives in its own category.
+            if (entry.ccAccountId != null) ...[
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                 decoration: BoxDecoration(
-                  color: cs.errorContainer.withValues(alpha: 0.3),
+                  color: cs.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: cs.error.withValues(alpha: 0.35)),
                 ),
-                child: Column(
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Icon(Icons.info_outline, size: 16, color: cs.error),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text('Funded twice',
-                              style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                  color: cs.error)),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Spending on this card already sets money aside here '
-                      '(${fmt.format(entry.reserved)} this month). The '
-                      '${fmt.format(entry.budgeted)} assigned on top is only '
-                      'needed to pay down a balance from before you started '
-                      'budgeting.',
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 12, color: cs.onSurfaceVariant),
-                    ),
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        await ref
-                            .read(budgetProvider.notifier)
-                            .setBudgeted(entry.categoryId, 0,
-                                month: widget.month);
-                        _budgetCtrl.text = '';
-                      },
-                      icon: const Icon(Icons.undo, size: 15),
-                      label: Text(
-                          'Return ${fmt.format(entry.budgeted)} to To Be Budgeted',
-                          style: GoogleFonts.plusJakartaSans(fontSize: 12)),
-                      style: OutlinedButton.styleFrom(
-                        minimumSize: const Size.fromHeight(40),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
+                    Icon(Icons.bolt_outlined, size: 16, color: cs.primary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Funded automatically. Spending on this card moves '
+                        'money here from whichever category you charged, so '
+                        'there is nothing to assign.',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12, color: cs.onSurfaceVariant),
                       ),
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 16),
-            ],
-
-            // Budget amount input (extra amount beyond auto-reserved, e.g. to pay off old debt)
-            TextField(
-              controller: _budgetCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              textInputAction: TextInputAction.done,
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
-              ],
-              onSubmitted: (_) => _saveBudget(),
-              decoration: InputDecoration(
-                labelText: entry.isCcPayment
-                    ? 'Extra budget (e.g. to pay down old debt)'
-                    : 'Budget amount',
-                prefixText: '\$ ',
+            ] else ...[
+              TextField(
+                controller: _budgetCtrl,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                textInputAction: TextInputAction.done,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+                ],
+                onSubmitted: (_) => _saveBudget(),
+                decoration: const InputDecoration(
+                  labelText: 'Budget amount',
+                  prefixText: '\$ ',
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: _saving ? null : _saveBudget,
-              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-              child: _saving
-                  ? const SizedBox(
-                      width: 16, height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Save'),
-            ),
-            const SizedBox(height: 16),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: _saving ? null : _saveBudget,
+                style:
+                    FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+                child: _saving
+                    ? const SizedBox(
+                        width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Save'),
+              ),
+              const SizedBox(height: 16),
+            ],
 
             // Goal section
             if (entry.goal != null)
