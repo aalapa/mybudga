@@ -3280,6 +3280,42 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
               ),
             const SizedBox(height: 16),
 
+            // Manage actions. This sheet is the only surface reachable from
+            // the 3-column view, so it carries the full set — previously
+            // Rename, Icon and Delete lived solely in the expanded row, which
+            // exists only in the single-month layout.
+            Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: [
+                _PanelAction(
+                  icon:  Icons.drive_file_rename_outline,
+                  label: 'Rename',
+                  onTap: () => _showRenameCategoryDialog(
+                      context, widget.ref, widget.entry),
+                ),
+                _PanelAction(
+                  icon: widget.entry.iconCodePoint != null
+                      ? Icons.emoji_emotions_outlined
+                      : Icons.add_reaction_outlined,
+                  label: 'Icon',
+                  onTap: () => _showCategoryIconPicker(
+                      context, widget.ref, widget.entry),
+                ),
+                _PanelAction(
+                  icon:  Icons.delete_outline,
+                  label: 'Delete',
+                  isDestructive: true,
+                  onTap: () async {
+                    final deleted = await _showDeleteCategoryDialog(
+                        context, widget.ref, widget.entry);
+                    if (deleted && context.mounted) Navigator.pop(context);
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
             // Make inactive — keeps history, returns any balance to TBB
             if (!widget.entry.isCcPayment) ...[
               OutlinedButton.icon(
@@ -4123,9 +4159,11 @@ void _showRenameCategoryDialog(
   );
 }
 
-void _showDeleteCategoryDialog(
-    BuildContext context, WidgetRef ref, BudgetEntry entry) {
-  showDialog(
+/// Resolves true when the category was deleted, so a caller showing this from
+/// inside a sheet can dismiss itself rather than sit on a dead category.
+Future<bool> _showDeleteCategoryDialog(
+    BuildContext context, WidgetRef ref, BudgetEntry entry) async {
+  final deleted = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
       title: Text('Delete "${entry.categoryName}"?',
@@ -4137,7 +4175,7 @@ void _showDeleteCategoryDialog(
       ),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(ctx),
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel')),
         FilledButton(
           style: FilledButton.styleFrom(
@@ -4146,13 +4184,14 @@ void _showDeleteCategoryDialog(
             await ref
                 .read(budgetProvider.notifier)
                 .deleteCategory(entry.categoryId);
-            if (ctx.mounted) Navigator.pop(ctx);
+            if (ctx.mounted) Navigator.pop(ctx, true);
           },
           child: const Text('Delete'),
         ),
       ],
     ),
   );
+  return deleted ?? false;
 }
 
 // ---------------------------------------------------------------------------
