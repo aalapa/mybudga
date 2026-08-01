@@ -382,6 +382,9 @@ class _PanelContentState extends State<_PanelContent> {
         SliverToBoxAdapter(
           child: _PanelColHeaders(
             totalBudgeted:  state.totalBudgeted,
+            totalActivity:  state.groups
+                .expand((g) => g.entries)
+                .fold(0.0, (s, e) => s + e.activity),
             totalAvailable: state.groups.fold(0.0, (s, g) => s + g.balance),
           ),
         ),
@@ -427,8 +430,13 @@ class _PanelContentState extends State<_PanelContent> {
 
 class _PanelColHeaders extends StatelessWidget {
   final double totalBudgeted;
+  final double totalActivity;
   final double totalAvailable;
-  const _PanelColHeaders({required this.totalBudgeted, required this.totalAvailable});
+  const _PanelColHeaders({
+    required this.totalBudgeted,
+    required this.totalActivity,
+    required this.totalAvailable,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -444,9 +452,10 @@ class _PanelColHeaders extends StatelessWidget {
       child: Row(
         children: [
           const Expanded(child: SizedBox()),
-          _PanelColLabel('BUDGET', bg: cs.primary.withValues(alpha: 0.07),
+          _PanelColLabel('BUDGET',   bg: cs.primary.withValues(alpha: 0.07),
               total: totalBudgeted, cs: cs),
-          _PanelColLabel('AVAIL',  bg: cs.tertiary.withValues(alpha: 0.07),
+          _PanelColLabel('ACTIVITY', total: totalActivity, cs: cs),
+          _PanelColLabel('AVAIL',    bg: cs.tertiary.withValues(alpha: 0.07),
               total: totalAvailable, cs: cs),
         ],
       ),
@@ -523,6 +532,7 @@ class _PanelGroupRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs    = Theme.of(context).colorScheme;
     final totalBudgeted  = group.entries.fold(0.0, (s, e) => s + e.budgeted);
+    final totalActivity  = group.entries.fold(0.0, (s, e) => s + e.activity);
     final totalAvailable = group.entries.fold(0.0, (s, e) => s + e.balance);
 
     return InkWell(
@@ -547,6 +557,7 @@ class _PanelGroupRow extends StatelessWidget {
             ),
             _PanelNum(totalBudgeted, cs.onSurfaceVariant,
                 bg: cs.primary.withValues(alpha: 0.07)),
+            _PanelNum(totalActivity, cs.onSurfaceVariant),
             _PanelNum(
               totalAvailable,
               totalAvailable < 0 ? cs.error : cs.onSurfaceVariant,
@@ -625,6 +636,7 @@ class _PanelEntryRow extends StatelessWidget {
           ),
           _PanelNum(entry.budgeted, cs.onSurface,
               bg: cs.primary.withValues(alpha: 0.07)),
+          _PanelNum(entry.activity, cs.onSurfaceVariant),
           _PanelNum(entry.balance, availColor, bold: true,
               bg: cs.tertiary.withValues(alpha: 0.07)),
         ],
