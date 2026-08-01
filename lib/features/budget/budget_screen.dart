@@ -3240,6 +3240,71 @@ class _CategoryDetailSheetState extends ConsumerState<_CategoryDetailSheet> {
               const SizedBox(height: 16),
             ],
 
+            // Over-funding warning. Charges on the card already move money into
+            // this envelope, so anything assigned here sits on top of that —
+            // the envelope shows more than the card is owed and TBB is short by
+            // the difference. Only genuinely wanted for paying down debt that
+            // predates budgeting.
+            if (entry.ccAccountId != null && entry.budgeted > 0) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                decoration: BoxDecoration(
+                  color: cs.errorContainer.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: cs.error.withValues(alpha: 0.35)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.info_outline, size: 16, color: cs.error),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text('Funded twice',
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: cs.error)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Spending on this card already sets money aside here '
+                      '(${fmt.format(entry.reserved)} this month). The '
+                      '${fmt.format(entry.budgeted)} assigned on top is only '
+                      'needed to pay down a balance from before you started '
+                      'budgeting.',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12, color: cs.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        await ref
+                            .read(budgetProvider.notifier)
+                            .setBudgeted(entry.categoryId, 0,
+                                month: widget.month);
+                        _budgetCtrl.text = '';
+                      },
+                      icon: const Icon(Icons.undo, size: 15),
+                      label: Text(
+                          'Return ${fmt.format(entry.budgeted)} to To Be Budgeted',
+                          style: GoogleFonts.plusJakartaSans(fontSize: 12)),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(40),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
             // Budget amount input (extra amount beyond auto-reserved, e.g. to pay off old debt)
             TextField(
               controller: _budgetCtrl,

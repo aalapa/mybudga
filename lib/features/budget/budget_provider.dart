@@ -266,6 +266,19 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
         }
     }
 
+    // A card-linked envelope funds itself from that card's charges, so
+    // assigning to it here would fund it a second time — the user ends up with
+    // twice the charge available and TBB short by the difference. Excluded
+    // from every strategy, not just one: currentMonth and lastMonth copy
+    // budgeted amounts forward, so a single stray value propagates onward, and
+    // coverSpending reads `spent`, which for these envelopes is the payment.
+    final autoFunded = <String>{
+      for (final e in (state.valueOrNull?.groups ?? const <BudgetGroupData>[])
+          .expand((g) => g.entries))
+        if (e.ccAccountId != null) e.categoryId,
+    };
+    amounts.removeWhere((catId, _) => autoFunded.contains(catId));
+
     if (amounts.isEmpty) return;
 
     // ── Upsert for each target month ──────────────────────────────────────
