@@ -434,7 +434,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       // 1. category groups + categories
       client
           .from('category_groups')
-          .select('id, name, sort_order, categories(id, name, sort_order, icon_codepoint, is_cc_payment, overspending_behavior, is_hidden)')
+          .select('id, name, sort_order, categories(id, name, sort_order, icon_codepoint, is_cc_payment, overspending_behavior, is_hidden, cc_account_id)')
           .eq('household_id', householdId)
           .eq('is_hidden', false)
           .isFilter('deleted_at', null)
@@ -521,6 +521,68 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
           (carryForwardMap[catId] ?? 0.0) + (tx['amount'] as num).toDouble();
     }
 
+    // ── CC payment: YNAB-style linked envelope ───────────────────────────────────
+    // For any category that has cc_account_id set, its activity is driven
+    // entirely by the CC account's transactions:
+    //   • CC purchases (amount < 0) → contribute positively (money reserved to pay)
+    //   • CC payment transfers (amount > 0) → contribute negatively (card paid off)
+    // This replaces any direct transaction activity for those categories.
+    final ccLinkMap = <String, String>{}; // catId → ccAccountId
+    for (final gRaw in results[0] as List) {
+      for (final cRaw in ((gRaw as Map)['categories'] as List? ?? [])) {
+        final c = cRaw as Map<String, dynamic>;
+        final ccAccId = c['cc_account_id'] as String?;
+        if (ccAccId != null) ccLinkMap[c['id'] as String] = ccAccId;
+      }
+    }
+
+    if (ccLinkMap.isNotEmpty) {
+      final ccAccountIds = ccLinkMap.values.toSet().toList();
+
+      final ccTxResults = await Future.wait([
+        // Current-month CC account transactions
+        client
+            .from('transactions')
+            .select('account_id, amount')
+            .eq('household_id', householdId)
+            .inFilter('account_id', ccAccountIds)
+            .gte('date', monthStr)
+            .lt('date', nextMonthStr)
+            .eq('status', 'confirmed')
+            .isFilter('deleted_at', null),
+        // Pre-month CC account transactions (carry-forward)
+        client
+            .from('transactions')
+            .select('account_id, amount')
+            .eq('household_id', householdId)
+            .inFilter('account_id', ccAccountIds)
+            .lt('date', monthStr)
+            .eq('status', 'confirmed')
+            .isFilter('deleted_at', null),
+      ]);
+
+      // Accumulate: CC activity = -sum(CC txns) so spending adds, payments deduct.
+      final ccCurAct  = <String, double>{};
+      final ccPastAct = <String, double>{};
+      for (final tx in ccTxResults[0] as List) {
+        final aid = tx['account_id'] as String;
+        ccCurAct[aid] = (ccCurAct[aid] ?? 0.0) - (tx['amount'] as num).toDouble();
+      }
+      for (final tx in ccTxResults[1] as List) {
+        final aid = tx['account_id'] as String;
+        ccPastAct[aid] = (ccPastAct[aid] ?? 0.0) - (tx['amount'] as num).toDouble();
+      }
+
+      for (final entry in ccLinkMap.entries) {
+        final catId = entry.key;
+        final accId = entry.value;
+        activityMap[catId]    = ccCurAct[accId] ?? 0.0;
+        // carryForwardMap already has past manually-budgeted amounts; add CC history.
+        carryForwardMap[catId] =
+            (carryForwardMap[catId] ?? 0.0) + (ccPastAct[accId] ?? 0.0);
+      }
+    }
+
     // Build groups
     final groups = <BudgetGroupData>[];
     for (final gRaw in results[0] as List) {
@@ -562,6 +624,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
           carryOverspend:      carryOver,
           goal:                goalMap[catId],
           iconCodePoint:       c['icon_codepoint'] as int?,
+          ccAccountId:         c['cc_account_id'] as String?,
         );
       }).toList();
 

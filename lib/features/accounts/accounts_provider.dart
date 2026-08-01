@@ -116,6 +116,43 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
       });
     }
 
+    // For CC budget accounts, auto-create a linked CC payment category.
+    // It lives in a "Credit Cards" group (created on demand) and is the
+    // envelope whose balance = how much you have reserved to pay the card.
+    if (isCcType && !isTracking) {
+      final accountId = res['id'] as String;
+
+      // Find or create the "Credit Cards" category group.
+      final grpRows = await client
+          .from('category_groups')
+          .select('id')
+          .eq('household_id', householdId)
+          .ilike('name', 'credit card%')
+          .isFilter('deleted_at', null)
+          .limit(1);
+
+      String groupId;
+      if ((grpRows as List).isNotEmpty) {
+        groupId = grpRows[0]['id'] as String;
+      } else {
+        final grpRes = await client.from('category_groups').insert({
+          'household_id': householdId,
+          'name':         'Credit Cards',
+          'sort_order':   9000,
+        }).select('id').single();
+        groupId = grpRes['id'] as String;
+      }
+
+      await client.from('categories').insert({
+        'household_id':      householdId,
+        'category_group_id': groupId,
+        'name':              '${name.trim()} Payment',
+        'is_cc_payment':     true,
+        'cc_account_id':     accountId,
+        'sort_order':        10,
+      });
+    }
+
     ref.invalidateSelf();
   }
 

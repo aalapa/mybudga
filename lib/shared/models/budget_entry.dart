@@ -93,6 +93,8 @@ class BudgetEntry {
   final bool carryOverspend;
   final BudgetGoal? goal;
   final int? iconCodePoint;
+  /// Non-null for CC payment envelopes — the linked CC account ID.
+  final String? ccAccountId;
 
   const BudgetEntry({
     required this.categoryId,
@@ -108,6 +110,7 @@ class BudgetEntry {
     required this.carryOverspend,
     this.goal,
     this.iconCodePoint,
+    this.ccAccountId,
   });
 
   double get spent => activity < 0 ? activity.abs() : 0;

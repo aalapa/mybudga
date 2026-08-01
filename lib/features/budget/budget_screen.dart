@@ -8,6 +8,9 @@ import '../../shared/models/transaction.dart';
 import '../insights/insights_provider.dart';
 import '../transactions/transactions_provider.dart';
 import '../insights/payee_pattern.dart';
+import '../accounts/accounts_provider.dart';
+import '../../shared/models/account.dart';
+import '../../core/supabase/supabase_provider.dart';
 import 'budget_provider.dart';
 import 'category_icons.dart';
 
@@ -1279,6 +1282,128 @@ class _TbbLine extends StatelessWidget {
               color: valueColor),
         ),
       ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CC account link tile — shown in CC payment category detail sheet
+// ---------------------------------------------------------------------------
+
+class _CcAccountLinkTile extends ConsumerWidget {
+  final BudgetEntry entry;
+  final WidgetRef ref;
+  const _CcAccountLinkTile({required this.entry, required this.ref});
+
+  Future<void> _linkAccount(BuildContext context, String accountId) async {
+    final client = ref.read(supabaseProvider);
+    await client
+        .from('categories')
+        .update({'cc_account_id': accountId})
+        .eq('id', entry.categoryId);
+    ref.invalidate(budgetProvider);
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs       = Theme.of(context).colorScheme;
+    final accounts = ref.watch(accountsProvider).valueOrNull ?? [];
+    final ccAccounts = accounts
+        .where((a) => a.isCreditCard && !a.isTracking)
+        .toList();
+
+    if (ccAccounts.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          'No credit card accounts found. Add one in Accounts.',
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 13, color: cs.onSurfaceVariant),
+        ),
+      );
+    }
+
+    final linkedAccount = entry.ccAccountId != null
+        ? ccAccounts.where((a) => a.id == entry.ccAccountId).firstOrNull
+        : null;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+      decoration: BoxDecoration(
+        color: entry.ccAccountId != null
+            ? cs.primaryContainer.withValues(alpha: 0.3)
+            : cs.errorContainer.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: entry.ccAccountId != null
+              ? cs.primary.withValues(alpha: 0.25)
+              : cs.error.withValues(alpha: 0.35),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            entry.ccAccountId != null
+                ? Icons.link_rounded
+                : Icons.link_off_rounded,
+            size: 18,
+            color: entry.ccAccountId != null ? cs.primary : cs.error,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  entry.ccAccountId != null ? 'Linked CC account' : 'Not linked to a CC account',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: entry.ccAccountId != null ? cs.primary : cs.error,
+                  ),
+                ),
+                if (linkedAccount != null)
+                  Text(
+                    linkedAccount.displayName,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13, color: cs.onSurface),
+                  )
+                else
+                  Text(
+                    'Link it so spending on the card auto-fills this envelope',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, color: cs.onSurfaceVariant),
+                  ),
+              ],
+            ),
+          ),
+          PopupMenuButton<String>(
+            icon: Icon(Icons.edit_outlined, size: 16,
+                color: cs.onSurfaceVariant),
+            tooltip: 'Link to account',
+            onSelected: (id) => _linkAccount(context, id),
+            itemBuilder: (_) => ccAccounts
+                .map((a) => PopupMenuItem<String>(
+                      value: a.id,
+                      child: Row(
+                        children: [
+                          Icon(Icons.credit_card_outlined,
+                              size: 16, color: cs.primary),
+                          const SizedBox(width: 8),
+                          Text(a.displayName,
+                              style: GoogleFonts.plusJakartaSans(fontSize: 14)),
+                        ],
+                      ),
+                    ))
+                .toList(),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -2629,7 +2754,13 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
             ),
             const SizedBox(height: 24),
 
-            // Budget amount input
+            // CC payment link section — shown for CC payment envelopes
+            if (widget.entry.isCcPayment) ...[
+              _CcAccountLinkTile(entry: widget.entry, ref: widget.ref),
+              const SizedBox(height: 16),
+            ],
+
+            // Budget amount input (extra amount beyond auto-reserved, e.g. to pay off old debt)
             TextField(
               controller: _budgetCtrl,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -2638,8 +2769,10 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
                 FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
               ],
               onSubmitted: (_) => _saveBudget(),
-              decoration: const InputDecoration(
-                labelText: 'Budget amount',
+              decoration: InputDecoration(
+                labelText: widget.entry.isCcPayment
+                    ? 'Extra budget (e.g. to pay down old debt)'
+                    : 'Budget amount',
                 prefixText: '\$ ',
               ),
             ),
