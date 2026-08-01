@@ -128,10 +128,17 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
   // Set budgeted amount for a category
   // ---------------------------------------------------------------------------
 
-  Future<void> setBudgeted(String categoryId, double amount) async {
+  /// Assigns [amount] to [categoryId]. Defaults to the month currently being
+  /// viewed; the 3-column view passes its own panel's month explicitly so an
+  /// edit in the previous/next panel lands where the user is looking.
+  Future<void> setBudgeted(
+    String categoryId,
+    double amount, {
+    DateTime? month,
+  }) async {
     final householdId = await ref.read(householdIdProvider.future);
     final client      = ref.read(supabaseProvider);
-    final monthStr    = _toMonthString(_month);
+    final monthStr    = _toMonthString(month ?? _month);
 
     await client.from('budget_months').upsert({
       'household_id': householdId,

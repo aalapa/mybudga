@@ -248,7 +248,9 @@ class _MonthPanel extends StatelessWidget {
       _ => const SizedBox.shrink(),
     };
     if (!isPast) return inner;
-    return Opacity(opacity: 0.52, child: inner);
+    // Past months stay de-emphasised, but not so faint that the now-editable
+    // budget field is hard to read while typing into it.
+    return Opacity(opacity: 0.72, child: inner);
   }
 }
 
@@ -403,7 +405,9 @@ class _PanelContentState extends State<_PanelContent> {
                       onTap:      () => _toggleGroup(row.group.id),
                     )
                   : _PanelEntryRow(
-                      entry: row.entry!, isCurrent: widget.isCurrent);
+                      entry:     row.entry!,
+                      isCurrent: widget.isCurrent,
+                      month:     state.month);
             },
           ),
         ),
@@ -578,7 +582,12 @@ class _PanelGroupRow extends StatelessWidget {
 class _PanelEntryRow extends StatelessWidget {
   final BudgetEntry entry;
   final bool isCurrent;
-  const _PanelEntryRow({required this.entry, required this.isCurrent});
+  final DateTime month;
+  const _PanelEntryRow({
+    required this.entry,
+    required this.isCurrent,
+    required this.month,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -638,8 +647,14 @@ class _PanelEntryRow extends StatelessWidget {
               ],
             ),
           ),
-          _PanelNum(entry.budgeted, cs.onSurface,
-              bg: cs.primary.withValues(alpha: 0.07)),
+          ColoredBox(
+            color: cs.primary.withValues(alpha: 0.07),
+            child: _InlineBudgetAmount(
+              entry: entry,
+              month: month,
+              width: _kPanelColW,
+            ),
+          ),
           _PanelNum(entry.activity, cs.onSurfaceVariant),
           _PanelNum(entry.balance, availColor, bold: true,
               bg: cs.tertiary.withValues(alpha: 0.07)),
@@ -1927,8 +1942,18 @@ class _CategoryTableRow extends ConsumerWidget {
 class _InlineBudgetAmount extends ConsumerStatefulWidget {
   final BudgetEntry entry;
   final bool compact;
+  /// Month this cell writes to. The 3-column view renders three panels at
+  /// once, so the notifier's "current" month is not necessarily this one.
+  final DateTime? month;
+  /// Width of the compact cell — narrower in the 3-column panels.
+  final double width;
 
-  const _InlineBudgetAmount({required this.entry, this.compact = true});
+  const _InlineBudgetAmount({
+    required this.entry,
+    this.compact = true,
+    this.month,
+    this.width = _kColW,
+  });
 
   @override
   ConsumerState<_InlineBudgetAmount> createState() =>
@@ -1980,7 +2005,7 @@ class _InlineBudgetAmountState extends ConsumerState<_InlineBudgetAmount> {
         double.tryParse(_ctrl.text.trim().replaceAll(',', '')) ?? 0.0;
     await ref
         .read(budgetProvider.notifier)
-        .setBudgeted(widget.entry.categoryId, amount);
+        .setBudgeted(widget.entry.categoryId, amount, month: widget.month);
     if (mounted) setState(() => _editing = false);
   }
 
@@ -1992,7 +2017,7 @@ class _InlineBudgetAmountState extends ConsumerState<_InlineBudgetAmount> {
 
     if (_editing) {
       return SizedBox(
-        width: _kColW,
+        width: widget.width,
         child: TextField(
           controller:     _ctrl,
           focusNode:      _focus,
@@ -2029,7 +2054,7 @@ class _InlineBudgetAmountState extends ConsumerState<_InlineBudgetAmount> {
       child: Tooltip(
         message: 'Tap to edit budgeted amount',
         child: SizedBox(
-          width: _kColW,
+          width: widget.width,
           child: Text(
             fmt.format(widget.entry.budgeted),
             textAlign: TextAlign.right,
