@@ -600,7 +600,7 @@ class _PanelGroupRow extends StatelessWidget {
 
 // ── Category entry row in panel ───────────────────────────────────────────────
 
-class _PanelEntryRow extends StatelessWidget {
+class _PanelEntryRow extends ConsumerWidget {
   final BudgetEntry entry;
   final bool isCurrent;
   final DateTime month;
@@ -611,7 +611,7 @@ class _PanelEntryRow extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final cs         = Theme.of(context).colorScheme;
     final isOverspent = entry.balance < 0;
     final availColor  = isOverspent ? cs.error
@@ -620,9 +620,19 @@ class _PanelEntryRow extends StatelessWidget {
 
     final iconCp = entry.iconCodePoint;
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
-      child: Row(
+    // The comparison panels previously had no tap handler at all, so goals,
+    // rename, icon, delete and Make Inactive were unreachable from here.
+    return InkWell(
+      onTap: () => showModalBottomSheet(
+        context:            context,
+        isScrollControlled: true,
+        useSafeArea:        true,
+        builder: (_) =>
+            _CategoryDetailSheet(entry: entry, month: month, ref: ref),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
+        child: Row(
         children: [
           // Icon avatar (or CC badge)
           if (entry.isCcPayment)
@@ -691,7 +701,8 @@ class _PanelEntryRow extends StatelessWidget {
                 ? _CarryOverspendArrow(entry: entry)
                 : null,
           ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -2728,14 +2739,16 @@ class _CategoryTxPanel extends ConsumerWidget {
           // ── Action buttons ──
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: Row(
+            // Wrap rather than Row: five actions overflow a narrow screen.
+            child: Wrap(
+              spacing: 4,
+              runSpacing: 4,
               children: [
                 _PanelAction(
                   icon: Icons.drive_file_rename_outline,
                   label: 'Rename',
                   onTap: () => _showRenameCategoryDialog(context, ref, entry),
                 ),
-                const SizedBox(width: 4),
                 _PanelAction(
                   icon: entry.iconCodePoint != null
                       ? Icons.emoji_emotions_outlined
@@ -2743,14 +2756,20 @@ class _CategoryTxPanel extends ConsumerWidget {
                   label: 'Icon',
                   onTap: () => _showCategoryIconPicker(context, ref, entry),
                 ),
-                const SizedBox(width: 4),
+                if (!entry.isCcPayment)
+                  _PanelAction(
+                    icon: Icons.archive_outlined,
+                    label: 'Inactive',
+                    onTap: () => ref
+                        .read(budgetProvider.notifier)
+                        .setCategoryActive(entry.categoryId, false),
+                  ),
                 _PanelAction(
                   icon: Icons.delete_outline,
                   label: 'Delete',
                   onTap: () => _showDeleteCategoryDialog(context, ref, entry),
                   isDestructive: true,
                 ),
-                const Spacer(),
                 _PanelAction(
                   icon: Icons.tune_outlined,
                   label: 'More',
