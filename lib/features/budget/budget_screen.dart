@@ -379,7 +379,12 @@ class _PanelContentState extends State<_PanelContent> {
           ),
         ),
         // ── Column labels ─────────────────────────────────────────────
-        SliverToBoxAdapter(child: _PanelColHeaders()),
+        SliverToBoxAdapter(
+          child: _PanelColHeaders(
+            totalBudgeted:  state.totalBudgeted,
+            totalAvailable: state.groups.fold(0.0, (s, g) => s + g.balance),
+          ),
+        ),
         // ── Rows ─────────────────────────────────────────────────────
         SliverPadding(
           padding: const EdgeInsets.only(bottom: 80),
@@ -421,7 +426,9 @@ class _PanelContentState extends State<_PanelContent> {
 // ── Column headers for each panel ────────────────────────────────────────────
 
 class _PanelColHeaders extends StatelessWidget {
-  const _PanelColHeaders();
+  final double totalBudgeted;
+  final double totalAvailable;
+  const _PanelColHeaders({required this.totalBudgeted, required this.totalAvailable});
 
   @override
   Widget build(BuildContext context) {
@@ -437,8 +444,10 @@ class _PanelColHeaders extends StatelessWidget {
       child: Row(
         children: [
           const Expanded(child: SizedBox()),
-          _PanelColLabel('BUDGET', bg: cs.primary.withValues(alpha: 0.07)),
-          _PanelColLabel('AVAIL',  bg: cs.tertiary.withValues(alpha: 0.07)),
+          _PanelColLabel('BUDGET', bg: cs.primary.withValues(alpha: 0.07),
+              total: totalBudgeted, cs: cs),
+          _PanelColLabel('AVAIL',  bg: cs.tertiary.withValues(alpha: 0.07),
+              total: totalAvailable, cs: cs),
         ],
       ),
     );
@@ -448,21 +457,47 @@ class _PanelColHeaders extends StatelessWidget {
 class _PanelColLabel extends StatelessWidget {
   final String text;
   final Color? bg;
-  const _PanelColLabel(this.text, {this.bg});
+  final double? total;
+  final ColorScheme cs;
+  const _PanelColLabel(this.text, {required this.cs, this.bg, this.total});
+
+  static String _fmtTotal(double v) {
+    final abs = v.abs();
+    final s = abs >= 1000
+        ? '\$${(abs / 1000).toStringAsFixed(1)}k'
+        : '\$${abs.toStringAsFixed(0)}';
+    return v < 0 ? '-$s' : s;
+  }
 
   @override
   Widget build(BuildContext context) {
     final label = SizedBox(
       width: _kPanelColW,
-      child: Text(
-        text,
-        textAlign: TextAlign.right,
-        style: GoogleFonts.plusJakartaSans(
-          fontSize: 9,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.8,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            text,
+            textAlign: TextAlign.right,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.8,
+              color: cs.onSurfaceVariant,
+            ),
+          ),
+          if (total != null)
+            Text(
+              _fmtTotal(total!),
+              textAlign: TextAlign.right,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: total! < 0 ? cs.error : cs.onSurface,
+              ),
+            ),
+        ],
       ),
     );
     if (bg == null) return label;
