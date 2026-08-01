@@ -549,6 +549,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     final rolloverMap   = <String, String>{}; // catId → rollover_behavior
     final overspendMap  = <String, String>{}; // catId → overspending_behavior
     final ccLinkMap     = <String, String>{}; // catId → linked_account_id
+    final ccCandidates  = <({String catId, String accId, bool flagged})>[];
     for (final gRaw in results[0] as List) {
       for (final cRaw in ((gRaw as Map)['categories'] as List? ?? [])) {
         final c = cRaw as Map<String, dynamic>;
@@ -560,8 +561,30 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
         overspendMap[catId] =
             (c['overspending_behavior'] as String?) ?? 'reduce_tbb';
         final ccAccId = c['linked_account_id'] as String?;
-        if (ccAccId != null) ccLinkMap[catId] = ccAccId;
+        if (ccAccId != null) {
+          ccCandidates.add((
+            catId:   catId,
+            accId:   ccAccId,
+            flagged: c['is_cc_payment'] == true,
+          ));
+        }
       }
+    }
+
+    // One card funds exactly one envelope. Nothing in the schema stops two
+    // categories pointing at the same account, and the link tile lets it be
+    // done by hand — but each would then reserve the full charge, so a $145
+    // purchase shows up as $290. Resolve to a single winner per account:
+    // prefer the category actually flagged as the CC payment envelope, then
+    // lowest id so the choice is stable across loads.
+    ccCandidates.sort((a, b) {
+      if (a.flagged != b.flagged) return a.flagged ? -1 : 1;
+      return a.catId.compareTo(b.catId);
+    });
+    final claimedAccounts = <String>{};
+    for (final c in ccCandidates) {
+      if (!claimedAccounts.add(c.accId)) continue; // already funded
+      ccLinkMap[c.catId] = c.accId;
     }
 
     // ── Does a transfer leg belong to the budget? ────────────────────────────
