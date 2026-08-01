@@ -1388,8 +1388,13 @@ String _availBreakdown(BudgetEntry e, DateTime month) {
     b.write('${f.format(e.carriedIn)} carried in from $prev\n');
   }
   b.write('${e.budgeted < 0 ? '−' : '+'} ${f.format(e.budgeted.abs())} budgeted\n');
-  b.write('${e.activity < 0 ? '−' : '+'} ${f.format(e.activity.abs())} '
-      '${e.isCcPayment ? 'reserved' : e.activity < 0 ? 'spent' : 'inflow'}\n');
+  if (e.reserved != 0) {
+    b.write('+ ${f.format(e.reserved)} set aside by card charges\n');
+  }
+  if (e.activity != 0 || e.reserved == 0) {
+    b.write('${e.activity < 0 ? '−' : '+'} ${f.format(e.activity.abs())} '
+        '${e.isCcPayment ? 'paid to card' : e.activity < 0 ? 'spent' : 'inflow'}\n');
+  }
   b.write('= ${f.format(e.balance)} available');
   return b.toString();
 }

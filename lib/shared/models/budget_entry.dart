@@ -87,14 +87,24 @@ class BudgetEntry {
   final int groupSortOrder;
   final int categorySortOrder;
   final double budgeted;
-  final double activity;   // net spending (negative = expenses)
-  final double balance;    // budgeted + activity
+  /// Money that left this category. Negative for spending. For a CC
+  /// payment envelope this is payments sent to the card only — charges
+  /// are in [reserved].
+  final double activity;
+  /// carriedIn + budgeted + reserved + activity.
+  final double balance;
   final bool isCcPayment;
   final bool carryOverspend;
   /// Balance rolled in from previous months. Available is
-  /// [carriedIn] + [budgeted] + [activity], so without this the three
+  /// [carriedIn] + [budgeted] + [reserved] + [activity], so without this the
   /// displayed columns look like they do not add up.
   final double carriedIn;
+  /// CC payment envelopes only: money set aside this month by charges on the
+  /// linked card. Kept apart from [activity] because charges and payments move
+  /// the envelope in opposite directions — lumping them together made a normal
+  /// month (spent more than paid) show as a positive Activity, which reads as
+  /// an inflow everywhere else in the budget.
+  final double reserved;
   final BudgetGoal? goal;
   final int? iconCodePoint;
   /// Non-null for CC payment envelopes — the linked CC account ID.
@@ -113,6 +123,7 @@ class BudgetEntry {
     required this.isCcPayment,
     required this.carryOverspend,
     this.carriedIn = 0,
+    this.reserved  = 0,
     this.goal,
     this.iconCodePoint,
     this.ccAccountId,
@@ -120,14 +131,10 @@ class BudgetEntry {
 
   double get spent => activity < 0 ? activity.abs() : 0;
 
-  /// CC payment envelopes accumulate *positive* activity — card spending
-  /// reserves money to pay the bill rather than consuming a budget. That makes
-  /// [spent] permanently 0 for them, so a consumption bar would read as an
-  /// empty battery no matter how heavily the card is used.
+  /// A CC payment envelope is filled by card charges rather than drained by
+  /// them, so [spent] stays 0 and a consumption bar would read as an empty
+  /// battery no matter how heavily the card is used.
   bool get showsBudgetProgress => !isCcPayment && budgeted > 0;
-
-  /// Money reserved into a CC payment envelope by card spending this month.
-  double get reserved => isCcPayment && activity > 0 ? activity : 0;
 }
 
 class BudgetGroupData {

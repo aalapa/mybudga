@@ -593,6 +593,9 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     }
 
     final activityMap = <String, double>{};
+    // Non-zero only for CC payment envelopes: money set aside this month by
+    // charges on the linked card.
+    final reservedMap = <String, double>{};
     for (final tx in results[2] as List) {
       final catId      = tx['category_id'] as String?;
       final transferId = tx['transfer_id'] as String?;
@@ -686,11 +689,23 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       }
 
       // Accumulate: CC activity = -sum(CC txns) so spending adds, payments deduct.
-      final ccCurAct  = <String, double>{};
-      final ccPastAct = <String, Map<String, double>>{}; // accId → 'YYYY-MM' → activity
+      // Charges and payments move the envelope in opposite directions, so they
+      // are kept apart. Rolling them into one figure made the Activity column
+      // read as an inflow whenever the month's spending outran its payments,
+      // which is the normal state of a credit card.
+      final ccCurReserved = <String, double>{}; // charges  → money set aside
+      final ccCurPayment  = <String, double>{}; // payments → money sent to card
+      final ccPastAct = <String, Map<String, double>>{}; // accId → 'YYYY-MM' → net
       for (final tx in ccTxResults[0] as List) {
         final aid = tx['account_id'] as String;
-        ccCurAct[aid] = (ccCurAct[aid] ?? 0.0) - (tx['amount'] as num).toDouble();
+        final amt = (tx['amount'] as num).toDouble();
+        if (amt < 0) {
+          // A charge: negative on the card, so negating gives money to reserve.
+          ccCurReserved[aid] = (ccCurReserved[aid] ?? 0.0) - amt;
+        } else {
+          // A payment or statement credit: reduces what is owed.
+          ccCurPayment[aid] = (ccCurPayment[aid] ?? 0.0) - amt;
+        }
       }
       for (final tx in ccTxResults[1] as List) {
         final aid  = tx['account_id'] as String;
@@ -702,8 +717,13 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       for (final entry in ccLinkMap.entries) {
         final catId = entry.key;
         final accId = entry.value;
-        activityMap[catId]   = ccCurAct[accId] ?? 0.0;
-        pastActivity[catId]  = ccPastAct[accId] ?? {};
+        // Activity is payments only, so the column keeps its usual meaning:
+        // negative is money leaving. Charges surface as `reserved`.
+        activityMap[catId]  = ccCurPayment[accId]  ?? 0.0;
+        reservedMap[catId]  = ccCurReserved[accId] ?? 0.0;
+        // Carry-forward stays a single net figure — a past month contributes
+        // charges minus payments, which is what rolls into the next month.
+        pastActivity[catId] = ccPastAct[accId] ?? {};
       }
     }
 
@@ -771,8 +791,9 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
         final catId      = c['id'] as String;
         final budgeted   = budgetMap[catId] ?? 0.0;
         final activity   = activityMap[catId] ?? 0.0;
+        final reserved   = reservedMap[catId] ?? 0.0;
         final carry      = carryForwardMap[catId] ?? 0.0;
-        final balance    = carry + budgeted + activity;
+        final balance    = carry + budgeted + reserved + activity;
         final carryOver  = (c['overspending_behavior'] as String?) == 'carry_forward';
 
         return BudgetEntry(
@@ -788,6 +809,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
           isCcPayment:         c['is_cc_payment'] as bool? ?? false,
           carryOverspend:      carryOver,
           carriedIn:           carry,
+          reserved:            reserved,
           goal:                goalMap[catId],
           iconCodePoint:       c['icon_codepoint'] as int?,
           ccAccountId:         c['linked_account_id'] as String?,
