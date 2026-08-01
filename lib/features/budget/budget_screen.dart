@@ -33,7 +33,7 @@ class BudgetScreen extends ConsumerWidget {
         context:            context,
         isScrollControlled: true,
         useSafeArea:        true,
-        builder:            (_) => _CategoryDetailSheet(entry: entry, month: month, ref: ref),
+        builder:            (_) => _CategoryDetailSheet(entry: entry, month: month),
       );
     }
 
@@ -628,7 +628,7 @@ class _PanelEntryRow extends ConsumerWidget {
         isScrollControlled: true,
         useSafeArea:        true,
         builder: (_) =>
-            _CategoryDetailSheet(entry: entry, month: month, ref: ref),
+            _CategoryDetailSheet(entry: entry, month: month),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
@@ -3073,17 +3073,17 @@ class _NumCell extends StatelessWidget {
 // Category detail sheet
 // ---------------------------------------------------------------------------
 
-class _CategoryDetailSheet extends StatefulWidget {
+class _CategoryDetailSheet extends ConsumerStatefulWidget {
   final BudgetEntry entry;
   final DateTime month;
-  final WidgetRef ref;
-  const _CategoryDetailSheet({required this.entry, required this.month, required this.ref});
+  const _CategoryDetailSheet({required this.entry, required this.month});
 
   @override
-  State<_CategoryDetailSheet> createState() => _CategoryDetailSheetState();
+  ConsumerState<_CategoryDetailSheet> createState() =>
+      _CategoryDetailSheetState();
 }
 
-class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
+class _CategoryDetailSheetState extends ConsumerState<_CategoryDetailSheet> {
   late bool _carryOverspend = widget.entry.carryOverspend;
   bool _saving = false;
   late final TextEditingController _budgetCtrl;
@@ -3115,7 +3115,7 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
     }
     setState(() => _saving = true);
     try {
-      await widget.ref.read(budgetProvider.notifier)
+      await ref.read(budgetProvider.notifier)
           .setBudgeted(widget.entry.categoryId, val);
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -3134,15 +3134,23 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
 
   Future<void> _toggleCarryOverspend(bool v) async {
     setState(() => _carryOverspend = v);
-    await widget.ref.read(budgetProvider.notifier)
+    await ref.read(budgetProvider.notifier)
         .setCarryOverspend(widget.entry.categoryId, v);
   }
 
   @override
   Widget build(BuildContext context) {
+    // Re-read the entry from the provider each build. The copy passed at
+    // construction is a snapshot, so renaming or re-linking from inside this
+    // sheet left it showing the old values until it was closed and reopened.
+    final entry = ref.watch(budgetProvider).valueOrNull?.groups
+            .expand((g) => g.entries)
+            .where((e) => e.categoryId == widget.entry.categoryId)
+            .firstOrNull ??
+        widget.entry;
     final cs          = Theme.of(context).colorScheme;
     final fmt         = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
-    final isOverspent = widget.entry.balance < 0;
+    final isOverspent = entry.balance < 0;
 
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
@@ -3176,7 +3184,7 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
             ),
             const SizedBox(height: 20),
 
-            Text(widget.entry.categoryName,
+            Text(entry.categoryName,
                 style: GoogleFonts.plusJakartaSans(
                     fontSize: 22, fontWeight: FontWeight.w800, color: cs.onSurface)),
             const SizedBox(height: 24),
@@ -3184,34 +3192,34 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
             // Stats row
             Row(
               children: [
-                if (widget.entry.carriedIn != 0)
+                if (entry.carriedIn != 0)
                   _StatCell(
                     label: 'Carried in',
-                    value: fmt.format(widget.entry.carriedIn),
-                    color: widget.entry.carriedIn < 0 ? cs.error : cs.tertiary,
+                    value: fmt.format(entry.carriedIn),
+                    color: entry.carriedIn < 0 ? cs.error : cs.tertiary,
                   ),
-                _StatCell(label: 'Budgeted', value: fmt.format(widget.entry.budgeted),       color: cs.primary),
+                _StatCell(label: 'Budgeted', value: fmt.format(entry.budgeted),       color: cs.primary),
                 // A CC envelope is filled by card spending rather than drained
                 // by it, so "Spent" would always read $0 here.
-                widget.entry.isCcPayment
-                    ? _StatCell(label: 'Reserved', value: fmt.format(widget.entry.reserved), color: cs.onSurface)
-                    : _StatCell(label: 'Spent',    value: fmt.format(widget.entry.spent),    color: cs.onSurface),
+                entry.isCcPayment
+                    ? _StatCell(label: 'Reserved', value: fmt.format(entry.reserved), color: cs.onSurface)
+                    : _StatCell(label: 'Spent',    value: fmt.format(entry.spent),    color: cs.onSurface),
                 _StatCell(
                   label: isOverspent ? 'Overspent' : 'Remaining',
-                  value: fmt.format(widget.entry.balance.abs()),
+                  value: fmt.format(entry.balance.abs()),
                   color: isOverspent ? cs.error : cs.tertiary,
                 ),
               ],
             ),
             const SizedBox(height: 20),
 
-            if (widget.entry.showsBudgetProgress) ...[
+            if (entry.showsBudgetProgress) ...[
               SizedBox(
                 width: double.infinity,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: LinearProgressIndicator(
-                    value: (widget.entry.spent / widget.entry.budgeted).clamp(0.0, 1.0),
+                    value: (entry.spent / entry.budgeted).clamp(0.0, 1.0),
                     minHeight: 8,
                     backgroundColor: cs.surfaceContainerHighest,
                     valueColor: AlwaysStoppedAnimation(isOverspent ? cs.error : cs.primary),
@@ -3222,8 +3230,8 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
             ],
 
             // CC payment link section — shown for CC payment envelopes
-            if (widget.entry.isCcPayment) ...[
-              _CcAccountLinkTile(entry: widget.entry, ref: widget.ref),
+            if (entry.isCcPayment) ...[
+              _CcAccountLinkTile(entry: entry, ref: ref),
               const SizedBox(height: 16),
             ],
 
@@ -3237,7 +3245,7 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
               ],
               onSubmitted: (_) => _saveBudget(),
               decoration: InputDecoration(
-                labelText: widget.entry.isCcPayment
+                labelText: entry.isCcPayment
                     ? 'Extra budget (e.g. to pay down old debt)'
                     : 'Budget amount',
                 prefixText: '\$ ',
@@ -3257,18 +3265,18 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
             const SizedBox(height: 16),
 
             // Goal section
-            if (widget.entry.goal != null)
+            if (entry.goal != null)
               _GoalDetailCard(
-                goal:   widget.entry.goal!,
-                entry:  widget.entry,
+                goal:   entry.goal!,
+                entry:  entry,
                 month:  widget.month,
                 onEdit: () => _showSetGoalSheet(
-                    context, widget.entry, widget.month, widget.ref),
+                    context, entry, widget.month, ref),
               )
             else
               OutlinedButton.icon(
                 onPressed: () => _showSetGoalSheet(
-                    context, widget.entry, widget.month, widget.ref),
+                    context, entry, widget.month, ref),
                 icon:  const Icon(Icons.flag_outlined, size: 16),
                 label: Text('Set a Goal',
                     style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
@@ -3292,15 +3300,15 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
                   icon:  Icons.drive_file_rename_outline,
                   label: 'Rename',
                   onTap: () => _showRenameCategoryDialog(
-                      context, widget.ref, widget.entry),
+                      context, ref, entry),
                 ),
                 _PanelAction(
-                  icon: widget.entry.iconCodePoint != null
+                  icon: entry.iconCodePoint != null
                       ? Icons.emoji_emotions_outlined
                       : Icons.add_reaction_outlined,
                   label: 'Icon',
                   onTap: () => _showCategoryIconPicker(
-                      context, widget.ref, widget.entry),
+                      context, ref, entry),
                 ),
                 _PanelAction(
                   icon:  Icons.delete_outline,
@@ -3308,7 +3316,7 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
                   isDestructive: true,
                   onTap: () async {
                     final deleted = await _showDeleteCategoryDialog(
-                        context, widget.ref, widget.entry);
+                        context, ref, entry);
                     if (deleted && context.mounted) Navigator.pop(context);
                   },
                 ),
@@ -3317,12 +3325,12 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
             const SizedBox(height: 16),
 
             // Make inactive — keeps history, returns any balance to TBB
-            if (!widget.entry.isCcPayment) ...[
+            if (!entry.isCcPayment) ...[
               OutlinedButton.icon(
                 onPressed: () async {
-                  await widget.ref
+                  await ref
                       .read(budgetProvider.notifier)
-                      .setCategoryActive(widget.entry.categoryId, false);
+                      .setCategoryActive(entry.categoryId, false);
                   if (context.mounted) Navigator.pop(context);
                 },
                 icon: const Icon(Icons.archive_outlined, size: 16),
@@ -3347,7 +3355,7 @@ class _CategoryDetailSheetState extends State<_CategoryDetailSheet> {
             ],
 
             // Carry overspend toggle
-            if (!widget.entry.isCcPayment)
+            if (!entry.isCcPayment)
               SizedBox(
                 width: double.infinity,
                 child: Container(
@@ -4847,7 +4855,7 @@ class _BudgetSplitViewState extends ConsumerState<_BudgetSplitView> {
         context: context,
         isScrollControlled: true,
         useSafeArea: true,
-        builder: (_) => _CategoryDetailSheet(entry: entry, month: month, ref: ref),
+        builder: (_) => _CategoryDetailSheet(entry: entry, month: month),
       );
 
   @override
