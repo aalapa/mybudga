@@ -650,9 +650,10 @@ class _PanelEntryRow extends StatelessWidget {
           ColoredBox(
             color: cs.primary.withValues(alpha: 0.07),
             child: _InlineBudgetAmount(
-              entry: entry,
-              month: month,
-              width: _kPanelColW,
+              entry:      entry,
+              month:      month,
+              width:      _kPanelColW,
+              abbreviate: true,
             ),
           ),
           _PanelNum(entry.activity, cs.onSurfaceVariant),
@@ -686,6 +687,10 @@ class _PanelNum extends StatelessWidget {
     if (abs >= 1000) return '\$${(abs / 1000).toStringAsFixed(1)}k';
     return '\$${abs.toStringAsFixed(0)}';
   }
+
+  /// Same abbreviation the panel columns use, so an editable cell lines up
+  /// with the static ones beside it.
+  static String fmtAbbrev(double v) => (v < 0 ? '-' : '') + _fmt(v);
 
   @override
   Widget build(BuildContext context) {
@@ -1947,12 +1952,16 @@ class _InlineBudgetAmount extends ConsumerStatefulWidget {
   final DateTime? month;
   /// Width of the compact cell — narrower in the 3-column panels.
   final double width;
+  /// Abbreviate the *displayed* value ($1.2k) to match the neighbouring
+  /// panel columns. Editing always uses full precision.
+  final bool abbreviate;
 
   const _InlineBudgetAmount({
     required this.entry,
     this.compact = true,
     this.month,
     this.width = _kColW,
+    this.abbreviate = false,
   });
 
   @override
@@ -2051,12 +2060,18 @@ class _InlineBudgetAmountState extends ConsumerState<_InlineBudgetAmount> {
 
     return GestureDetector(
       onTap: _startEdit,
+      // Without this the hit test defers to the child, so only the digits
+      // themselves respond — the rest of the right-aligned cell reads as
+      // dead space and the number looks uneditable.
+      behavior: HitTestBehavior.opaque,
       child: Tooltip(
         message: 'Tap to edit budgeted amount',
         child: SizedBox(
           width: widget.width,
           child: Text(
-            fmt.format(widget.entry.budgeted),
+            widget.abbreviate
+                ? _PanelNum.fmtAbbrev(widget.entry.budgeted)
+                : fmt.format(widget.entry.budgeted),
             textAlign: TextAlign.right,
             style: GoogleFonts.plusJakartaSans(
               fontSize: 13,
