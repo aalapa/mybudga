@@ -348,18 +348,20 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     ref.invalidateSelf();
   }
 
-  /// Marks a category active/inactive (is_hidden). An inactive category drops
-  /// out of the budget and the transaction picker but keeps all its history.
+  /// Retires a category from [from] onward, or reactivates it when [from] is
+  /// null. Months before [from] are untouched — the category keeps appearing
+  /// there with its history, which is the point of dating this rather than
+  /// using a flag.
   ///
-  /// Any balance it was holding returns to TBB: its budgeted amounts stop
-  /// being subtracted while its spending is still charged, so the unspent
-  /// remainder flows back to the pool rather than being stranded.
-  Future<void> setCategoryActive(String categoryId, bool active) async {
+  /// Whatever balance it was holding returns to TBB in the retiring month.
+  Future<void> setCategoryInactiveFrom(String categoryId, DateTime? from) async {
     final client = ref.read(supabaseProvider);
-    await client
-        .from('categories')
-        .update({'is_hidden': !active})
-        .eq('id', categoryId);
+    await client.from('categories').update({
+      'inactive_from': from == null ? null : _toMonthString(_firstOfMonth(from)),
+      // Clear the old boolean too: it hides a category from every month, so
+      // leaving it set would defeat the dated behaviour on reactivation.
+      'is_hidden': false,
+    }).eq('id', categoryId);
     ref.invalidate(categoriesProvider);
     ref.invalidateSelf();
   }
@@ -476,7 +478,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       // 1. category groups + categories
       client
           .from('category_groups')
-          .select('id, name, sort_order, categories(id, name, sort_order, icon_codepoint, is_cc_payment, overspending_behavior, rollover_behavior, is_hidden, deleted_at, linked_account_id)')
+          .select('id, name, sort_order, categories(id, name, sort_order, icon_codepoint, is_cc_payment, overspending_behavior, rollover_behavior, is_hidden, inactive_from, deleted_at, linked_account_id)')
           .eq('household_id', householdId)
           .eq('is_hidden', false)
           .isFilter('deleted_at', null)
@@ -563,11 +565,22 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     final overspendMap  = <String, String>{}; // catId → overspending_behavior
     final ccLinkMap     = <String, String>{}; // catId → linked_account_id
     final ccCandidates  = <({String catId, String accId, bool flagged})>[];
+    final inactiveFromMap = <String, String>{}; // catId → 'YYYY-MM' it retires
+    final loadedKey = _monthKeyOf(monthStr);
     for (final gRaw in results[0] as List) {
       for (final cRaw in ((gRaw as Map)['categories'] as List? ?? [])) {
         final c = cRaw as Map<String, dynamic>;
         if (c['is_hidden'] == true) continue;
         final catId = c['id'] as String;
+        // Retired categories stay visible in the months they were live, so a
+        // trip that ran in July still appears in July after being retired in
+        // August. Only months from inactive_from onward drop it.
+        final inactiveFrom = c['inactive_from'] as String?;
+        if (inactiveFrom != null) {
+          final endKey = _monthKeyOf(inactiveFrom);
+          inactiveFromMap[catId] = endKey;
+          if (loadedKey.compareTo(endKey) >= 0) continue;
+        }
         visibleCatIds.add(catId);
         rolloverMap[catId]  =
             (c['rollover_behavior'] as String?) ?? 'rollover';
@@ -790,12 +803,17 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
 
       final rollover  = rolloverMap[catId]  ?? 'rollover';
       final overspend = overspendMap[catId] ?? 'reduce_tbb';
+      final retiresAt = inactiveFromMap[catId];
 
       double running = 0;
       for (final m in months) {
         final endBalance =
             running + (budgets[m] ?? 0.0) + (activities[m] ?? 0.0);
-        if (rollover == 'zero_out') {
+        // Once retired the category holds nothing: whatever it was carrying
+        // goes back to the pool in that month, and any later stray activity is
+        // settled there too rather than accumulating somewhere invisible.
+        final retired = retiresAt != null && m.compareTo(retiresAt) >= 0;
+        if (retired || rollover == 'zero_out') {
           // Category never carries: the whole balance returns to the pool.
           tbbAdjust += endBalance;
           running    = 0;
@@ -1024,10 +1042,14 @@ class InactiveCategory {
   final String id;
   final String name;
   final String groupName;
+  /// First month it stopped applying. Null for categories retired with the
+  /// older boolean, which hid them from every month.
+  final DateTime? inactiveFrom;
   const InactiveCategory({
     required this.id,
     required this.name,
     required this.groupName,
+    this.inactiveFrom,
   });
 }
 
@@ -1041,9 +1063,10 @@ final inactiveCategoriesProvider =
 
   final res = await client
       .from('categories')
-      .select('id, name, category_groups(name)')
+      .select('id, name, inactive_from, category_groups(name)')
       .eq('household_id', householdId)
-      .eq('is_hidden', true)
+      // Dated retirements plus any category hidden by the older boolean.
+      .or('is_hidden.eq.true,inactive_from.not.is.null')
       .isFilter('deleted_at', null)
       .order('name');
 
@@ -1053,6 +1076,9 @@ final inactiveCategoriesProvider =
       id:        r['id']   as String,
       name:      r['name'] as String,
       groupName: g?['name'] as String? ?? '',
+      inactiveFrom: r['inactive_from'] != null
+          ? DateTime.parse(r['inactive_from'] as String)
+          : null,
     );
   }).toList();
 });

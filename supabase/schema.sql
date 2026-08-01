@@ -108,6 +108,10 @@ create table categories (
     name                  text not null,
     sort_order            integer not null default 0,
     is_hidden             boolean not null default false,
+    -- First month the category no longer applies. Null = active. Dated rather
+    -- than a second flag so past months keep showing it: a trip that ran in
+    -- July must still appear in July's budget after it is retired in August.
+    inactive_from         date,
     rollover_behavior     rollover_behavior not null default 'rollover',
     overspending_behavior overspending_behavior not null default 'reduce_tbb',
     is_cc_payment         boolean not null default false,
@@ -120,6 +124,7 @@ create table categories (
 create index idx_categories_household       on categories(household_id);
 create index idx_categories_group           on categories(category_group_id);
 create index idx_categories_linked_account  on categories(linked_account_id);
+create index idx_categories_inactive_from   on categories(inactive_from);
 
 -- Deferred FK: accounts → cc_payment_category_id
 alter table accounts

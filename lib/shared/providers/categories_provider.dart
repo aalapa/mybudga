@@ -18,6 +18,12 @@ final categoriesProvider = FutureProvider<List<CategoryGroup>>((ref) async {
       // keep showing up in the transaction picker.
       .eq('categories.is_hidden', false)
       .isFilter('categories.deleted_at', null)
+      // Retired categories drop out of the picker from their month onward.
+      // Deliberately compared against today rather than the transaction's
+      // date, which keeps the list short; an existing back-dated transaction
+      // keeps whatever category it already carries.
+      .or('inactive_from.is.null,inactive_from.gt.${_today()}',
+          referencedTable: 'categories')
       .order('sort_order')
       .order('sort_order', referencedTable: 'categories');
 
@@ -29,3 +35,9 @@ final flatCategoriesProvider = Provider<List<Category>>((ref) {
   final groups = ref.watch(categoriesProvider).valueOrNull ?? [];
   return groups.expand((g) => g.categories).toList();
 });
+
+String _today() {
+  final d = DateTime.now();
+  return '${d.year}-${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
+}

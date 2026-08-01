@@ -1399,6 +1399,59 @@ String _availBreakdown(BudgetEntry e, DateTime month) {
   return b.toString();
 }
 
+/// Asks which month a category stops applying, defaulting to the month being
+/// viewed. Returned as the first of that month.
+Future<DateTime?> _pickInactiveMonth(
+    BuildContext context, DateTime viewedMonth) async {
+  final now = DateTime.now();
+  final options = List.generate(
+      13, (i) => DateTime(viewedMonth.year, viewedMonth.month - 3 + i));
+  return showDialog<DateTime>(
+    context: context,
+    builder: (ctx) {
+      final cs = Theme.of(ctx).colorScheme;
+      return AlertDialog(
+        title: Text('Inactive from',
+            style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700)),
+        content: SizedBox(
+          width: 320,
+          height: 320,
+          child: ListView.builder(
+            itemCount: options.length,
+            itemBuilder: (_, i) {
+              final m         = options[i];
+              final isDefault = m.year == viewedMonth.year &&
+                                m.month == viewedMonth.month;
+              final isFuture  = m.isAfter(DateTime(now.year, now.month));
+              return ListTile(
+                dense: true,
+                title: Text(DateFormat('MMMM yyyy').format(m),
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14,
+                      fontWeight:
+                          isDefault ? FontWeight.w700 : FontWeight.w500,
+                      color: isFuture ? cs.onSurfaceVariant : cs.onSurface,
+                    )),
+                trailing: isDefault
+                    ? Text('viewing',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11, color: cs.primary))
+                    : null,
+                onTap: () => Navigator.pop(ctx, m),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel')),
+        ],
+      );
+    },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Inactive categories sheet — browse and reactivate
 // ---------------------------------------------------------------------------
@@ -1489,16 +1542,20 @@ class _InactiveCategoriesSheet extends ConsumerWidget {
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600,
                                   color: cs.onSurface)),
-                          subtitle: c.groupName.isEmpty
-                              ? null
-                              : Text(c.groupName,
-                                  style: GoogleFonts.plusJakartaSans(
-                                      fontSize: 11,
-                                      color: cs.onSurfaceVariant)),
+                          subtitle: Text(
+                            [
+                              if (c.groupName.isNotEmpty) c.groupName,
+                              if (c.inactiveFrom != null)
+                                'inactive from '
+                                    '${DateFormat('MMM yyyy').format(c.inactiveFrom!)}',
+                            ].join('  ·  '),
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 11, color: cs.onSurfaceVariant),
+                          ),
                           trailing: TextButton.icon(
                             onPressed: () => ref
                                 .read(budgetProvider.notifier)
-                                .setCategoryActive(c.id, true),
+                                .setCategoryInactiveFrom(c.id, null),
                             icon:  const Icon(Icons.undo, size: 15),
                             label: const Text('Reactivate'),
                           ),
@@ -2785,9 +2842,13 @@ class _CategoryTxPanel extends ConsumerWidget {
                   _PanelAction(
                     icon: Icons.archive_outlined,
                     label: 'Inactive',
-                    onTap: () => ref
-                        .read(budgetProvider.notifier)
-                        .setCategoryActive(entry.categoryId, false),
+                    onTap: () async {
+                      final from = await _pickInactiveMonth(context, month);
+                      if (from == null) return;
+                      await ref
+                          .read(budgetProvider.notifier)
+                          .setCategoryInactiveFrom(entry.categoryId, from);
+                    },
                   ),
                 _PanelAction(
                   icon: Icons.delete_outline,
@@ -3389,9 +3450,11 @@ class _CategoryDetailSheetState extends ConsumerState<_CategoryDetailSheet> {
             if (!entry.isCcPayment) ...[
               OutlinedButton.icon(
                 onPressed: () async {
+                  final from = await _pickInactiveMonth(context, widget.month);
+                  if (from == null) return;
                   await ref
                       .read(budgetProvider.notifier)
-                      .setCategoryActive(entry.categoryId, false);
+                      .setCategoryInactiveFrom(entry.categoryId, from);
                   if (context.mounted) Navigator.pop(context);
                 },
                 icon: const Icon(Icons.archive_outlined, size: 16),
@@ -3406,9 +3469,10 @@ class _CategoryDetailSheetState extends ConsumerState<_CategoryDetailSheet> {
               ),
               const SizedBox(height: 6),
               Text(
-                'Hides it from the budget and the transaction picker. '
-                'History is kept and any leftover balance returns to '
-                'To Be Budgeted. Reactivate any time from the budget screen.',
+                'Choose the month it stops applying. Earlier months keep '
+                'showing it with their history; from that month on it leaves '
+                'the budget and the transaction picker, and any leftover '
+                'balance returns to To Be Budgeted.',
                 style: GoogleFonts.plusJakartaSans(
                     fontSize: 11, color: cs.onSurfaceVariant),
               ),
