@@ -9,7 +9,6 @@ import '../insights/insights_provider.dart';
 import '../transactions/transactions_provider.dart';
 import '../insights/payee_pattern.dart';
 import '../accounts/accounts_provider.dart';
-import '../../shared/models/account.dart';
 import '../../core/supabase/supabase_provider.dart';
 import 'budget_provider.dart';
 import 'category_icons.dart';
@@ -1299,7 +1298,7 @@ class _CcAccountLinkTile extends ConsumerWidget {
     final client = ref.read(supabaseProvider);
     await client
         .from('categories')
-        .update({'cc_account_id': accountId})
+        .update({'linked_account_id': accountId})
         .eq('id', entry.categoryId);
     ref.invalidate(budgetProvider);
   }

@@ -434,7 +434,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       // 1. category groups + categories
       client
           .from('category_groups')
-          .select('id, name, sort_order, categories(id, name, sort_order, icon_codepoint, is_cc_payment, overspending_behavior, is_hidden, cc_account_id)')
+          .select('id, name, sort_order, categories(id, name, sort_order, icon_codepoint, is_cc_payment, overspending_behavior, rollover_behavior, is_hidden, linked_account_id)')
           .eq('household_id', householdId)
           .eq('is_hidden', false)
           .isFilter('deleted_at', null)
@@ -465,17 +465,17 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
           .eq('household_id', householdId)
           .eq('is_active', true),
 
-      // 5. all budget_months BEFORE this month (for carry-forward)
+      // 5. all budget_months BEFORE this month (for carry-forward, bucketed by month)
       client
           .from('budget_months')
-          .select('category_id, budgeted')
+          .select('category_id, budgeted, month')
           .eq('household_id', householdId)
           .lt('month', monthStr),
 
       // 6. all confirmed non-transfer budget-account transactions BEFORE this month
       client
           .from('transactions')
-          .select('category_id, amount, transfer_id, accounts(is_tracking)')
+          .select('category_id, amount, transfer_id, date, accounts(is_tracking)')
           .eq('household_id', householdId)
           .lt('date', monthStr)
           .eq('status', 'confirmed')
@@ -504,38 +504,54 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       goalMap[g.categoryId] = g;
     }
 
-    // ── Carry-forward: sum all budgeted + activity from months before this one ─
-    final carryForwardMap = <String, double>{};
+    // ── Per-category settings (drive how balances roll between months) ────────
+    final rolloverMap  = <String, String>{}; // catId → rollover_behavior
+    final overspendMap = <String, String>{}; // catId → overspending_behavior
+    final ccLinkMap    = <String, String>{}; // catId → linked_account_id
+    for (final gRaw in results[0] as List) {
+      for (final cRaw in ((gRaw as Map)['categories'] as List? ?? [])) {
+        final c     = cRaw as Map<String, dynamic>;
+        final catId = c['id'] as String;
+        rolloverMap[catId]  =
+            (c['rollover_behavior'] as String?) ?? 'rollover';
+        overspendMap[catId] =
+            (c['overspending_behavior'] as String?) ?? 'reduce_tbb';
+        final ccAccId = c['linked_account_id'] as String?;
+        if (ccAccId != null) ccLinkMap[catId] = ccAccId;
+      }
+    }
+
+    // ── Past budgeted + activity, bucketed by category and month ─────────────
+    // Both are needed per-month (not as a flat sum) so the running balance can
+    // be clamped at each month boundary — see the walk below.
+    final pastBudget   = <String, Map<String, double>>{}; // catId → 'YYYY-MM' → budgeted
+    final pastActivity = <String, Map<String, double>>{}; // catId → 'YYYY-MM' → activity
+
     for (final row in results[4] as List) {
       final catId = row['category_id'] as String?;
       if (catId == null) continue;
-      carryForwardMap[catId] =
-          (carryForwardMap[catId] ?? 0.0) + (row['budgeted'] as num).toDouble();
+      final mKey = _monthKeyOf(row['month'] as String);
+      (pastBudget[catId] ??= {})[mKey] =
+          ((pastBudget[catId]![mKey]) ?? 0.0) + (row['budgeted'] as num).toDouble();
     }
     for (final tx in results[5] as List) {
       final catId      = tx['category_id'] as String?;
       final transferId = tx['transfer_id'] as String?;
       final isTracking = (tx['accounts']   as Map?)?['is_tracking'] as bool? ?? false;
       if (catId == null || transferId != null || isTracking) continue;
-      carryForwardMap[catId] =
-          (carryForwardMap[catId] ?? 0.0) + (tx['amount'] as num).toDouble();
+      final mKey = _monthKeyOf(tx['date'] as String);
+      (pastActivity[catId] ??= {})[mKey] =
+          ((pastActivity[catId]![mKey]) ?? 0.0) + (tx['amount'] as num).toDouble();
     }
 
     // ── CC payment: YNAB-style linked envelope ───────────────────────────────────
-    // For any category that has cc_account_id set, its activity is driven
+    // For any category that has linked_account_id set, its activity is driven
     // entirely by the CC account's transactions:
     //   • CC purchases (amount < 0) → contribute positively (money reserved to pay)
     //   • CC payment transfers (amount > 0) → contribute negatively (card paid off)
-    // This replaces any direct transaction activity for those categories.
-    final ccLinkMap = <String, String>{}; // catId → ccAccountId
-    for (final gRaw in results[0] as List) {
-      for (final cRaw in ((gRaw as Map)['categories'] as List? ?? [])) {
-        final c = cRaw as Map<String, dynamic>;
-        final ccAccId = c['cc_account_id'] as String?;
-        if (ccAccId != null) ccLinkMap[c['id'] as String] = ccAccId;
-      }
-    }
-
+    // This REPLACES any direct transaction activity for those categories, in both
+    // the current month and every past month — otherwise transactions the user
+    // categorised manually before linking would be counted twice.
     if (ccLinkMap.isNotEmpty) {
       final ccAccountIds = ccLinkMap.values.toSet().toList();
 
@@ -550,10 +566,10 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
             .lt('date', nextMonthStr)
             .eq('status', 'confirmed')
             .isFilter('deleted_at', null),
-        // Pre-month CC account transactions (carry-forward)
+        // Pre-month CC account transactions (carry-forward, bucketed by month)
         client
             .from('transactions')
-            .select('account_id, amount')
+            .select('account_id, amount, date')
             .eq('household_id', householdId)
             .inFilter('account_id', ccAccountIds)
             .lt('date', monthStr)
@@ -563,24 +579,54 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
 
       // Accumulate: CC activity = -sum(CC txns) so spending adds, payments deduct.
       final ccCurAct  = <String, double>{};
-      final ccPastAct = <String, double>{};
+      final ccPastAct = <String, Map<String, double>>{}; // accId → 'YYYY-MM' → activity
       for (final tx in ccTxResults[0] as List) {
         final aid = tx['account_id'] as String;
         ccCurAct[aid] = (ccCurAct[aid] ?? 0.0) - (tx['amount'] as num).toDouble();
       }
       for (final tx in ccTxResults[1] as List) {
-        final aid = tx['account_id'] as String;
-        ccPastAct[aid] = (ccPastAct[aid] ?? 0.0) - (tx['amount'] as num).toDouble();
+        final aid  = tx['account_id'] as String;
+        final mKey = _monthKeyOf(tx['date'] as String);
+        (ccPastAct[aid] ??= {})[mKey] =
+            ((ccPastAct[aid]![mKey]) ?? 0.0) - (tx['amount'] as num).toDouble();
       }
 
       for (final entry in ccLinkMap.entries) {
         final catId = entry.key;
         final accId = entry.value;
-        activityMap[catId]    = ccCurAct[accId] ?? 0.0;
-        // carryForwardMap already has past manually-budgeted amounts; add CC history.
-        carryForwardMap[catId] =
-            (carryForwardMap[catId] ?? 0.0) + (ccPastAct[accId] ?? 0.0);
+        activityMap[catId]   = ccCurAct[accId] ?? 0.0;
+        pastActivity[catId]  = ccPastAct[accId] ?? {};
       }
+    }
+
+    // ── Carry-forward: walk month by month, clamping at each boundary ─────────
+    // Mirrors v_budget_month_summary in schema.sql — a flat sum is wrong because
+    // it lets a single overspend follow the category forever even when the
+    // category is set to 'reduce_tbb' (the default), where the shortfall is
+    // absorbed by TBB in the month it happens and the next month starts clean.
+    final carryForwardMap = <String, double>{};
+    final allCatIds = {...pastBudget.keys, ...pastActivity.keys};
+    for (final catId in allCatIds) {
+      final budgets    = pastBudget[catId]   ?? const <String, double>{};
+      final activities = pastActivity[catId] ?? const <String, double>{};
+      final months     = {...budgets.keys, ...activities.keys}.toList()..sort();
+
+      final rollover  = rolloverMap[catId]  ?? 'rollover';
+      final overspend = overspendMap[catId] ?? 'reduce_tbb';
+
+      double running = 0;
+      for (final m in months) {
+        final endBalance =
+            running + (budgets[m] ?? 0.0) + (activities[m] ?? 0.0);
+        if (rollover == 'zero_out') {
+          running = 0; // category never carries a balance between months
+        } else if (overspend == 'reduce_tbb') {
+          running = endBalance < 0 ? 0.0 : endBalance; // shortfall hit TBB already
+        } else {
+          running = endBalance; // carry_forward: the negative follows the category
+        }
+      }
+      carryForwardMap[catId] = running;
     }
 
     // Build groups
@@ -624,7 +670,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
           carryOverspend:      carryOver,
           goal:                goalMap[catId],
           iconCodePoint:       c['icon_codepoint'] as int?,
-          ccAccountId:         c['cc_account_id'] as String?,
+          ccAccountId:         c['linked_account_id'] as String?,
         );
       }).toList();
 
@@ -709,6 +755,9 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
 
   static String _toMonthString(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}-01';
+
+  /// 'YYYY-MM-DD' → 'YYYY-MM'. Sorts lexicographically in chronological order.
+  static String _monthKeyOf(String date) => date.substring(0, 7);
 }
 
 final budgetProvider =
