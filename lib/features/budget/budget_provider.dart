@@ -515,6 +515,19 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
           .eq('status', 'confirmed')
           .isFilter('deleted_at', null)
           .limit(_kHistoryRowCap),
+
+      // 7. Every transfer leg keyed by id, with its account's tracking flag.
+      // A row's own embedded accounts(is_tracking) describes its own side; to
+      // decide whether a transfer leaves the budget we need the *counterpart*,
+      // and transfer_id points at it. Fetched for all dates rather than the
+      // current window because the two legs can be dated into different months.
+      client
+          .from('transactions')
+          .select('id, accounts(is_tracking)')
+          .eq('household_id', householdId)
+          .not('transfer_id', 'is', null)
+          .isFilter('deleted_at', null)
+          .limit(_kHistoryRowCap),
     ]);
 
     // Carry-forward and TBB are both running totals over *all* history, so a
@@ -551,6 +564,26 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       }
     }
 
+    // ── Does a transfer leg belong to the budget? ────────────────────────────
+    // Checking -> Savings never leaves the budget, so charging a category would
+    // double-count it. Checking -> Mortgage (or a brokerage) does leave, and
+    // that outgoing leg is exactly what its category records. The test is
+    // therefore about the counterpart, not about being a transfer.
+    final legIsTracking = <String, bool>{}; // transaction id -> on a tracking account
+    for (final r in results[6] as List) {
+      legIsTracking[r['id'] as String] =
+          (r['accounts'] as Map?)?['is_tracking'] as bool? ?? false;
+    }
+
+    bool touchesBudget(String? transferId, bool isTracking) {
+      if (isTracking)         return false; // this leg is itself off-budget
+      if (transferId == null) return true;  // ordinary spending or income
+      // Counterpart unknown (leg deleted, or not yet synced): treat it as an
+      // in-budget transfer, the conservative reading — it leaves the category
+      // untouched rather than inventing activity.
+      return legIsTracking[transferId] ?? false;
+    }
+
     // Build lookup maps
     final budgetMap = <String, double>{};
     for (final row in results[1] as List) {
@@ -564,11 +597,9 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       final catId      = tx['category_id'] as String?;
       final transferId = tx['transfer_id'] as String?;
       final isTracking = (tx['accounts']   as Map?)?['is_tracking'] as bool? ?? false;
-      // Must match the past-month filter below. No code path currently writes
-      // a category onto a transfer, but if one ever did (or data is edited
-      // directly), the amount would count this month and then vanish when the
-      // month rolled over, silently shifting the category's Available.
-      if (catId == null || transferId != null || isTracking) continue;
+      // Must match the past-month filter below, or an amount counts this month
+      // and then vanishes when the month rolls over.
+      if (catId == null || !touchesBudget(transferId, isTracking)) continue;
       activityMap[catId] =
           (activityMap[catId] ?? 0.0) + (tx['amount'] as num).toDouble();
     }
@@ -608,7 +639,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
         }
         continue;
       }
-      if (transferId != null || isTracking) continue;
+      if (!touchesBudget(transferId, isTracking)) continue;
       (pastActivity[catId] ??= {})[mKey] =
           ((pastActivity[catId]![mKey]) ?? 0.0) + amt;
     }
@@ -813,7 +844,9 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       final transferId = tx['transfer_id'] as String?;
       final isTracking = (tx['accounts']   as Map?)?['is_tracking'] as bool? ?? false;
       final amt        = (tx['amount']     as num).toDouble();
-      if (transferId == null && !isTracking && amt < 0) totalSpent += amt.abs();
+      // Same rule as category activity: a mortgage or brokerage payment is
+      // real spending out of the budget and belongs in this total.
+      if (touchesBudget(transferId, isTracking) && amt < 0) totalSpent += amt.abs();
     }
 
     // ── TBB (cumulative) + carry-forward from previous month ─────────────────
