@@ -22,8 +22,40 @@ class ReportsScreen extends ConsumerStatefulWidget {
   ConsumerState<ReportsScreen> createState() => _ReportsScreenState();
 }
 
+/// Report window. Kept as intent rather than a bare month count because YTD
+/// resolves to whatever month it currently is — in March that is 3, in June 6
+/// — which would collide with the fixed windows and light two chips at once.
+enum _Period {
+  mtd,
+  m3,
+  m6,
+  m12,
+  ytd;
+
+  /// Months back from the start of the current month, which is how the
+  /// provider windows its query.
+  int get months => switch (this) {
+        _Period.mtd => 1,
+        _Period.m3  => 3,
+        _Period.m6  => 6,
+        _Period.m12 => 12,
+        // January YTD is one month, December YTD is twelve.
+        _Period.ytd => DateTime.now().month,
+      };
+
+  String get label => switch (this) {
+        _Period.mtd => 'MTD',
+        _Period.m3  => '3M',
+        _Period.m6  => '6M',
+        _Period.m12 => '12M',
+        _Period.ytd => 'YTD',
+      };
+}
+
 class _ReportsScreenState extends ConsumerState<ReportsScreen> {
-  int         _months       = 1;
+  // Year to date by default: the window people actually reason about, and
+  // wide enough for the multi-month sections to have something to say.
+  _Period     _period       = _Period.ytd;
   int         _touchedIdx   = -1;
   Set<String> _excludedCats = {};
 
@@ -45,7 +77,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   @override
   Widget build(BuildContext context) {
     final cs    = Theme.of(context).colorScheme;
-    final async = ref.watch(reportsProvider(_months));
+    final async = ref.watch(reportsProvider(_period.months));
 
     return Scaffold(
       backgroundColor: cs.surface,
@@ -75,7 +107,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                         fontSize: 12, color: cs.onSurfaceVariant),
                   ),
                   TextButton(
-                    onPressed: () => ref.invalidate(reportsProvider(_months)),
+                    onPressed: () => ref.invalidate(reportsProvider(_period.months)),
                     child: const Text('Retry'),
                   ),
                 ],
@@ -84,10 +116,11 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
           ),
           data: (data) => _ReportsBody(
             data:       data,
-            months:     _months,
+            period:     _period,
+            months:     _period.months,
             touchedIdx: _touchedIdx,
-            onMonthsChanged:     (m) => setState(() {
-              _months = m; _touchedIdx = -1; _excludedCats = {};
+            onPeriodChanged:     (p) => setState(() {
+              _period = p; _touchedIdx = -1; _excludedCats = {};
             }),
             onTouchedIdxChanged: (i) => setState(() => _touchedIdx = i),
             onDrillDown:         (cat, color) => _showDeepDive(context, data, cat, color),
@@ -115,7 +148,8 @@ class _ReportsBody extends StatelessWidget {
   final int months;
   final int touchedIdx;
   final Set<String> excludedCats;
-  final ValueChanged<int> onMonthsChanged;
+  final _Period period;
+  final ValueChanged<_Period> onPeriodChanged;
   final ValueChanged<int> onTouchedIdxChanged;
   final void Function(CategorySpend, Color) onDrillDown;
   final void Function(String) onExclude;
@@ -125,7 +159,8 @@ class _ReportsBody extends StatelessWidget {
     required this.months,
     required this.touchedIdx,
     required this.excludedCats,
-    required this.onMonthsChanged,
+    required this.period,
+    required this.onPeriodChanged,
     required this.onTouchedIdxChanged,
     required this.onDrillDown,
     required this.onExclude,
@@ -147,7 +182,7 @@ class _ReportsBody extends StatelessWidget {
                         fontSize: 24, fontWeight: FontWeight.w800,
                         color: Theme.of(context).colorScheme.onSurface)),
                 const SizedBox(height: 14),
-                _PeriodSelector(months: months, onChanged: onMonthsChanged),
+                _PeriodSelector(period: period, onChanged: onPeriodChanged),
                 const SizedBox(height: 20),
               ],
             ),
@@ -218,24 +253,24 @@ class _ReportsBody extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _PeriodSelector extends StatelessWidget {
-  final int months;
-  final ValueChanged<int> onChanged;
+  final _Period period;
+  final ValueChanged<_Period> onChanged;
 
-  const _PeriodSelector({required this.months, required this.onChanged});
+  const _PeriodSelector({required this.period, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Row(
-      children: [1, 3, 6, 12].map((m) {
-        final selected = months == m;
-        final label    = m == 1 ? '1M' : m == 12 ? '12M' : '${m}M';
+      children: _Period.values.map((p) {
+        final selected = period == p;
+        final label    = p.label;
         return Expanded(
           child: GestureDetector(
-            onTap: () => onChanged(m),
+            onTap: () => onChanged(p),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 150),
-              margin: const EdgeInsets.symmetric(horizontal: 3),
+              margin: const EdgeInsets.symmetric(horizontal: 2),
               padding: const EdgeInsets.symmetric(vertical: 8),
               decoration: BoxDecoration(
                 color: selected ? cs.primaryContainer : cs.surfaceContainerHigh,
