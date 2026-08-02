@@ -69,14 +69,8 @@ class BudgetScreen extends ConsumerWidget {
                     onCategoryTap: onCategoryTap,
                   ),
       ),
-      // FAB only on mobile — desktop uses group [+] buttons or split view
-      floatingActionButton: (isThreeCol || wideEnough) ? null : FloatingActionButton.extended(
-        onPressed: () => _showAddCategorySheet(context, ref),
-        backgroundColor: cs.primary,
-        foregroundColor: cs.onPrimary,
-        icon:  const Icon(Icons.add),
-        label: const Text('Add Category'),
-      ),
+      // No FAB: the list ends with an Add Category button, and each group has
+      // its own inline add, so a floating one only covered the last row.
     );
   }
 }
@@ -678,9 +672,12 @@ class _PanelEntryRow extends ConsumerWidget {
               ],
             ),
           ),
-          ColoredBox(
-            color: cs.primary.withValues(alpha: 0.07),
-            child: _InlineBudgetAmount(
+          // No column tint behind N/A — the shading marks a cell that holds a
+          // figure, and a card envelope's never does.
+          _tintIfBudgetable(
+            entry,
+            cs,
+            _InlineBudgetAmount(
               entry:      entry,
               month:      month,
               width:      _kPanelColW,
@@ -1045,47 +1042,75 @@ class _BudgetHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       child: Column(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              IconButton(
-                onPressed: onPrev,
-                icon: const Icon(Icons.chevron_left),
-                style: IconButton.styleFrom(backgroundColor: cs.surfaceContainerHigh),
-              ),
-              Text(DateFormat('MMMM yyyy').format(month),
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 18, fontWeight: FontWeight.w700, color: cs.onSurface)),
-              IconButton(
-                onPressed: onNext,
-                icon: const Icon(Icons.chevron_right),
-                style: IconButton.styleFrom(backgroundColor: cs.surfaceContainerHigh),
-              ),
-              // Switch to 3-col on wide screens
-              if (MediaQuery.sizeOf(context).width >= _k3ColBreak)
-                Padding(
-                  padding: const EdgeInsets.only(left: 4),
-                  child: IconButton(
-                    tooltip: 'Compare 3 months',
-                    icon: const Icon(Icons.view_column_outlined, size: 18),
-                    onPressed: () => ref
-                        .read(budgetThreeColPrefProvider.notifier)
-                        .state = true,
-                    style: IconButton.styleFrom(
-                      backgroundColor: cs.surfaceContainerHigh,
-                      padding: const EdgeInsets.all(6),
-                    ),
+          // Chevrons anchor the ends, month and Quick Budget sit centred
+          // between them. The layout toggle moves inside the right chevron
+          // rather than trailing it, with a matching gap on the left so the
+          // centre stays true.
+          Builder(builder: (ctx) {
+            final showToggle =
+                MediaQuery.sizeOf(ctx).width >= _k3ColBreak;
+            return Row(
+              children: [
+                IconButton(
+                  onPressed: onPrev,
+                  icon: const Icon(Icons.chevron_left),
+                  style: IconButton.styleFrom(
+                      backgroundColor: cs.surfaceContainerHigh),
+                ),
+                if (showToggle) const SizedBox(width: 44),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(DateFormat('MMMM yyyy').format(month),
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: cs.onSurface)),
+                      TextButton.icon(
+                        onPressed: () =>
+                            _showQuickBudgetSheet(context, month, ref),
+                        icon: Icon(Icons.auto_awesome,
+                            size: 15, color: cs.primary),
+                        label: Text('Quick Budget',
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: cs.primary)),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-            ],
-          ),
-          TextButton.icon(
-            onPressed: () => _showQuickBudgetSheet(context, month, ref),
-            icon:  Icon(Icons.auto_awesome, size: 15, color: cs.primary),
-            label: Text('Quick Budget',
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 12, fontWeight: FontWeight.w600, color: cs.primary)),
-          ),
+                if (showToggle)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: IconButton(
+                      tooltip: 'Compare 3 months',
+                      icon: const Icon(Icons.view_column_outlined, size: 18),
+                      onPressed: () => ref
+                          .read(budgetThreeColPrefProvider.notifier)
+                          .state = true,
+                      style: IconButton.styleFrom(
+                        backgroundColor: cs.surfaceContainerHigh,
+                        padding: const EdgeInsets.all(6),
+                      ),
+                    ),
+                  ),
+                IconButton(
+                  onPressed: onNext,
+                  icon: const Icon(Icons.chevron_right),
+                  style: IconButton.styleFrom(
+                      backgroundColor: cs.surfaceContainerHigh),
+                ),
+              ],
+            );
+          }),
           const SizedBox(height: 6),
 
           // ── TBB breakdown card ─────────────────────────────────────────────
@@ -1569,6 +1594,13 @@ class _InactiveCategoriesSheet extends ConsumerWidget {
     );
   }
 }
+
+/// Wraps a budget cell in the column tint, except for card envelopes whose
+/// cell reads N/A — shading an unfillable cell implies a figure belongs there.
+Widget _tintIfBudgetable(BudgetEntry entry, ColorScheme cs, Widget child) =>
+    entry.ccAccountId != null
+        ? child
+        : ColoredBox(color: cs.primary.withValues(alpha: 0.07), child: child);
 
 // ---------------------------------------------------------------------------
 // Overspend carry arrow — inline toggle on an overspent category row
@@ -2139,14 +2171,14 @@ class _CategoryTableRow extends ConsumerWidget {
                 ),
                 if (isWide) ...[
                   // Tapping the budgeted cell edits it inline.
-                  ColoredBox(
-                    color: cs.primary.withValues(alpha: 0.07),
-                    child: _InlineBudgetAmount(entry: entry),
-                  ),
+                  _tintIfBudgetable(
+                      entry, cs, _InlineBudgetAmount(entry: entry)),
                   _NumCell(entry.activity, cs.onSurfaceVariant),
                 ] else
-                  _NumCell(entry.budgeted, cs.onSurface,
-                      bg: cs.primary.withValues(alpha: 0.07)),
+                  // Narrow shares the same cell so a card envelope reads N/A
+                  // here too rather than a misleading $0.
+                  _tintIfBudgetable(
+                      entry, cs, _InlineBudgetAmount(entry: entry)),
                 Tooltip(
                   message: _availBreakdown(entry, month),
                   child: _NumCell(entry.balance, availColor, bold: true,
