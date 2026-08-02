@@ -23,6 +23,10 @@ create type account_type           as enum ('checking', 'savings', 'credit_card'
 create type pay_frequency          as enum ('weekly', 'biweekly', 'monthly');
 create type rollover_behavior      as enum ('rollover', 'zero_out');
 create type overspending_behavior  as enum ('reduce_tbb', 'carry_forward');
+-- How much choice you have over a group's spending, for the committed-vs-free
+-- report. Classified per group because the group is where that intent already
+-- lives; inferring it from recurrence conflates habitual with obligatory.
+create type spending_tier         as enum ('fixed', 'essential', 'discretionary');
 create type transaction_status     as enum ('pending_review', 'confirmed');
 create type scheduled_frequency    as enum ('once', 'weekly', 'biweekly', 'monthly', 'yearly');
 create type goal_type              as enum ('target_by_date', 'monthly_savings', 'monthly_spending');
@@ -94,6 +98,7 @@ create table category_groups (
     name          text not null,
     sort_order    integer not null default 0,
     is_hidden     boolean not null default false,
+    spending_tier spending_tier,
     deleted_at    timestamptz,
     created_at    timestamptz not null default now(),
     updated_at    timestamptz not null default now()

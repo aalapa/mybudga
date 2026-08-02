@@ -24,6 +24,12 @@ class ReportsState {
   /// Used for the inline weekly / daily drill-down chart.
   final Map<String, Map<String, double>> categoryDailySpend;
 
+  /// Outflow split by how much choice you have over it, one entry per month.
+  final List<TierMonth> byTierMonth;
+
+  /// Every group with its classification, for the inline editor.
+  final List<GroupTier> groupTiers;
+
   // Net-worth snapshot (from accounts — not period-scoped)
   final double totalAssets;
   final double totalLiabilities;
@@ -37,6 +43,8 @@ class ReportsState {
     required this.budgetVsActual,
     required this.categoryMonthlySpend,
     required this.categoryDailySpend,
+    this.byTierMonth = const [],
+    this.groupTiers  = const [],
     required this.totalAssets,
     required this.totalLiabilities,
   });
@@ -46,6 +54,88 @@ class ReportsState {
       ? (netSavings / totalIncome).clamp(-1.0, 1.0)
       : 0;
   double get netWorth    => totalAssets - totalLiabilities;
+
+  double tierTotal(SpendingTier t) =>
+      byTierMonth.fold(0.0, (sum, m) => sum + m.amountOf(t));
+
+  double get classifiedOutflow =>
+      byTierMonth.fold(0.0, (sum, m) => sum + m.total);
+
+  /// Share across the whole period, 0–1.
+  double tierShare(SpendingTier t) =>
+      classifiedOutflow > 0 ? tierTotal(t) / classifiedOutflow : 0;
+}
+
+/// How much choice you have over a group's spending.
+///
+/// Classified per group rather than inferred, because recurrence does not
+/// imply obligation — groceries recur weekly and the amount is entirely
+/// yours, rent recurs and it is not.
+enum SpendingTier {
+  fixed,
+  essential,
+  discretionary;
+
+  static SpendingTier fromDb(String? s) => switch (s) {
+        'fixed'         => SpendingTier.fixed,
+        'discretionary' => SpendingTier.discretionary,
+        _               => SpendingTier.essential,
+      };
+
+  String get toDb => name;
+
+  String get label => switch (this) {
+        SpendingTier.fixed         => 'Fixed',
+        SpendingTier.essential     => 'Essential',
+        SpendingTier.discretionary => 'Discretionary',
+      };
+
+  String get blurb => switch (this) {
+        SpendingTier.fixed => 'Same amount, same time — owed before you decide anything',
+        SpendingTier.essential => 'You have to spend it; how much flexes',
+        SpendingTier.discretionary => 'Genuinely yours to choose',
+      };
+}
+
+/// One month's outflow split by tier. Amounts are positive.
+class TierMonth {
+  final DateTime month;
+  final double fixed;
+  final double essential;
+  final double discretionary;
+
+  const TierMonth({
+    required this.month,
+    required this.fixed,
+    required this.essential,
+    required this.discretionary,
+  });
+
+  double get total => fixed + essential + discretionary;
+
+  double amountOf(SpendingTier t) => switch (t) {
+        SpendingTier.fixed         => fixed,
+        SpendingTier.essential     => essential,
+        SpendingTier.discretionary => discretionary,
+      };
+
+  /// Share of the month's classified outflow, 0–1.
+  double shareOf(SpendingTier t) => total > 0 ? amountOf(t) / total : 0;
+}
+
+/// A group and how it is classified, for the inline editor.
+class GroupTier {
+  final String id;
+  final String name;
+  final SpendingTier tier;
+  /// True when nobody has classified it and the default is a guess.
+  final bool isDefault;
+  const GroupTier({
+    required this.id,
+    required this.name,
+    required this.tier,
+    required this.isDefault,
+  });
 }
 
 class CategorySpend {
@@ -130,7 +220,9 @@ final reportsProvider = FutureProvider.autoDispose
   final results = await Future.wait([
     client
         .from('transactions')
-        .select('date, amount, categories(id, name), payees(name)')
+        .select('date, amount, payees(name), '
+            'categories(id, name, linked_account_id, '
+            'category_groups(id, name, spending_tier))')
         .eq('household_id', householdId)
         .gte('date', startStr)
         .isFilter('deleted_at', null)
@@ -155,11 +247,35 @@ final reportsProvider = FutureProvider.autoDispose
   final Map<String, Map<String, double>> catMonthAgg = {}; // catId → monthKey → amt
   final Map<String, Map<String, double>> catDayAgg   = {}; // catId → 'yyyy-MM-dd' → amt
 
+  // monthKey → tier → amount, plus every group seen and how it is classified.
+  final Map<String, Map<SpendingTier, double>> tierAgg = {};
+  final Map<String, GroupTier> groupTierMap = {};
+
   for (final r in res) {
     final amount = (r['amount'] as num).toDouble();
     final date   = DateTime.parse(r['date'] as String);
     final cat    = r['categories'] as Map<String, dynamic>?;
     final payee  = r['payees']     as Map<String, dynamic>?;
+
+    // Outflow by tier. Card payment envelopes are skipped: their charges are
+    // already counted against the categories they were booked to, so including
+    // both would double every card purchase.
+    if (amount < 0 && cat != null && cat['linked_account_id'] == null) {
+      final grp = cat['category_groups'] as Map<String, dynamic>?;
+      if (grp != null) {
+        final raw  = grp['spending_tier'] as String?;
+        final gid  = grp['id']   as String;
+        final gnm  = grp['name'] as String;
+        final tier = raw != null
+            ? SpendingTier.fromDb(raw)
+            : _defaultTierFor(gnm);
+        groupTierMap[gid] = GroupTier(
+            id: gid, name: gnm, tier: tier, isDefault: raw == null);
+        final mk = '${date.year}-${date.month.toString().padLeft(2, '0')}';
+        (tierAgg[mk] ??= {})
+            .update(tier, (v) => v + amount.abs(), ifAbsent: () => amount.abs());
+      }
+    }
 
     if (amount > 0) {
       totalIncome += amount;
@@ -243,6 +359,23 @@ final reportsProvider = FutureProvider.autoDispose
       .map((m) => MonthData(month: m.month, income: m.income, expenses: m.expenses))
       .toList();
 
+  // ── Outflow by tier, aligned to the same month axis as byMonth ───────────
+  final byTierMonth = sortedMonthKeys.map((k) {
+    final t = tierAgg[k] ?? const {};
+    return TierMonth(
+      month:         monthMap[k]!.month,
+      fixed:         t[SpendingTier.fixed]         ?? 0,
+      essential:     t[SpendingTier.essential]     ?? 0,
+      discretionary: t[SpendingTier.discretionary] ?? 0,
+    );
+  }).toList();
+
+  final groupTiers = groupTierMap.values.toList()
+    ..sort((a, b) {
+      final c = a.tier.index.compareTo(b.tier.index);
+      return c != 0 ? c : a.name.compareTo(b.name);
+    });
+
   // ── Per-category monthly spend (for deep-dive chart) ─────────────────────
   final categoryMonthlySpend = <String, List<double>>{
     for (final catId in catMonthAgg.keys)
@@ -309,6 +442,8 @@ final reportsProvider = FutureProvider.autoDispose
     budgetVsActual:       budgetVsActual,
     categoryMonthlySpend: categoryMonthlySpend,
     categoryDailySpend:   catDayAgg,
+    byTierMonth:          byTierMonth,
+    groupTiers:           groupTiers,
     totalAssets:          totalAssets,
     totalLiabilities:     totalLiabilities,
   );
@@ -375,3 +510,44 @@ final lifetimeSavingsRateProvider =
       ? ((income - expenses) / income).clamp(-1.0, 1.0)
       : 0.0;
 });
+
+
+// ---------------------------------------------------------------------------
+// Spending tier
+// ---------------------------------------------------------------------------
+
+/// Best guess for a group nobody has classified yet, from the seeded taxonomy
+/// (Immediate Obligations, True Expenses, Debt Payments, Quality of Life
+/// Goals, Just for Fun) which is already ordered by how much choice you have.
+/// Only ever a starting point — the report marks these as unconfirmed.
+SpendingTier _defaultTierFor(String groupName) {
+  final n = groupName.toLowerCase();
+  if (n.contains('obligation') ||
+      n.contains('debt') ||
+      n.contains('loan') ||
+      n.contains('credit card')) {
+    return SpendingTier.fixed;
+  }
+  if (n.contains('fun') ||
+      n.contains('quality of life') ||
+      n.contains('discretion') ||
+      n.contains('want')) {
+    return SpendingTier.discretionary;
+  }
+  return SpendingTier.essential;
+}
+
+/// Persists a group's classification. Kept as a function rather than a
+/// notifier because reportsProvider is a plain family provider.
+Future<void> setGroupSpendingTier(
+  WidgetRef ref,
+  String groupId,
+  SpendingTier tier,
+) async {
+  final client = ref.read(supabaseProvider);
+  await client
+      .from('category_groups')
+      .update({'spending_tier': tier.toDb})
+      .eq('id', groupId);
+  ref.invalidate(reportsProvider);
+}

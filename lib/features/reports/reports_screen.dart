@@ -179,6 +179,9 @@ class _ReportsBody extends StatelessWidget {
               : const SizedBox.shrink(),
         ),
 
+        // ── Committed vs free ───────────────────────────────────────────────
+        SliverToBoxAdapter(child: _SpendingTierSection(data: data)),
+
         // ── Top payees ──────────────────────────────────────────────────────
         SliverToBoxAdapter(
           child: data.topPayees.isEmpty
@@ -1694,6 +1697,285 @@ class _PayeesSection extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // Empty section placeholder
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Committed vs free — outflow split by how much choice you have over it
+// ---------------------------------------------------------------------------
+
+const _tierColors = <SpendingTier, Color>{
+  SpendingTier.fixed:         Color(0xFF6C63FF),
+  SpendingTier.essential:     Color(0xFF42A5F5),
+  SpendingTier.discretionary: Color(0xFF00BFA5),
+};
+
+class _SpendingTierSection extends ConsumerStatefulWidget {
+  final ReportsState data;
+  const _SpendingTierSection({required this.data});
+
+  @override
+  ConsumerState<_SpendingTierSection> createState() =>
+      _SpendingTierSectionState();
+}
+
+class _SpendingTierSectionState extends ConsumerState<_SpendingTierSection> {
+  bool _editing = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs   = Theme.of(context).colorScheme;
+    final data = widget.data;
+    final fmt  = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+
+    if (data.byTierMonth.isEmpty || data.classifiedOutflow <= 0) {
+      return const _EmptySection(
+        label: 'Committed vs free',
+        message: 'No categorised spending in this period yet.',
+      );
+    }
+
+    final unconfirmed = data.groupTiers.where((g) => g.isDefault).length;
+
+    return _Section(
+      label: 'Committed vs free',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Period headline ──────────────────────────────────────────────
+          Row(
+            children: [
+              for (final t in SpendingTier.values) ...[
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 8, height: 8,
+                            decoration: BoxDecoration(
+                              color: _tierColors[t],
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(t.label,
+                              style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: cs.onSurfaceVariant)),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text('${(data.tierShare(t) * 100).round()}%',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800,
+                              color: cs.onSurface)),
+                      Text(fmt.format(data.tierTotal(t)),
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11, color: cs.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Of every dollar that left, '
+            '${(data.tierShare(SpendingTier.discretionary) * 100).round()}c was '
+            'genuinely yours to choose.',
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 12, color: cs.onSurfaceVariant),
+          ),
+          const SizedBox(height: 18),
+
+          // ── Month-by-month share ─────────────────────────────────────────
+          Text('SHARE BY MONTH',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
+                  color: cs.onSurfaceVariant)),
+          const SizedBox(height: 10),
+          ...data.byTierMonth.map((m) => _TierMonthRow(month: m)),
+
+          const SizedBox(height: 14),
+          // ── Classification ───────────────────────────────────────────────
+          InkWell(
+            onTap: () => setState(() => _editing = !_editing),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                children: [
+                  Icon(_editing ? Icons.expand_less : Icons.tune,
+                      size: 15, color: cs.primary),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      unconfirmed > 0
+                          ? 'How groups are classified · $unconfirmed guessed'
+                          : 'How groups are classified',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: cs.primary),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_editing) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Recurring is not the same as obligatory, so this is not '
+              'inferred. Groups start from a guess based on their name — '
+              'correct any that are wrong.',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11, color: cs.onSurfaceVariant),
+            ),
+            const SizedBox(height: 10),
+            ...data.groupTiers.map((g) => _GroupTierRow(group: g)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// One month as a 100%-wide stacked bar, so the mix is comparable across
+/// months regardless of how much was spent.
+class _TierMonthRow extends StatelessWidget {
+  final TierMonth month;
+  const _TierMonthRow({required this.month});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    if (month.total <= 0) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 38,
+            child: Text(DateFormat('MMM').format(month.month),
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11, color: cs.onSurfaceVariant)),
+          ),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: SizedBox(
+                height: 16,
+                child: Row(
+                  children: [
+                    for (final t in SpendingTier.values)
+                      if (month.shareOf(t) > 0)
+                        Expanded(
+                          flex: (month.shareOf(t) * 1000).round(),
+                          child: ColoredBox(color: _tierColors[t]!),
+                        ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 34,
+            child: Text(
+              '${(month.shareOf(SpendingTier.discretionary) * 100).round()}%',
+              textAlign: TextAlign.right,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: _tierColors[SpendingTier.discretionary],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GroupTierRow extends ConsumerWidget {
+  final GroupTier group;
+  const _GroupTierRow({required this.group});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(group.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12, color: cs.onSurface)),
+                ),
+                if (group.isDefault) ...[
+                  const SizedBox(width: 6),
+                  Text('guessed',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10,
+                          fontStyle: FontStyle.italic,
+                          color: cs.onSurfaceVariant.withValues(alpha: 0.7))),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          for (final t in SpendingTier.values)
+            Padding(
+              padding: const EdgeInsets.only(left: 4),
+              child: Tooltip(
+                message: t.blurb,
+                child: InkWell(
+                  onTap: () => setGroupSpendingTier(ref, group.id, t),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: group.tier == t
+                          ? _tierColors[t]!.withValues(alpha: 0.18)
+                          : null,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: group.tier == t
+                            ? _tierColors[t]!
+                            : cs.outlineVariant.withValues(alpha: 0.6),
+                      ),
+                    ),
+                    child: Text(
+                      t.label.substring(0, 1),
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: group.tier == t
+                            ? _tierColors[t]
+                            : cs.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
 
 class _EmptySection extends StatelessWidget {
   final String label;
