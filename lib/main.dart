@@ -63,8 +63,25 @@ class MyBudgaApp extends ConsumerWidget {
       themeMode:    themePref.mode,
       routerConfig: router,
       debugShowCheckedModeBanner: false,
-      builder: (context, child) =>
-          AppLockOverlay(child: child ?? const SizedBox.shrink()),
+      // Text scaling is applied here rather than at 600-odd call sites: a
+      // TextScaler multiplies every font size at paint time, so the whole app
+      // follows one preference without a single widget knowing about it.
+      //
+      // Composed with the platform's own factor rather than replacing it, so
+      // an OS accessibility setting still counts — the app previously ignored
+      // it entirely. Clamped because the budget's fixed-width numeric columns
+      // start clipping beyond roughly 1.3.
+      builder: (context, child) {
+        final mq = MediaQuery.of(context);
+        final platformFactor = mq.textScaler.scale(100) / 100;
+        return MediaQuery(
+          data: mq.copyWith(
+            textScaler: TextScaler.linear(
+                (platformFactor * themePref.textScale).clamp(0.85, 1.3)),
+          ),
+          child: AppLockOverlay(child: child ?? const SizedBox.shrink()),
+        );
+      },
     );
   }
 }

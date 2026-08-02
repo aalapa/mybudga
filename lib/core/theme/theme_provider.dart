@@ -8,6 +8,7 @@ const _kSeedColor    = 'pref_seed_color';    // ARGB int
 const _kCardStyle    = 'pref_card_style';    // CardStyle.index
 const _kCardRadius   = 'pref_card_radius';   // CardRadius.index
 const _kSidebarColor = 'pref_sidebar_color'; // ARGB int, 0 = default
+const _kTextScale    = 'pref_text_scale';    // double, 1.0 = default
 
 // ── Default seed ────────────────────────────────────────────────────────────
 const _kDefaultSeedValue = 0xFF5C00F2; // Electric Indigo
@@ -93,12 +94,18 @@ class ThemeSettings {
   /// null = use default theme surface; non-null = custom sidebar background.
   final Color?     sidebarColor;
 
+  /// Multiplier applied on top of the platform's own text scaling, so the
+  /// app honours an OS accessibility setting and this preference together
+  /// rather than overriding it.
+  final double     textScale;
+
   const ThemeSettings({
     required this.mode,
     required this.seedColor,
     this.cardStyle   = CardStyle.flat,
     this.cardRadius  = CardRadius.standard,
     this.sidebarColor,
+    this.textScale = 1.0,
   });
 
   ThemeSettings copyWith({
@@ -108,12 +115,14 @@ class ThemeSettings {
     CardRadius? cardRadius,
     Color?      sidebarColor,
     bool        clearSidebarColor = false,
+    double?     textScale,
   }) => ThemeSettings(
     mode:         mode       ?? this.mode,
     seedColor:    seedColor  ?? this.seedColor,
     cardStyle:    cardStyle  ?? this.cardStyle,
     cardRadius:   cardRadius ?? this.cardRadius,
     sidebarColor: clearSidebarColor ? null : (sidebarColor ?? this.sidebarColor),
+    textScale:    textScale  ?? this.textScale,
   );
 }
 
@@ -144,6 +153,7 @@ class ThemeNotifier extends StateNotifier<ThemeSettings> {
           sidebarColor: _prefs.getInt(_kSidebarColor) is int
               ? Color(_prefs.getInt(_kSidebarColor)!)
               : null,
+          textScale: (_prefs.getDouble(_kTextScale) ?? 1.0).clamp(0.9, 1.2),
         ));
 
   Future<void> setMode(ThemeMode mode) async {
@@ -164,6 +174,15 @@ class ThemeNotifier extends StateNotifier<ThemeSettings> {
   Future<void> setCardRadius(CardRadius radius) async {
     state = state.copyWith(cardRadius: radius);
     await _prefs.setInt(_kCardRadius, radius.index);
+  }
+
+  /// Steps rather than a free slider: fractional sizes read badly, and the
+  /// budget's fixed-width numeric columns start clipping past ~1.2.
+  static const textScaleSteps = <double>[0.9, 1.0, 1.1, 1.2];
+
+  Future<void> setTextScale(double scale) async {
+    state = state.copyWith(textScale: scale);
+    await _prefs.setDouble(_kTextScale, scale);
   }
 
   Future<void> setSidebarColor(Color? color) async {

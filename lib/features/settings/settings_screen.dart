@@ -953,6 +953,44 @@ class _AppearanceCard extends ConsumerWidget {
             const Divider(height: 1),
             const SizedBox(height: 14),
 
+            // ── Text size ─────────────────────────────────────────────────
+            Row(
+              children: [
+                Icon(Icons.format_size, size: 18, color: cs.onSurfaceVariant),
+                const SizedBox(width: 10),
+                Text('Text Size',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14, fontWeight: FontWeight.w600,
+                        color: cs.onSurface)),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Applies on top of your device text size.',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11, color: cs.onSurfaceVariant),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                for (final step in ThemeNotifier.textScaleSteps)
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: _TextScaleChip(
+                        scale:      step,
+                        isSelected: (settings.textScale - step).abs() < 0.001,
+                        onTap:      () => notifier.setTextScale(step),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+
+            const SizedBox(height: 20),
+            const Divider(height: 1),
+            const SizedBox(height: 14),
+
             // ── Sidebar colour ────────────────────────────────────────────
             Row(
               children: [
@@ -1856,6 +1894,74 @@ class _HueBarPainter extends CustomPainter {
 // ── Single colour swatch circle ───────────────────────────────────────────────
 
 // ── Sidebar colour swatch ─────────────────────────────────────────────────────
+
+/// One text-size step. Renders its own label at the size it represents, so the
+/// choice is previewed rather than described.
+class _TextScaleChip extends StatelessWidget {
+  final double scale;
+  final bool isSelected;
+  final VoidCallback onTap;
+  const _TextScaleChip({
+    required this.scale,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  // Matched by comparison rather than map lookup: doubles are poor keys, and
+  // a rounding difference would silently blank the label.
+  static String _labelFor(double s) => s < 0.95
+      ? 'Small'
+      : s < 1.05
+          ? 'Default'
+          : s < 1.15
+              ? 'Large'
+              : 'Larger';
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? cs.primaryContainer : cs.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(10),
+          border: isSelected
+              ? Border.all(color: cs.primary.withValues(alpha: 0.5))
+              : null,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Fixed against the scaler so the preview shows the difference
+            // instead of every option growing together.
+            MediaQuery.withNoTextScaling(
+              child: Text('Aa',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13 * scale,
+                    fontWeight: FontWeight.w700,
+                    color: isSelected ? cs.onPrimaryContainer : cs.onSurface,
+                  )),
+            ),
+            const SizedBox(height: 2),
+            MediaQuery.withNoTextScaling(
+              child: Text(_labelFor(scale),
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 10,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                    color: isSelected
+                        ? cs.onPrimaryContainer
+                        : cs.onSurfaceVariant,
+                  )),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _SidebarColorSwatch extends StatelessWidget {
   final Color?       color;     // null = Default
