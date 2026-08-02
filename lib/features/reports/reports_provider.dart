@@ -34,6 +34,10 @@ class ReportsState {
   /// Per-category budget accuracy, overspend recurrence and predictability.
   final List<CategoryHealth> categoryHealth;
 
+  /// Net worth per month, oldest first. Empty for a single-month window,
+  /// where there is no trend to draw.
+  final List<NetWorthPoint> netWorthByMonth;
+
   // Net-worth snapshot (from accounts — not period-scoped)
   final double totalAssets;
   final double totalLiabilities;
@@ -49,7 +53,8 @@ class ReportsState {
     required this.categoryDailySpend,
     this.byTierMonth    = const [],
     this.groupTiers     = const [],
-    this.categoryHealth = const [],
+    this.categoryHealth  = const [],
+    this.netWorthByMonth = const [],
     required this.totalAssets,
     required this.totalLiabilities,
   });
@@ -126,6 +131,21 @@ class TierMonth {
 
   /// Share of the month's classified outflow, 0–1.
   double shareOf(SpendingTier t) => total > 0 ? amountOf(t) / total : 0;
+}
+
+/// Net worth at the end of one month, reconstructed rather than recorded.
+class NetWorthPoint {
+  final DateTime month;
+  final double assets;
+  final double liabilities; // positive
+
+  const NetWorthPoint({
+    required this.month,
+    required this.assets,
+    required this.liabilities,
+  });
+
+  double get netWorth => assets - liabilities;
 }
 
 /// How predictable a category's monthly spend is.
@@ -301,7 +321,7 @@ final reportsProvider = FutureProvider.autoDispose
   final results = await Future.wait([
     client
         .from('transactions')
-        .select('date, amount, payees(name), '
+        .select('date, amount, account_id, payees(name), '
             'categories(id, name, linked_account_id, '
             'category_groups(id, name, spending_tier))')
         .eq('household_id', householdId)
@@ -333,11 +353,21 @@ final reportsProvider = FutureProvider.autoDispose
   final Map<String, Map<SpendingTier, double>> tierAgg = {};
   final Map<String, GroupTier> groupTierMap = {};
 
+  // accountId → monthKey → net movement, for reconstructing past balances.
+  final Map<String, Map<String, double>> acctMonthDelta = {};
+
   for (final r in res) {
     final amount = (r['amount'] as num).toDouble();
     final date   = DateTime.parse(r['date'] as String);
     final cat    = r['categories'] as Map<String, dynamic>?;
     final payee  = r['payees']     as Map<String, dynamic>?;
+
+    final acctId = r['account_id'] as String?;
+    if (acctId != null) {
+      final mk = '${date.year}-${date.month.toString().padLeft(2, '0')}';
+      (acctMonthDelta[acctId] ??= {})
+          .update(mk, (v) => v + amount, ifAbsent: () => amount);
+    }
 
     // Outflow by tier. Card payment envelopes are skipped: their charges are
     // already counted against the categories they were booked to, so including
@@ -583,6 +613,41 @@ final reportsProvider = FutureProvider.autoDispose
     }
   }
 
+  // ── Net worth per month, unwound backwards from today's balances ─────────
+  // Balances are only stored as they stand now, so history is reconstructed:
+  // the balance at the end of a month is today's balance minus everything
+  // that has moved since. Built backwards for that reason — forwards from
+  // transactions alone would miss every opening balance that was set on the
+  // account rather than recorded as a transaction, which for a house, a 401k
+  // or a mortgage is nearly the whole figure.
+  final netWorthByMonth = <NetWorthPoint>[];
+  if (sortedMonthKeys.length > 1) {
+    final active = accounts.where((a) => a.isActive).toList();
+    for (var i = 0; i < sortedMonthKeys.length; i++) {
+      double assets = 0, liabilities = 0;
+      for (final a in active) {
+        // Everything that moved after this month, so it can be taken back off.
+        var movedSince = 0.0;
+        for (var j = i + 1; j < sortedMonthKeys.length; j++) {
+          movedSince += acctMonthDelta[a.id]?[sortedMonthKeys[j]] ?? 0.0;
+        }
+        final bal = a.balance - movedSince;
+        // Sign, not account type: a card in credit is an asset that month,
+        // and the live snapshot above reads it the same way.
+        if (bal >= 0) {
+          assets += bal;
+        } else {
+          liabilities += bal.abs();
+        }
+      }
+      netWorthByMonth.add(NetWorthPoint(
+        month:       monthMap[sortedMonthKeys[i]]!.month,
+        assets:      assets,
+        liabilities: liabilities,
+      ));
+    }
+  }
+
   return ReportsState(
     totalIncome:          totalIncome,
     totalExpenses:        totalExpenses,
@@ -595,6 +660,7 @@ final reportsProvider = FutureProvider.autoDispose
     byTierMonth:          byTierMonth,
     groupTiers:           groupTiers,
     categoryHealth:       categoryHealth,
+    netWorthByMonth:      netWorthByMonth,
     totalAssets:          totalAssets,
     totalLiabilities:     totalLiabilities,
   );

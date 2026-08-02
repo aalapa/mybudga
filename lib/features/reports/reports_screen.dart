@@ -600,6 +600,10 @@ class _NetWorthSection extends StatelessWidget {
                 style: GoogleFonts.plusJakartaSans(
                     fontSize: 12, color: cs.onSurfaceVariant)),
             const SizedBox(height: 16),
+            if (data.netWorthByMonth.length > 1) ...[
+              const SizedBox(height: 16),
+              _NetWorthTrend(points: data.netWorthByMonth),
+            ],
             _NetWorthBar(
               assets:      data.totalAssets,
               liabilities: data.totalLiabilities,
@@ -619,6 +623,162 @@ class _NetWorthSection extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Reconstructed net worth over time, with the movement split into money
+/// saved and debt paid down — very different things that a single line hides.
+class _NetWorthTrend extends StatelessWidget {
+  final List<NetWorthPoint> points;
+  const _NetWorthTrend({required this.points});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.compactCurrency(symbol: '\$', decimalDigits: 0);
+    final full = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+
+    final vals = points.map((p) => p.netWorth).toList();
+    final lo   = vals.reduce(min);
+    final hi   = vals.reduce(max);
+    final pad  = ((hi - lo).abs() * 0.15).clamp(1.0, double.infinity);
+    final yMin = lo - pad;
+    final yMax = hi + pad;
+
+    final first  = points.first;
+    final last   = points.last;
+    final change = last.netWorth - first.netWorth;
+    final saved  = last.assets - first.assets;
+    final paid   = first.liabilities - last.liabilities;
+    final up     = change >= 0;
+    final line   = up ? cs.tertiary : cs.error;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(up ? Icons.trending_up : Icons.trending_down,
+                size: 16, color: line),
+            const SizedBox(width: 6),
+            Text('${up ? '+' : '−'}${full.format(change.abs())}',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 15, fontWeight: FontWeight.w800, color: line)),
+            const SizedBox(width: 6),
+            Text('over ${points.length} months',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11, color: cs.onSurfaceVariant)),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '${saved >= 0 ? 'Saved' : 'Drew down'} '
+          '${full.format(saved.abs())} · '
+          '${paid >= 0 ? 'paid down' : 'took on'} '
+          '${full.format(paid.abs())} of debt',
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 11, color: cs.onSurfaceVariant),
+        ),
+        const SizedBox(height: 14),
+        SizedBox(
+          height: 150,
+          child: LineChart(
+            LineChartData(
+              minY: yMin,
+              maxY: yMax,
+              clipData: FlClipData.all(),
+              lineBarsData: [
+                LineChartBarData(
+                  spots: vals
+                      .asMap()
+                      .entries
+                      .map((e) => FlSpot(e.key.toDouble(), e.value))
+                      .toList(),
+                  isCurved: true,
+                  curveSmoothness: 0.3,
+                  color: line,
+                  barWidth: 2.5,
+                  dotData: FlDotData(
+                    show: points.length <= 13,
+                    getDotPainter: (sp, pct, bar, idx) => FlDotCirclePainter(
+                      radius: 3.5,
+                      color: line,
+                      strokeWidth: 2,
+                      strokeColor: cs.surface,
+                    ),
+                  ),
+                  belowBarData: BarAreaData(
+                    show: true,
+                    gradient: LinearGradient(
+                      colors: [
+                        line.withValues(alpha: 0.20),
+                        line.withValues(alpha: 0.0),
+                      ],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                    ),
+                  ),
+                ),
+              ],
+              borderData: FlBorderData(show: false),
+              gridData: FlGridData(
+                show: true,
+                drawVerticalLine: false,
+                horizontalInterval: (yMax - yMin) / 3,
+                getDrawingHorizontalLine: (_) => FlLine(
+                  color: cs.outlineVariant.withValues(alpha: 0.3),
+                  strokeWidth: 1,
+                  dashArray: [4, 4],
+                ),
+              ),
+              titlesData: FlTitlesData(
+                topTitles:
+                    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                rightTitles:
+                    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                leftTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    reservedSize: 46,
+                    interval: (yMax - yMin) / 3,
+                    getTitlesWidget: (v, _) => Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Text(fmt.format(v),
+                          textAlign: TextAlign.right,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 10, color: cs.onSurfaceVariant)),
+                    ),
+                  ),
+                ),
+                bottomTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    reservedSize: 22,
+                    interval: 1,
+                    getTitlesWidget: (v, _) {
+                      final i = v.toInt();
+                      if (i < 0 || i >= points.length) {
+                        return const SizedBox.shrink();
+                      }
+                      // Thin the labels so a 12-month window stays readable.
+                      final step = (points.length / 6).ceil();
+                      if (i % step != 0 && i != points.length - 1) {
+                        return const SizedBox.shrink();
+                      }
+                      return Text(DateFormat('MMM').format(points[i].month),
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 10, color: cs.onSurfaceVariant));
+                    },
+                  ),
+                ),
+              ),
+              lineTouchData: const LineTouchData(enabled: false),
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+      ],
     );
   }
 }
