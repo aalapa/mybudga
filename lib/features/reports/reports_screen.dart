@@ -2422,7 +2422,12 @@ class _SpendingTierSectionState extends ConsumerState<_SpendingTierSection> {
             children: [
               for (final t in SpendingTier.values) ...[
                 Expanded(
-                  child: Column(
+                  // Inset every column the same, so the first does not sit
+                  // flush against the section edge while the last trails
+                  // slack and the row reads shifted left.
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 4, right: 10),
+                    child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
@@ -2452,6 +2457,7 @@ class _SpendingTierSectionState extends ConsumerState<_SpendingTierSection> {
                           style: GoogleFonts.plusJakartaSans(
                               fontSize: 11, color: cs.onSurfaceVariant)),
                     ],
+                    ),
                   ),
                 ),
               ],
@@ -2549,30 +2555,36 @@ class _TierMonthRow extends StatelessWidget {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: SizedBox(
-                height: 16,
+                height: 20,
                 child: Row(
                   children: [
                     for (final t in SpendingTier.values)
                       if (month.shareOf(t) > 0)
                         Expanded(
                           flex: (month.shareOf(t) * 1000).round(),
-                          child: ColoredBox(color: _tierColors[t]!),
+                          child: ColoredBox(
+                            color: _tierColors[t]!,
+                            // Each share is written into its own segment, so
+                            // all three are labelled without a trailing column
+                            // eating the width the bar needs. Skipped on
+                            // slivers too narrow to hold the text, where it
+                            // would clip to nonsense.
+                            child: month.shareOf(t) >= 0.13
+                                ? Center(
+                                    child: Text(
+                                      '${(month.shareOf(t) * 100).round()}%',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  )
+                                : null,
+                          ),
                         ),
                   ],
                 ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 34,
-            child: Text(
-              '${(month.shareOf(SpendingTier.discretionary) * 100).round()}%',
-              textAlign: TextAlign.right,
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: _tierColors[SpendingTier.discretionary],
               ),
             ),
           ),
