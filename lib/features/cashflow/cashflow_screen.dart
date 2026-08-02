@@ -11,6 +11,7 @@ import '../emi/emi_screen.dart' show EmiSection, showSetupEmiSheet;
 import '../insights/notification_service.dart';
 import 'bill_reminders_provider.dart';
 import 'cashflow_provider.dart';
+import '../../shared/models/category.dart';
 
 // ---------------------------------------------------------------------------
 
@@ -1634,7 +1635,10 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
 
   Future<void> _pickCategory(BuildContext context) async {
     final cs     = Theme.of(context).colorScheme;
-    final groups = ref.read(categoriesProvider).valueOrNull ?? [];
+    // A schedule runs forward, so retired categories are excluded as of
+    // today. Only the transaction sheet needs a per-date view.
+    final groups = categoriesOn(
+        ref.read(categoriesProvider).valueOrNull ?? [], DateTime.now());
 
     await showModalBottomSheet(
       context: context,

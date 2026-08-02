@@ -1635,7 +1635,8 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
     final cs       = Theme.of(context).colorScheme;
     final fmt      = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
     final payees          = ref.watch(payeesProvider).valueOrNull ?? [];
-    final categoryGroups  = ref.watch(categoriesProvider).valueOrNull ?? [];
+    final categoryGroups  = categoriesOn(
+        ref.watch(categoriesProvider).valueOrNull ?? [], _date);
     final suggestions     = _suggestions(payees);
     final categoryMatches = _categoryMatches(categoryGroups);
 
@@ -2010,7 +2011,8 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                         split:        split,
                         canDelete:    _splits.length > 2,
                         onPickCategory: () async {
-                          final picked = await _pickCategoryFromSheet(context, ref);
+                          final picked =
+                              await _pickCategoryFromSheet(context, ref, _date);
                           if (picked != null) {
                             setState(() {
                               _splits[i].categoryId   = picked.id;
@@ -3185,8 +3187,12 @@ class _SplitGroupTile extends StatelessWidget {
 Future<({String id, String name})?> _pickCategoryFromSheet(
   BuildContext context,
   WidgetRef ref,
+  DateTime forDate,
 ) {
-  final groups = ref.read(categoriesProvider).valueOrNull ?? [];
+  // Narrowed to what applied on the transaction's own date, so a back-dated
+  // entry can still reach a category retired since — no reactivating first.
+  final groups =
+      categoriesOn(ref.read(categoriesProvider).valueOrNull ?? [], forDate);
   return showModalBottomSheet<({String id, String name})?>(
     context:            context,
     isScrollControlled: true,
@@ -3291,7 +3297,14 @@ class _CategoryPickerSheetState extends State<_CategoryPickerSheet> {
                               style: GoogleFonts.plusJakartaSans(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600)),
-                          subtitle: Text(c.groupName,
+                          subtitle: Text(
+                              // Flag a retired category that only shows here
+                              // because the transaction is dated before it
+                              // ended, so it does not look like a stray.
+                              c.inactiveFrom == null
+                                  ? c.groupName
+                                  : '${c.groupName}  ·  retired '
+                                      '${DateFormat('MMM yyyy').format(c.inactiveFrom!)}',
                               style: GoogleFonts.plusJakartaSans(
                                   fontSize: 12,
                                   color: cs.onSurfaceVariant)),

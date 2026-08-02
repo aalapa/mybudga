@@ -4,6 +4,11 @@ class Category {
   final String groupId;
   final String groupName;
   final bool isCcPayment;
+  /// First month the category stopped applying, or null while it is active.
+  /// Kept on the model rather than filtered away in the query so a picker can
+  /// decide against the transaction's own date — a category retired in August
+  /// is still the right answer for a transaction dated in July.
+  final DateTime? inactiveFrom;
 
   const Category({
     required this.id,
@@ -11,7 +16,12 @@ class Category {
     required this.groupId,
     required this.groupName,
     this.isCcPayment = false,
+    this.inactiveFrom,
   });
+
+  /// Whether this category applies to something dated [date].
+  bool appliesOn(DateTime date) =>
+      inactiveFrom == null || date.isBefore(inactiveFrom!);
 }
 
 class CategoryGroup {
@@ -39,6 +49,9 @@ class CategoryGroup {
               groupId:    gId,
               groupName:  gName,
               isCcPayment: cMap['is_cc_payment'] as bool? ?? false,
+              inactiveFrom: cMap['inactive_from'] != null
+                  ? DateTime.parse(cMap['inactive_from'] as String)
+                  : null,
             );
           })
           .where((c) => !(c.isCcPayment))  // hide CC Payment categories
@@ -47,3 +60,16 @@ class CategoryGroup {
     }).where((g) => g.categories.isNotEmpty).toList();
   }
 }
+
+/// Groups narrowed to the categories that applied on [date], dropping any that
+/// end up empty. Lets a back-dated transaction reach a retired category
+/// without having to reactivate it first.
+List<CategoryGroup> categoriesOn(List<CategoryGroup> groups, DateTime date) =>
+    groups
+        .map((g) => CategoryGroup(
+              id:   g.id,
+              name: g.name,
+              categories: g.categories.where((c) => c.appliesOn(date)).toList(),
+            ))
+        .where((g) => g.categories.isNotEmpty)
+        .toList();

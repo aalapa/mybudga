@@ -26,6 +26,7 @@ import '../cashflow/cashflow_provider.dart';
 import '../cashflow/cashflow_screen.dart';
 import '../transactions/transactions_provider.dart';
 import 'ynab_import_service.dart';
+import '../../shared/models/category.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -2810,7 +2811,9 @@ class _PayeeRulesSheet extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final cs      = Theme.of(context).colorScheme;
     final payees  = ref.watch(payeesProvider);
-    final catGroups = ref.watch(categoriesProvider).valueOrNull ?? [];
+    // Forward-looking picker: retired categories excluded as of today.
+    final catGroups = categoriesOn(
+        ref.watch(categoriesProvider).valueOrNull ?? [], DateTime.now());
 
     return Container(
       height: MediaQuery.of(context).size.height * 0.82,
