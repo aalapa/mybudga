@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import 'dart:math' show max, min;
 
 import 'package:fl_chart/fl_chart.dart';
@@ -2557,136 +2558,61 @@ class _SpendingTierSectionState extends ConsumerState<_SpendingTierSection> {
   }
 }
 
-class _TierMonthChart extends StatelessWidget {
+/// Share by month as three bars per month with a trend line per tier.
+///
+/// Drawn directly rather than with fl_chart: overlaying a line series on a bar
+/// chart there means two widgets with independently computed x-positions, and
+/// bar groups do not land on the line's x coordinates. One painter keeps the
+/// lines registered to the bars they connect.
+class _TierMonthChart extends StatefulWidget {
   final List<TierMonth> months;
   const _TierMonthChart({required this.months});
 
   @override
+  State<_TierMonthChart> createState() => _TierMonthChartState();
+}
+
+class _TierMonthChartState extends State<_TierMonthChart> {
+  int? _selected;
+
+  @override
   Widget build(BuildContext context) {
-    final cs  = Theme.of(context).colorScheme;
-    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
-    final live = months.where((m) => m.total > 0).toList();
+    final cs   = Theme.of(context).colorScheme;
+    final fmt  = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final live = widget.months.where((m) => m.total > 0).toList();
     if (live.isEmpty) return const SizedBox.shrink();
 
-    // Whole percents per month, so a tooltip never shows 99 or 101.
     final pcts = [
       for (final m in live)
         _wholePercents([for (final t in SpendingTier.values) m.amountOf(t)]),
     ];
 
-    final groups = <BarChartGroupData>[];
-    for (var i = 0; i < live.length; i++) {
-      var from = 0.0;
-      final stack = <BarChartRodStackItem>[];
-      for (final t in SpendingTier.values) {
-        final to = from + pcts[i][t.index].toDouble();
-        if (to > from) stack.add(BarChartRodStackItem(from, to, _tierColors[t]!));
-        from = to;
+    // Headroom above the tallest bar so the trend line is not clipped.
+    var top = 0;
+    for (final p in pcts) {
+      for (final v in p) {
+        if (v > top) top = v;
       }
-      groups.add(BarChartGroupData(x: i, barRods: [
-        BarChartRodData(
-          toY: 100,
-          width: live.length > 8 ? 14 : 22,
-          borderRadius: BorderRadius.circular(3),
-          rodStackItems: stack,
-          color: Colors.transparent,
-        ),
-      ]));
     }
+    final maxY = ((top / 10).ceil() * 10).clamp(30, 100).toDouble();
+
+    final idx = (_selected ?? live.length - 1).clamp(0, live.length - 1);
+    final sel = live[idx];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(
-          height: 170,
-          child: BarChart(
-            BarChartData(
-              maxY: 100,
-              minY: 0,
-              alignment: BarChartAlignment.spaceAround,
-              borderData: FlBorderData(show: false),
-              gridData: FlGridData(
-                show: true,
-                drawVerticalLine: false,
-                horizontalInterval: 25,
-                getDrawingHorizontalLine: (_) => FlLine(
-                  color: cs.outlineVariant.withValues(alpha: 0.3),
-                  strokeWidth: 1,
-                  dashArray: [4, 4],
-                ),
-              ),
-              titlesData: FlTitlesData(
-                topTitles:
-                    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                rightTitles:
-                    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                leftTitles: AxisTitles(
-                  sideTitles: SideTitles(
-                    showTitles: true,
-                    reservedSize: 32,
-                    interval: 25,
-                    getTitlesWidget: (v, _) => Padding(
-                      padding: const EdgeInsets.only(right: 4),
-                      child: Text('${v.toInt()}%',
-                          textAlign: TextAlign.right,
-                          style: GoogleFonts.plusJakartaSans(
-                              fontSize: 10, color: cs.onSurfaceVariant)),
-                    ),
-                  ),
-                ),
-                bottomTitles: AxisTitles(
-                  sideTitles: SideTitles(
-                    showTitles: true,
-                    reservedSize: 22,
-                    interval: 1,
-                    getTitlesWidget: (v, _) {
-                      final i = v.toInt();
-                      if (i < 0 || i >= live.length) {
-                        return const SizedBox.shrink();
-                      }
-                      // Thin the labels so a full year stays legible.
-                      final step = (live.length / 6).ceil();
-                      if (i % step != 0 && i != live.length - 1) {
-                        return const SizedBox.shrink();
-                      }
-                      return Text(DateFormat('MMM').format(live[i].month),
-                          style: GoogleFonts.plusJakartaSans(
-                              fontSize: 10, color: cs.onSurfaceVariant));
-                    },
-                  ),
-                ),
-              ),
-              barTouchData: BarTouchData(
-                touchTooltipData: BarTouchTooltipData(
-                  getTooltipColor: (_) => cs.surfaceContainerHighest,
-                  // The exact figures live here now that the columns carry no
-                  // labels of their own.
-                  getTooltipItem: (group, gi, rod, _) => BarTooltipItem(
-                    '${DateFormat('MMM yyyy').format(live[gi].month)}\n',
-                    GoogleFonts.plusJakartaSans(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: cs.onSurface),
-                    children: [
-                      for (final t in SpendingTier.values)
-                        TextSpan(
-                          text: '\n${t.label}  ${pcts[gi][t.index]}%  '
-                              '${fmt.format(live[gi].amountOf(t))}',
-                          style: GoogleFonts.plusJakartaSans(
-                              fontSize: 11, color: _tierColors[t]),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-              barGroups: groups,
-            ),
-          ),
-        ),
-        const SizedBox(height: 10),
+        // Figures for the highlighted month, since bars cannot carry labels
+        // at this density.
+        Text(DateFormat('MMMM yyyy').format(sel.month),
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: cs.onSurface)),
+        const SizedBox(height: 4),
         Wrap(
           spacing: 14,
-          runSpacing: 4,
+          runSpacing: 2,
           children: [
             for (final t in SpendingTier.values)
               Row(
@@ -2700,16 +2626,172 @@ class _TierMonthChart extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  Text(t.label,
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 11, color: cs.onSurfaceVariant)),
+                  Text(
+                    '${t.label} ${pcts[idx][t.index]}%  '
+                    '${fmt.format(sel.amountOf(t))}',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11, color: cs.onSurfaceVariant),
+                  ),
                 ],
               ),
           ],
         ),
+        const SizedBox(height: 12),
+        LayoutBuilder(
+          builder: (ctx, box) => GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (d) {
+              const gutter = 30.0;
+              final plotW = box.maxWidth - gutter;
+              if (plotW <= 0) return;
+              final i = ((d.localPosition.dx - gutter) / (plotW / live.length))
+                  .floor();
+              if (i >= 0 && i < live.length) setState(() => _selected = i);
+            },
+            child: CustomPaint(
+              size: Size(box.maxWidth, 180),
+              painter: _TierChartPainter(
+                months:    live,
+                pcts:      pcts,
+                maxY:      maxY,
+                selected:  idx,
+                grid:      cs.outlineVariant.withValues(alpha: 0.35),
+                axisText:  cs.onSurfaceVariant,
+                highlight: cs.onSurface.withValues(alpha: 0.06),
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }
+}
+
+class _TierChartPainter extends CustomPainter {
+  final List<TierMonth> months;
+  final List<List<int>> pcts;
+  final double maxY;
+  final int selected;
+  final Color grid;
+  final Color axisText;
+  final Color highlight;
+
+  const _TierChartPainter({
+    required this.months,
+    required this.pcts,
+    required this.maxY,
+    required this.selected,
+    required this.grid,
+    required this.axisText,
+    required this.highlight,
+  });
+
+  static const _gutter = 30.0; // y labels
+  static const _footer = 18.0; // month labels
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final plot = Rect.fromLTWH(
+        _gutter, 0, size.width - _gutter, size.height - _footer);
+    if (plot.width <= 0 || plot.height <= 0) return;
+
+    double yOf(num v) => plot.bottom - (v / maxY) * plot.height;
+
+    // Gridlines and their labels.
+    final gridPaint = Paint()
+      ..color = grid
+      ..strokeWidth = 1;
+    for (var v = 0.0; v <= maxY; v += maxY / 4) {
+      final y = yOf(v);
+      canvas.drawLine(Offset(plot.left, y), Offset(plot.right, y), gridPaint);
+      _text(canvas, '${v.round()}%', Offset(_gutter - 6, y),
+          axisText, 10, alignRight: true, centreY: true);
+    }
+
+    final slot = plot.width / months.length;
+    // Three bars per slot, sharing 62% of it so months stay visually apart.
+    final barW = (slot * 0.62) / SpendingTier.values.length;
+
+    // Highlight behind the selected month.
+    canvas.drawRect(
+      Rect.fromLTWH(plot.left + slot * selected, plot.top, slot, plot.height),
+      Paint()..color = highlight,
+    );
+
+    for (var i = 0; i < months.length; i++) {
+      final centre = plot.left + slot * i + slot / 2;
+      final groupW = barW * SpendingTier.values.length;
+      for (final t in SpendingTier.values) {
+        final v = pcts[i][t.index].toDouble();
+        final x = centre - groupW / 2 + barW * t.index;
+        final r = RRect.fromRectAndCorners(
+          Rect.fromLTRB(x + 0.5, yOf(v), x + barW - 0.5, plot.bottom),
+          topLeft: const Radius.circular(2),
+          topRight: const Radius.circular(2),
+        );
+        canvas.drawRRect(r, Paint()..color = _tierColors[t]!);
+      }
+
+      // Month label, thinned so a full year stays legible.
+      final step = (months.length / 6).ceil();
+      if (i % step == 0 || i == months.length - 1) {
+        _text(canvas, DateFormat('MMM').format(months[i].month),
+            Offset(centre, size.height - _footer + 4), axisText, 10,
+            centreX: true);
+      }
+    }
+
+    // One trend line per tier, through the top of each of its bars.
+    for (final t in SpendingTier.values) {
+      final path = Path();
+      for (var i = 0; i < months.length; i++) {
+        final centre = plot.left + slot * i + slot / 2;
+        final groupW = barW * SpendingTier.values.length;
+        final x = centre - groupW / 2 + barW * t.index + barW / 2;
+        final y = yOf(pcts[i][t.index].toDouble());
+        i == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = _tierColors[t]!
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.6
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round,
+      );
+      for (var i = 0; i < months.length; i++) {
+        final centre = plot.left + slot * i + slot / 2;
+        final groupW = barW * SpendingTier.values.length;
+        final x = centre - groupW / 2 + barW * t.index + barW / 2;
+        canvas.drawCircle(Offset(x, yOf(pcts[i][t.index].toDouble())), 2.0,
+            Paint()..color = _tierColors[t]!);
+      }
+    }
+  }
+
+  void _text(Canvas canvas, String s, Offset at, Color color, double size,
+      {bool alignRight = false, bool centreX = false, bool centreY = false}) {
+    final tp = TextPainter(
+      text: TextSpan(
+          text: s,
+          style: GoogleFonts.plusJakartaSans(fontSize: size, color: color)),
+      textDirection: ui.TextDirection.ltr,
+    )..layout();
+    tp.paint(
+      canvas,
+      Offset(
+        alignRight ? at.dx - tp.width : centreX ? at.dx - tp.width / 2 : at.dx,
+        centreY ? at.dy - tp.height / 2 : at.dy,
+      ),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_TierChartPainter old) =>
+      old.selected != selected ||
+      old.maxY != maxY ||
+      old.months.length != months.length;
 }
 
 class _GroupTierRow extends ConsumerWidget {
