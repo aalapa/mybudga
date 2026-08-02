@@ -276,6 +276,8 @@ class _NetWorthSection extends StatelessWidget {
 
     return _Section(
       label: 'NET WORTH',
+      // First section on the page — the header above it is separation enough.
+      showDivider: false,
       child: Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
@@ -2151,13 +2153,19 @@ class _GroupTierRow extends ConsumerWidget {
 class _EmptySection extends StatelessWidget {
   final String label;
   final String message;
-  const _EmptySection({required this.label, required this.message});
+  final bool showDivider;
+  const _EmptySection({
+    required this.label,
+    required this.message,
+    this.showDivider = true,
+  });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return _Section(
       label: label,
+      showDivider: showDivider,
       child: Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 20),
@@ -2177,7 +2185,18 @@ class _EmptySection extends StatelessWidget {
 class _Section extends StatelessWidget {
   final String label;
   final Widget child;
-  const _Section({required this.label, required this.child});
+
+  /// Hairline above the label marking a new section. The page runs to ten of
+  /// these and several end in a chart, where the next section's small label
+  /// alone was not enough of a break. Off for the first one, which already
+  /// sits below the page header.
+  final bool showDivider;
+
+  const _Section({
+    required this.label,
+    required this.child,
+    this.showDivider = true,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2187,6 +2206,11 @@ class _Section extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (showDivider) ...[
+            Divider(
+                height: 1, color: cs.outlineVariant.withValues(alpha: 0.55)),
+            const SizedBox(height: 18),
+          ],
           Text(label,
               style: GoogleFonts.plusJakartaSans(
                   fontSize: 11,
