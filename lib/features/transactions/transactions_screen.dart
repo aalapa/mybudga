@@ -1280,6 +1280,8 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
   bool _incomeNextMonth = false;
   bool _makeRecurring = false;
   ScheduledFrequency _recurFrequency = ScheduledFrequency.monthly;
+  /// Null = repeats indefinitely.
+  DateTime? _recurEndDate;
   bool _showSuggestions = false;
   bool _showCategorySuggestions = false;
   bool _saving = false;
@@ -1533,7 +1535,12 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
         // If "Make recurring" is on, also create a scheduled transaction for
         // future occurrences. The first occurrence starts after saveDate.
         if (_makeRecurring) {
-          final nextDate = _recurFrequency.advance(saveDate) ?? saveDate;
+          // Anchor on the day this transaction is dated, so a bill entered on
+          // the 31st keeps returning to the 31st rather than to whatever day a
+          // short month forced it onto.
+          final nextDate =
+              _recurFrequency.advance(saveDate, anchorDay: saveDate.day) ??
+                  saveDate;
           await ref.read(cashflowProvider.notifier).addScheduled(
             accountId:  _selectedAccount!.id,
             amount:     signed,
@@ -1544,6 +1551,10 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
             memo:       _memoCtrl.text.trim().isEmpty
                 ? null
                 : _memoCtrl.text.trim(),
+            // Marking something recurring means it should enter itself; the
+            // catch-up sweep posts it when it falls due.
+            autoApprove: true,
+            endDate:     _recurEndDate,
           );
         }
       }
@@ -2199,6 +2210,56 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                             setState(() => _recurFrequency = v);
                           }
                         },
+                      ),
+                      const SizedBox(height: 8),
+                      // Without this a schedule ran forever, with no way to
+                      // stop it short of deleting it from Cashflow.
+                      InkWell(
+                        onTap: () async {
+                          final picked = await showDatePicker(
+                            context:     context,
+                            initialDate: _recurEndDate ??
+                                DateTime(_date.year + 1, _date.month, _date.day),
+                            firstDate:   _date,
+                            lastDate:    DateTime(_date.year + 30),
+                          );
+                          if (picked != null) {
+                            setState(() => _recurEndDate = picked);
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(12),
+                        child: InputDecorator(
+                          decoration: const InputDecoration(
+                            labelText: 'Until',
+                            prefixIcon:
+                                Icon(Icons.event_busy_outlined, size: 18),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _recurEndDate == null
+                                      ? 'No end date'
+                                      : DateFormat('MMM d, yyyy')
+                                          .format(_recurEndDate!),
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 14,
+                                    color: _recurEndDate == null
+                                        ? cs.onSurfaceVariant
+                                        : cs.onSurface,
+                                  ),
+                                ),
+                              ),
+                              if (_recurEndDate != null)
+                                InkWell(
+                                  onTap: () =>
+                                      setState(() => _recurEndDate = null),
+                                  child: Icon(Icons.close,
+                                      size: 16, color: cs.onSurfaceVariant),
+                                ),
+                            ],
+                          ),
+                        ),
                       ),
                     ],
                     const SizedBox(height: 12),

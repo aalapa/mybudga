@@ -110,6 +110,7 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
       'memo':                   memo?.isNotEmpty == true ? memo : null,
       'frequency':              frequency.toDb,
       'next_date':              _toDateString(nextDate),
+      'anchor_day':             nextDate.day,
       'end_date':               endDate != null ? _toDateString(endDate) : null,
       'auto_approve':           autoApprove,
       'is_active':              true,
@@ -133,6 +134,7 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
     required DateTime date,
     required ScheduledFrequency frequency,
     required DateTime currentNextDate,
+    int? anchorDay,
     String payeeName = '',
     String? categoryId,
     String? memo,
@@ -161,7 +163,7 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
       'status':       'confirmed',
     });
 
-    final next = frequency.advance(currentNextDate);
+    final next = frequency.advance(currentNextDate, anchorDay: anchorDay);
     if (next == null) {
       await client.from('scheduled_transactions')
           .update({'is_active': false}).eq('id', scheduledId);
@@ -181,7 +183,7 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
         .firstOrNull;
     if (st == null) return;
 
-    final next = st.frequency.advance(st.nextDate);
+    final next = st.frequency.advance(st.nextDate, anchorDay: st.anchorDay);
     if (next == null) {
       await client.from('scheduled_transactions')
           .update({'is_active': false}).eq('id', id);
@@ -257,7 +259,7 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
       });
     }
 
-    final next = st.frequency.advance(st.nextDate);
+    final next = st.frequency.advance(st.nextDate, anchorDay: st.anchorDay);
     if (next == null) {
       await client.from('scheduled_transactions')
           .update({'is_active': false}).eq('id', id);
@@ -281,6 +283,9 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
     String? memo,
     bool isTransfer = false,
     String? transferToAccountId,
+    DateTime? endDate,
+    bool clearEndDate = false,
+    bool? autoApprove,
   }) async {
     final householdId = await ref.read(householdIdProvider.future);
     final client      = ref.read(supabaseProvider);
@@ -303,11 +308,100 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
       'memo':                   memo?.isNotEmpty == true ? memo : null,
       'frequency':              frequency.toDb,
       'next_date':              _toDateString(nextDate),
+      // Re-anchor on the edited date: moving a bill to the 30th should keep it
+      // on the 30th, not on the day it happened to be created.
+      'anchor_day':             nextDate.day,
+      if (endDate != null || clearEndDate)
+        'end_date': endDate == null ? null : _toDateString(endDate),
+      if (autoApprove != null) 'auto_approve': autoApprove,
       'is_transfer':            isTransfer,
       'transfer_to_account_id': transferToAccountId,
     }).eq('id', id);
 
     ref.invalidateSelf();
+  }
+
+  /// Posts every occurrence that has already fallen due on schedules marked
+  /// auto-approve, catching up month by month if the app has not been opened
+  /// in a while.
+  ///
+  /// `next_date` is advanced *before* the transaction is written, and only if
+  /// it still holds the value that was read. Two devices sweeping at once
+  /// therefore cannot both post the same occurrence — the second update
+  /// matches no row and stops. The trade is that a failed insert loses an
+  /// occurrence rather than duplicating one, which is the right way round: a
+  /// missing bill is visible in the register, a duplicate silently moves a
+  /// balance.
+  ///
+  /// Skips anything needing a decision — no fixed account, or a transfer,
+  /// whose two legs are not safe to create unattended.
+  Future<int> postDueAuto() async {
+    final householdId = await ref.read(householdIdProvider.future);
+    final client      = ref.read(supabaseProvider);
+    final today       = DateTime.now();
+    final todayDate   = DateTime(today.year, today.month, today.day);
+
+    final rows = await client
+        .from('scheduled_transactions')
+        .select()
+        .eq('household_id', householdId)
+        .eq('is_active', true)
+        .eq('auto_approve', true)
+        .lte('next_date', _toDateString(todayDate));
+
+    var posted = 0;
+    for (final r in rows as List) {
+      final st = ScheduledTransaction.fromJson(r as Map<String, dynamic>);
+      if (st.needsAccount) continue; // needs a person
+
+      var cursor = st.nextDate;
+      // Bounded so a corrupt row can never spin: a decade of weeklies.
+      for (var guard = 0; guard < 520; guard++) {
+        if (cursor.isAfter(todayDate)) break;
+        if (st.endDate != null && cursor.isAfter(st.endDate!)) {
+          await client.from('scheduled_transactions')
+              .update({'is_active': false}).eq('id', st.id);
+          break;
+        }
+
+        final next = st.frequency.advance(cursor, anchorDay: st.anchorDay);
+        final ended = next == null ||
+            (st.endDate != null && next.isAfter(st.endDate!));
+
+        // Claim this occurrence. Empty result = another device already has it.
+        final claimed = await client
+            .from('scheduled_transactions')
+            .update({
+              if (!ended) 'next_date': _toDateString(next),
+              'is_active': !ended,
+            })
+            .eq('id', st.id)
+            .eq('next_date', _toDateString(cursor))
+            .select('id');
+        if ((claimed as List).isEmpty) break;
+
+        await client.from('transactions').insert({
+          'household_id': householdId,
+          'account_id':   st.accountId,
+          'payee_id':     st.payeeId,
+          'category_id':  st.categoryId,
+          'amount':       st.amount,
+          'date':         _toDateString(cursor),
+          'memo':         st.memo,
+          'status':       'confirmed',
+        });
+        posted++;
+
+        if (ended) break;
+        cursor = next;
+      }
+    }
+
+    if (posted > 0) {
+      ref.invalidateSelf();
+      ref.invalidate(accountsProvider);
+    }
+    return posted;
   }
 
   Future<void> toggleActive(String id, {required bool active}) async {
@@ -418,3 +512,16 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
 
 final cashflowProvider =
     AsyncNotifierProvider<CashflowNotifier, CashflowState>(CashflowNotifier.new);
+
+/// Runs the auto-post catch-up once per app session.
+///
+/// Deliberately not autoDispose: it should fire when the app opens and not
+/// again every time a screen that watches it is rebuilt.
+final scheduledCatchUpProvider = FutureProvider<int>((ref) async {
+  try {
+    return await ref.read(cashflowProvider.notifier).postDueAuto();
+  } catch (_) {
+    // Never block the shell from rendering because a schedule failed to post.
+    return 0;
+  }
+});

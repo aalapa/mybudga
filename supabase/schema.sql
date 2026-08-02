@@ -28,7 +28,8 @@ create type overspending_behavior  as enum ('reduce_tbb', 'carry_forward');
 -- lives; inferring it from recurrence conflates habitual with obligatory.
 create type spending_tier         as enum ('fixed', 'essential', 'discretionary');
 create type transaction_status     as enum ('pending_review', 'confirmed');
-create type scheduled_frequency    as enum ('once', 'weekly', 'biweekly', 'monthly', 'yearly');
+create type scheduled_frequency    as enum ('once', 'weekly', 'biweekly', 'bimonthly',
+                                          'monthly', 'quarterly', 'halfYearly', 'yearly');
 create type goal_type              as enum ('target_by_date', 'monthly_savings', 'monthly_spending');
 
 
@@ -267,6 +268,10 @@ create table scheduled_transactions (
     memo          text,
     frequency     scheduled_frequency not null,
     next_date     date not null,
+    -- Day of the month the schedule is anchored to. Kept separately so a bill
+    -- on the 31st can land on 28 Feb and return to the 31st in March, instead
+    -- of sticking to whatever day the short month forced it onto.
+    anchor_day    smallint,
     end_date      date,
     auto_approve  boolean not null default false,
     is_active     boolean not null default true,

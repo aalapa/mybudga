@@ -1,3 +1,4 @@
+import '../../features/cashflow/cashflow_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -115,6 +116,11 @@ class AppShell extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+
+    // Post anything that fell due while the app was closed. Fire-and-forget:
+    // the result is not read, and failures are swallowed inside the provider
+    // so a bad schedule cannot stop the app rendering.
+    ref.watch(scheduledCatchUpProvider);
     final isWide        = MediaQuery.sizeOf(context).width >= 800;
     final selectedIndex = _selectedIndex(context, isWide);
 

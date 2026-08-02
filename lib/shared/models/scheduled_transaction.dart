@@ -35,20 +35,37 @@ enum ScheduledFrequency {
     ScheduledFrequency.yearly     => 'Yearly',
   };
 
-  // Bi-monthly cycles between the 1st and 15th of each month.
-  // Quarterly/half-yearly use Dart's month overflow normalisation.
-  DateTime? advance(DateTime from) => switch (this) {
+  /// Next occurrence after [from].
+  ///
+  /// [anchorDay] is the day of the month the schedule was created on. Month
+  /// arithmetic clamps to the end of a short month rather than overflowing —
+  /// `DateTime(2026, 2, 31)` silently becomes 3 March, which skipped February
+  /// outright and then left a rent bill permanently on the 3rd. Keeping the
+  /// anchor separately means a 31st bill lands on 28 Feb and returns to the
+  /// 31st in March, instead of sticking to whatever the short month forced.
+  DateTime? advance(DateTime from, {int? anchorDay}) => switch (this) {
     ScheduledFrequency.once       => null,
     ScheduledFrequency.weekly     => from.add(const Duration(days: 7)),
     ScheduledFrequency.biweekly   => from.add(const Duration(days: 14)),
     ScheduledFrequency.bimonthly  => from.day < 15
         ? DateTime(from.year, from.month, 15)
         : DateTime(from.year, from.month + 1, 1),
-    ScheduledFrequency.monthly    => DateTime(from.year, from.month + 1, from.day),
-    ScheduledFrequency.quarterly  => DateTime(from.year, from.month + 3, from.day),
-    ScheduledFrequency.halfYearly => DateTime(from.year, from.month + 6, from.day),
-    ScheduledFrequency.yearly     => DateTime(from.year + 1, from.month, from.day),
+    ScheduledFrequency.monthly    => addMonths(from, 1,  anchorDay),
+    ScheduledFrequency.quarterly  => addMonths(from, 3,  anchorDay),
+    ScheduledFrequency.halfYearly => addMonths(from, 6,  anchorDay),
+    ScheduledFrequency.yearly     => addMonths(from, 12, anchorDay),
   };
+
+  /// Adds [months] to [from], landing on [anchorDay] where the target month is
+  /// long enough and its last day where it is not.
+  static DateTime addMonths(DateTime from, int months, int? anchorDay) {
+    final zero = from.month - 1 + months;
+    final year  = from.year + (zero ~/ 12);
+    final month = zero % 12 + 1;
+    final lastDay = DateTime(year, month + 1, 0).day; // day 0 = previous month's last
+    final want = anchorDay ?? from.day;
+    return DateTime(year, month, want < lastDay ? want : lastDay);
+  }
 }
 
 class ScheduledTransaction {
@@ -74,6 +91,11 @@ class ScheduledTransaction {
   final ScheduledFrequency frequency;
   final DateTime nextDate;
   final DateTime? endDate;
+
+  /// Day of the month the schedule was anchored to, so a 31st bill returns to
+  /// the 31st after a short month instead of sticking wherever it was clamped.
+  /// Null on rows created before this existed; falls back to next_date's day.
+  final int? anchorDay;
   final bool autoApprove;
   final bool isActive;
 
@@ -95,6 +117,7 @@ class ScheduledTransaction {
     required this.frequency,
     required this.nextDate,
     this.endDate,
+    this.anchorDay,
     required this.autoApprove,
     required this.isActive,
   });
@@ -137,6 +160,7 @@ class ScheduledTransaction {
       endDate:               j['end_date'] != null
           ? DateTime.parse(j['end_date'] as String)
           : null,
+      anchorDay:             j['anchor_day'] as int?,
       autoApprove:           j['auto_approve'] as bool? ?? false,
       isActive:              j['is_active']    as bool? ?? true,
     );
@@ -165,7 +189,7 @@ class ScheduledTransaction {
           result.add(current);
         }
       }
-      current = frequency.advance(current);
+      current = frequency.advance(current, anchorDay: anchorDay);
     }
     return result;
   }
