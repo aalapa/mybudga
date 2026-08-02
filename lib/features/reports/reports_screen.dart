@@ -1891,7 +1891,15 @@ class _SpendingTierSection extends ConsumerStatefulWidget {
 }
 
 class _SpendingTierSectionState extends ConsumerState<_SpendingTierSection> {
-  bool _editing = false;
+  late bool _editing;
+
+  @override
+  void initState() {
+    super.initState();
+    // Nothing classified yet means the split is a guess, so lead with the
+    // editor rather than making the reader hunt for it.
+    _editing = widget.data.groupTiers.every((g) => g.isDefault);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1907,13 +1915,55 @@ class _SpendingTierSectionState extends ConsumerState<_SpendingTierSection> {
     }
 
     final unconfirmed = data.groupTiers.where((g) => g.isDefault).length;
+    // Every group still on its default guess means the split carries no
+    // information — showing "100% essential" as though it were a finding is
+    // worse than admitting nothing has been classified.
+    final allGuessed = data.groupTiers.isNotEmpty &&
+        unconfirmed == data.groupTiers.length;
 
     return _Section(
       label: 'Committed vs free',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (allGuessed) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.tune, size: 15, color: cs.primary),
+                      const SizedBox(width: 8),
+                      Text('Not classified yet',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: cs.onSurface)),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Your group names did not match anything recognisable, so '
+                    'all ${data.groupTiers.length} landed on the same default. '
+                    'A split built on that would say nothing, so it is hidden '
+                    'until you set them below — once, and it holds.',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, color: cs.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
           // ── Period headline ──────────────────────────────────────────────
+          if (!allGuessed)
           Row(
             children: [
               for (final t in SpendingTier.values) ...[
@@ -1953,25 +2003,27 @@ class _SpendingTierSectionState extends ConsumerState<_SpendingTierSection> {
               ],
             ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            'Of every dollar that left, '
-            '${(data.tierShare(SpendingTier.discretionary) * 100).round()}c was '
-            'genuinely yours to choose.',
-            style: GoogleFonts.plusJakartaSans(
-                fontSize: 12, color: cs.onSurfaceVariant),
-          ),
-          const SizedBox(height: 18),
+          if (!allGuessed) const SizedBox(height: 6),
+          if (!allGuessed)
+            Text(
+              'Of every dollar that left, '
+              '${(data.tierShare(SpendingTier.discretionary) * 100).round()}c '
+              'was genuinely yours to choose.',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12, color: cs.onSurfaceVariant),
+            ),
+          if (!allGuessed) const SizedBox(height: 18),
 
           // ── Month-by-month share ─────────────────────────────────────────
-          Text('SHARE BY MONTH',
+          if (!allGuessed) Text('SHARE BY MONTH',
               style: GoogleFonts.plusJakartaSans(
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.8,
                   color: cs.onSurfaceVariant)),
-          const SizedBox(height: 10),
-          ...data.byTierMonth.map((m) => _TierMonthRow(month: m)),
+          if (!allGuessed) const SizedBox(height: 10),
+          if (!allGuessed)
+            ...data.byTierMonth.map((m) => _TierMonthRow(month: m)),
 
           const SizedBox(height: 14),
           // ── Classification ───────────────────────────────────────────────

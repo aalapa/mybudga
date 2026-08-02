@@ -673,18 +673,18 @@ final lifetimeSavingsRateProvider =
 /// Only ever a starting point — the report marks these as unconfirmed.
 SpendingTier _defaultTierFor(String groupName) {
   final n = groupName.toLowerCase();
-  if (n.contains('obligation') ||
-      n.contains('debt') ||
-      n.contains('loan') ||
-      n.contains('credit card')) {
-    return SpendingTier.fixed;
-  }
-  if (n.contains('fun') ||
-      n.contains('quality of life') ||
-      n.contains('discretion') ||
-      n.contains('want')) {
-    return SpendingTier.discretionary;
-  }
+  const fixed = [
+    'obligation', 'debt', 'loan', 'credit card', 'mortgage', 'rent',
+    'housing', 'insurance', 'subscription', 'emi', 'bill', 'premium',
+    'tuition', 'childcare',
+  ];
+  const discretionary = [
+    'fun', 'quality of life', 'discretion', 'want', 'entertainment',
+    'dining', 'restaurant', 'shopping', 'leisure', 'hobby', 'hobbies',
+    'travel', 'vacation', 'holiday', 'gift', 'lifestyle', 'luxur',
+  ];
+  if (fixed.any(n.contains))         return SpendingTier.fixed;
+  if (discretionary.any(n.contains)) return SpendingTier.discretionary;
   return SpendingTier.essential;
 }
 
