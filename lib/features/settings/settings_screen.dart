@@ -1048,11 +1048,34 @@ class _TripCardState extends ConsumerState<_TripCard> {
                     size: 18, color: cs.onSurfaceVariant),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text('Trip Mode',
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 14, fontWeight: FontWeight.w600,
-                          color: cs.onSurface)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Trip Mode',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 14, fontWeight: FontWeight.w600,
+                              color: cs.onSurface)),
+                      // A finished trip reads as history, not as a live
+                      // setting sitting there waiting to be switched off.
+                      if (trip.hasEnded && trip.tripName != null)
+                        Text(
+                          'Last: ${trip.tripName}'
+                          '${trip.endDate != null ? ' · ended ${dateFmt.format(trip.endDate!)}' : ''}',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11, color: cs.onSurfaceVariant),
+                        ),
+                    ],
+                  ),
                 ),
+                if (trip.hasEnded)
+                  TextButton(
+                    onPressed: _saving ? null : () => _openSheet(trip),
+                    child: Text('New trip',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12, fontWeight: FontWeight.w600)),
+                  )
+                else
                 Switch.adaptive(
                   value: trip.effectivelyActive,
                   onChanged: _saving ? null : (v) async {
@@ -1075,7 +1098,10 @@ class _TripCardState extends ConsumerState<_TripCard> {
                 ),
               ],
             ),
-            if (trip.tripName != null || trip.categoryId != null) ...[
+            // Collapsed once the trip is over — the live budget/progress detail
+            // below is only meaningful while it is running.
+            if (!trip.hasEnded &&
+                (trip.tripName != null || trip.categoryId != null)) ...[
               const SizedBox(height: 10),
               const Divider(height: 1),
               const SizedBox(height: 10),
