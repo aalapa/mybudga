@@ -36,7 +36,7 @@ class _ReorderSectionsSheet extends StatefulWidget {
 }
 
 class _ReorderSectionsSheetState extends State<_ReorderSectionsSheet> {
-  late List<_RSection> _list = List.of(widget.order);
+  late final List<_RSection> _list = List.of(widget.order);
 
   @override
   Widget build(BuildContext context) {
@@ -2510,8 +2510,7 @@ class _SpendingTierSectionState extends ConsumerState<_SpendingTierSection> {
                   letterSpacing: 0.8,
                   color: cs.onSurfaceVariant)),
           if (!allGuessed) const SizedBox(height: 10),
-          if (!allGuessed)
-            ...data.byTierMonth.map((m) => _TierMonthRow(month: m)),
+          if (!allGuessed) _TierMonthChart(months: data.byTierMonth),
 
           const SizedBox(height: 14),
           // ── Classification ───────────────────────────────────────────────
@@ -2558,66 +2557,157 @@ class _SpendingTierSectionState extends ConsumerState<_SpendingTierSection> {
   }
 }
 
-/// One month as a 100%-wide stacked bar, so the mix is comparable across
-/// months regardless of how much was spent.
-class _TierMonthRow extends StatelessWidget {
-  final TierMonth month;
-  const _TierMonthRow({required this.month});
+class _TierMonthChart extends StatelessWidget {
+  final List<TierMonth> months;
+  const _TierMonthChart({required this.months});
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    if (month.total <= 0) return const SizedBox.shrink();
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final live = months.where((m) => m.total > 0).toList();
+    if (live.isEmpty) return const SizedBox.shrink();
 
-    // Written beside the bar rather than inside it: a thin segment cannot hold
-    // its own label, and hiding one made the visible numbers fail to reach 100
-    // however carefully they were rounded.
-    final pcts = _wholePercents(
-        [for (final t in SpendingTier.values) month.amountOf(t)]);
+    // Whole percents per month, so a tooltip never shows 99 or 101.
+    final pcts = [
+      for (final m in live)
+        _wholePercents([for (final t in SpendingTier.values) m.amountOf(t)]),
+    ];
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 34,
-            child: Text(DateFormat('MMM').format(month.month),
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 11, color: cs.onSurfaceVariant)),
-          ),
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: SizedBox(
-                height: 16,
-                child: Row(
-                  children: [
-                    for (final t in SpendingTier.values)
-                      if (month.shareOf(t) > 0)
-                        Expanded(
-                          flex: (month.shareOf(t) * 1000).round(),
-                          child: ColoredBox(color: _tierColors[t]!),
+    final groups = <BarChartGroupData>[];
+    for (var i = 0; i < live.length; i++) {
+      var from = 0.0;
+      final stack = <BarChartRodStackItem>[];
+      for (final t in SpendingTier.values) {
+        final to = from + pcts[i][t.index].toDouble();
+        if (to > from) stack.add(BarChartRodStackItem(from, to, _tierColors[t]!));
+        from = to;
+      }
+      groups.add(BarChartGroupData(x: i, barRods: [
+        BarChartRodData(
+          toY: 100,
+          width: live.length > 8 ? 14 : 22,
+          borderRadius: BorderRadius.circular(3),
+          rodStackItems: stack,
+          color: Colors.transparent,
+        ),
+      ]));
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: 170,
+          child: BarChart(
+            BarChartData(
+              maxY: 100,
+              minY: 0,
+              alignment: BarChartAlignment.spaceAround,
+              borderData: FlBorderData(show: false),
+              gridData: FlGridData(
+                show: true,
+                drawVerticalLine: false,
+                horizontalInterval: 25,
+                getDrawingHorizontalLine: (_) => FlLine(
+                  color: cs.outlineVariant.withValues(alpha: 0.3),
+                  strokeWidth: 1,
+                  dashArray: [4, 4],
+                ),
+              ),
+              titlesData: FlTitlesData(
+                topTitles:
+                    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                rightTitles:
+                    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                leftTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    reservedSize: 32,
+                    interval: 25,
+                    getTitlesWidget: (v, _) => Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Text('${v.toInt()}%',
+                          textAlign: TextAlign.right,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 10, color: cs.onSurfaceVariant)),
+                    ),
+                  ),
+                ),
+                bottomTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    reservedSize: 22,
+                    interval: 1,
+                    getTitlesWidget: (v, _) {
+                      final i = v.toInt();
+                      if (i < 0 || i >= live.length) {
+                        return const SizedBox.shrink();
+                      }
+                      // Thin the labels so a full year stays legible.
+                      final step = (live.length / 6).ceil();
+                      if (i % step != 0 && i != live.length - 1) {
+                        return const SizedBox.shrink();
+                      }
+                      return Text(DateFormat('MMM').format(live[i].month),
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 10, color: cs.onSurfaceVariant));
+                    },
+                  ),
+                ),
+              ),
+              barTouchData: BarTouchData(
+                touchTooltipData: BarTouchTooltipData(
+                  getTooltipColor: (_) => cs.surfaceContainerHighest,
+                  // The exact figures live here now that the columns carry no
+                  // labels of their own.
+                  getTooltipItem: (group, gi, rod, _) => BarTooltipItem(
+                    '${DateFormat('MMM yyyy').format(live[gi].month)}\n',
+                    GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: cs.onSurface),
+                    children: [
+                      for (final t in SpendingTier.values)
+                        TextSpan(
+                          text: '\n${t.label}  ${pcts[gi][t.index]}%  '
+                              '${fmt.format(live[gi].amountOf(t))}',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11, color: _tierColors[t]),
                         ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
+              barGroups: groups,
             ),
           ),
-          for (int i = 0; i < SpendingTier.values.length; i++)
-            SizedBox(
-              width: 30,
-              child: Text(
-                '${pcts[i]}%',
-                textAlign: TextAlign.right,
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: _tierColors[SpendingTier.values[i]],
-                ),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 14,
+          runSpacing: 4,
+          children: [
+            for (final t in SpendingTier.values)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 8, height: 8,
+                    decoration: BoxDecoration(
+                      color: _tierColors[t],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(t.label,
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11, color: cs.onSurfaceVariant)),
+                ],
               ),
-            ),
-        ],
-      ),
+          ],
+        ),
+      ],
     );
   }
 }
