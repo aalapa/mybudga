@@ -179,6 +179,9 @@ class _ReportsBody extends StatelessWidget {
               : const SizedBox.shrink(),
         ),
 
+        // ── Budget health ───────────────────────────────────────────────────
+        SliverToBoxAdapter(child: _BudgetHealthSection(data: data)),
+
         // ── Committed vs free ───────────────────────────────────────────────
         SliverToBoxAdapter(child: _SpendingTierSection(data: data)),
 
@@ -1697,6 +1700,159 @@ class _PayeesSection extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // Empty section placeholder
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Budget health — is the budget itself working, not just what was spent
+// ---------------------------------------------------------------------------
+
+class _BudgetHealthSection extends StatefulWidget {
+  final ReportsState data;
+  const _BudgetHealthSection({required this.data});
+
+  @override
+  State<_BudgetHealthSection> createState() => _BudgetHealthSectionState();
+}
+
+class _BudgetHealthSectionState extends State<_BudgetHealthSection> {
+  bool _showAll = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final withSignal =
+        widget.data.categoryHealth.where((h) => h.hasSignal).toList();
+
+    if (withSignal.isEmpty) {
+      return const _EmptySection(
+        label: 'Budget health',
+        message:
+            'Needs at least three months of budgeting in a category before a '
+            'pattern can be told from noise.',
+      );
+    }
+
+    final offTarget = withSignal.where((h) => !h.isOnTarget).length;
+    final shown     = _showAll ? withSignal : withSignal.take(5).toList();
+    final remaining = withSignal.length - shown.length;
+
+    return _Section(
+      label: 'Budget health',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            offTarget == 0
+                ? 'Every budgeted category lands within 10% of its number.'
+                : '$offTarget of ${withSignal.length} categories consistently '
+                    'miss their number. Sorted by how much attention they want.',
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 12, color: cs.onSurfaceVariant),
+          ),
+          const SizedBox(height: 14),
+          ...shown.map((h) => _HealthRow(health: h)),
+          if (remaining > 0)
+            TextButton(
+              onPressed: () => setState(() => _showAll = true),
+              child: Text('Show $remaining more',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, fontWeight: FontWeight.w600)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HealthRow extends StatelessWidget {
+  final CategoryHealth health;
+  const _HealthRow({required this.health});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+
+    final biasPct = (health.medianBias * 100).round().abs();
+    final Color biasColor;
+    final String biasText;
+    if (health.isOnTarget) {
+      biasColor = cs.tertiary;
+      biasText  = 'on target';
+    } else if (health.budgetsLow) {
+      biasColor = cs.error;
+      biasText  = '$biasPct% low';
+    } else {
+      biasColor = cs.onSurfaceVariant;
+      biasText  = '$biasPct% high';
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(health.name,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: cs.onSurface)),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: biasColor.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(biasText,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: biasColor)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 10,
+            runSpacing: 2,
+            children: [
+              if (health.overspendMonths > 0)
+                _HealthFact(
+                  'over ${health.overspendMonths} of ${health.monthsBudgeted} months'
+                  '${health.avgOverspend > 0 ? ' · avg ${fmt.format(health.avgOverspend)}' : ''}',
+                  cs.error,
+                ),
+              _HealthFact(
+                  '${health.predictability.label} · ${health.predictability.advice}',
+                  cs.onSurfaceVariant),
+              if (!health.isOnTarget && health.suggestedBudget > 0)
+                _HealthFact(
+                    'try ${fmt.format(health.suggestedBudget)}', cs.primary),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HealthFact extends StatelessWidget {
+  final String text;
+  final Color color;
+  const _HealthFact(this.text, this.color);
+
+  @override
+  Widget build(BuildContext context) => Text(
+        text,
+        style: GoogleFonts.plusJakartaSans(fontSize: 11, color: color),
+      );
+}
 
 // ---------------------------------------------------------------------------
 // Committed vs free — outflow split by how much choice you have over it

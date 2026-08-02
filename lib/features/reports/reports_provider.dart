@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/supabase/supabase_provider.dart';
@@ -30,6 +31,9 @@ class ReportsState {
   /// Every group with its classification, for the inline editor.
   final List<GroupTier> groupTiers;
 
+  /// Per-category budget accuracy, overspend recurrence and predictability.
+  final List<CategoryHealth> categoryHealth;
+
   // Net-worth snapshot (from accounts — not period-scoped)
   final double totalAssets;
   final double totalLiabilities;
@@ -43,8 +47,9 @@ class ReportsState {
     required this.budgetVsActual,
     required this.categoryMonthlySpend,
     required this.categoryDailySpend,
-    this.byTierMonth = const [],
-    this.groupTiers  = const [],
+    this.byTierMonth    = const [],
+    this.groupTiers     = const [],
+    this.categoryHealth = const [],
     required this.totalAssets,
     required this.totalLiabilities,
   });
@@ -121,6 +126,82 @@ class TierMonth {
 
   /// Share of the month's classified outflow, 0–1.
   double shareOf(SpendingTier t) => total > 0 ? amountOf(t) / total : 0;
+}
+
+/// How predictable a category's monthly spend is.
+enum Predictability {
+  steady,
+  variable,
+  erratic;
+
+  /// From the coefficient of variation of monthly spend.
+  static Predictability fromCv(double cv) => cv < 0.25
+      ? Predictability.steady
+      : cv < 0.60
+          ? Predictability.variable
+          : Predictability.erratic;
+
+  String get label => switch (this) {
+        Predictability.steady   => 'steady',
+        Predictability.variable => 'variable',
+        Predictability.erratic  => 'erratic',
+      };
+
+  String get advice => switch (this) {
+        Predictability.steady   => 'safe to budget to the dollar',
+        Predictability.variable => 'leave a little room',
+        Predictability.erratic  => 'budget a buffer, not a target',
+      };
+}
+
+/// Whether a category's budget is actually working: how far off it usually
+/// lands, which way, how often it goes red, and how predictable it is.
+class CategoryHealth {
+  final String categoryId;
+  final String name;
+
+  /// Months in the period where something was budgeted — the only months a
+  /// bias can be measured from.
+  final int monthsBudgeted;
+  final int overspendMonths;
+  final double avgOverspend;
+
+  /// Median of (spent - budgeted) / budgeted. Positive means you budget low.
+  /// Median rather than mean so one unusual month cannot set the verdict.
+  final double medianBias;
+
+  /// Coefficient of variation of monthly spend across the whole period.
+  final double volatility;
+
+  /// Median monthly spend, as a starting point for a better number.
+  final double suggestedBudget;
+
+  const CategoryHealth({
+    required this.categoryId,
+    required this.name,
+    required this.monthsBudgeted,
+    required this.overspendMonths,
+    required this.avgOverspend,
+    required this.medianBias,
+    required this.volatility,
+    required this.suggestedBudget,
+  });
+
+  /// Three months is the fewest that can distinguish a pattern from noise.
+  bool get hasSignal => monthsBudgeted >= 3;
+
+  Predictability get predictability => Predictability.fromCv(volatility);
+
+  /// Within 10% either way is close enough to call on target.
+  bool get isOnTarget => medianBias.abs() < 0.10;
+
+  bool get budgetsLow => medianBias >= 0.10;
+
+  /// Ranks how much attention it wants: chronic overspending first, then how
+  /// far the budget is off.
+  double get severity =>
+      (monthsBudgeted == 0 ? 0 : overspendMonths / monthsBudgeted) * 2 +
+      medianBias.abs();
 }
 
 /// A group and how it is classified, for the inline editor.
@@ -229,7 +310,8 @@ final reportsProvider = FutureProvider.autoDispose
         .order('date', ascending: true),
     client
         .from('budget_months')
-        .select('category_id, budgeted, categories(name)')
+        .select('category_id, budgeted, month, '
+            'categories(name, linked_account_id)')
         .eq('household_id', householdId)
         .gte('month', startStr)
         .lte('month', endStr),
@@ -395,6 +477,74 @@ final reportsProvider = FutureProvider.autoDispose
         ifAbsent: () => _BudgetAgg(id: catId, name: name, amount: amt));
   }
 
+  // ── Budget health: accuracy, overspend recurrence, predictability ────────
+  // Needs budget per category *per month*; the aggregate above cannot show a
+  // pattern, only a period total.
+  final budgetByCatMonth = <String, Map<String, double>>{};
+  final healthNames      = <String, String>{};
+  for (final r in budgetRes) {
+    final catId = r['category_id'] as String?;
+    final cat   = r['categories'] as Map<String, dynamic>?;
+    if (catId == null || cat == null) continue;
+    // Card envelopes have no assignable budget, so a bias against one is
+    // meaningless — it would read as permanently 100% underbudgeted.
+    if (cat['linked_account_id'] != null) continue;
+    final amt = (r['budgeted'] as num).toDouble();
+    if (amt <= 0) continue;
+    final mk = _monthKeyOfDate(r['month'] as String);
+    (budgetByCatMonth[catId] ??= {})[mk] = amt;
+    healthNames[catId] = cat['name'] as String? ?? '';
+  }
+
+  final categoryHealth = <CategoryHealth>[];
+  for (final catId in budgetByCatMonth.keys) {
+    final months  = budgetByCatMonth[catId]!;
+    final errors  = <double>[];
+    final actuals = <double>[];
+    var overspendMonths = 0;
+    var overspendTotal  = 0.0;
+
+    for (final entry in months.entries) {
+      final budgeted = entry.value;
+      final spent    = catMonthAgg[catId]?[entry.key] ?? 0.0;
+      errors.add((spent - budgeted) / budgeted);
+      actuals.add(spent);
+      // 1% tolerance: landing a dollar or two over is rounding, not a
+      // pattern, and counting it would rank a category that is essentially on
+      // target alongside one that is genuinely running hot every month.
+      if (spent > budgeted * 1.01) {
+        overspendMonths++;
+        overspendTotal += spent - budgeted;
+      }
+    }
+
+    // Predictability is measured over every month in the period, not just the
+    // budgeted ones: a category that is zero some months genuinely is erratic.
+    final allSpend =
+        sortedMonthKeys.map((k) => catMonthAgg[catId]?[k] ?? 0.0).toList();
+    final mean = allSpend.isEmpty
+        ? 0.0
+        : allSpend.reduce((a, b) => a + b) / allSpend.length;
+    var variance = 0.0;
+    for (final v in allSpend) {
+      variance += (v - mean) * (v - mean);
+    }
+    variance = allSpend.isEmpty ? 0 : variance / allSpend.length;
+    final cv = mean > 0 ? math.sqrt(variance) / mean : 0.0;
+
+    categoryHealth.add(CategoryHealth(
+      categoryId:      catId,
+      name:            healthNames[catId] ?? '',
+      monthsBudgeted:  months.length,
+      overspendMonths: overspendMonths,
+      avgOverspend:    overspendMonths == 0 ? 0 : overspendTotal / overspendMonths,
+      medianBias:      _median(errors),
+      volatility:      cv,
+      suggestedBudget: _median(actuals),
+    ));
+  }
+  categoryHealth.sort((a, b) => b.severity.compareTo(a.severity));
+
   final budgetVsActual = budgetMap.keys
       .where((id) => budgetMap[id]!.amount > 0)
       .map((id) {
@@ -444,6 +594,7 @@ final reportsProvider = FutureProvider.autoDispose
     categoryDailySpend:   catDayAgg,
     byTierMonth:          byTierMonth,
     groupTiers:           groupTiers,
+    categoryHealth:       categoryHealth,
     totalAssets:          totalAssets,
     totalLiabilities:     totalLiabilities,
   );
@@ -550,4 +701,14 @@ Future<void> setGroupSpendingTier(
       .update({'spending_tier': tier.toDb})
       .eq('id', groupId);
   ref.invalidate(reportsProvider);
+}
+
+/// 'yyyy-MM-dd' → 'yyyy-MM'.
+String _monthKeyOfDate(String date) => date.substring(0, 7);
+
+double _median(List<double> xs) {
+  if (xs.isEmpty) return 0;
+  final s = [...xs]..sort();
+  final mid = s.length ~/ 2;
+  return s.length.isOdd ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
