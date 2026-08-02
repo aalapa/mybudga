@@ -2558,12 +2558,11 @@ class _SpendingTierSectionState extends ConsumerState<_SpendingTierSection> {
   }
 }
 
-/// Share by month as three bars per month with a trend line per tier.
+/// Share by month as three bars per month, one per tier.
 ///
-/// Drawn directly rather than with fl_chart: overlaying a line series on a bar
-/// chart there means two widgets with independently computed x-positions, and
-/// bar groups do not land on the line's x coordinates. One painter keeps the
-/// lines registered to the bars they connect.
+/// Drawn with a painter rather than fl_chart so the y axis can scale to the
+/// tallest bar and a tapped month can be highlighted behind its group, neither
+/// of which the bar chart there does without fighting it.
 class _TierMonthChart extends StatefulWidget {
   final List<TierMonth> months;
   const _TierMonthChart({required this.months});
@@ -2741,33 +2740,6 @@ class _TierChartPainter extends CustomPainter {
       }
     }
 
-    // One trend line per tier, through the top of each of its bars.
-    for (final t in SpendingTier.values) {
-      final path = Path();
-      for (var i = 0; i < months.length; i++) {
-        final centre = plot.left + slot * i + slot / 2;
-        final groupW = barW * SpendingTier.values.length;
-        final x = centre - groupW / 2 + barW * t.index + barW / 2;
-        final y = yOf(pcts[i][t.index].toDouble());
-        i == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
-      }
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = _tierColors[t]!
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.6
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round,
-      );
-      for (var i = 0; i < months.length; i++) {
-        final centre = plot.left + slot * i + slot / 2;
-        final groupW = barW * SpendingTier.values.length;
-        final x = centre - groupW / 2 + barW * t.index + barW / 2;
-        canvas.drawCircle(Offset(x, yOf(pcts[i][t.index].toDouble())), 2.0,
-            Paint()..color = _tierColors[t]!);
-      }
-    }
   }
 
   void _text(Canvas canvas, String s, Offset at, Color color, double size,
