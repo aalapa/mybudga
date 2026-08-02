@@ -2575,6 +2575,14 @@ class _TierMonthChartState extends State<_TierMonthChart> {
   int? _selected;
 
   @override
+  void didUpdateWidget(_TierMonthChart old) {
+    super.didUpdateWidget(old);
+    // Changing the period changes which months exist, so a held index would
+    // point at a different month than the one that was tapped.
+    if (old.months.length != widget.months.length) _selected = null;
+  }
+
+  @override
   Widget build(BuildContext context) {
     final cs   = Theme.of(context).colorScheme;
     final fmt  = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
@@ -2595,46 +2603,72 @@ class _TierMonthChartState extends State<_TierMonthChart> {
     }
     final maxY = ((top / 10).ceil() * 10).clamp(30, 100).toDouble();
 
-    final idx = (_selected ?? live.length - 1).clamp(0, live.length - 1);
-    final sel = live[idx];
+    // Nothing is preselected. Defaulting to the last month meant this line read
+    // "August" in every window — MTD, 3M and YTD all end in the current month —
+    // so it looked frozen while the chart beneath it was changing, and it
+    // restated the period figures already shown above.
+    final idx = _selected == null
+        ? null
+        : _selected!.clamp(0, live.length - 1);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Figures for the highlighted month, since bars cannot carry labels
-        // at this density.
-        Text(DateFormat('MMMM yyyy').format(sel.month),
-            style: GoogleFonts.plusJakartaSans(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: cs.onSurface)),
-        const SizedBox(height: 4),
-        Wrap(
-          spacing: 14,
-          runSpacing: 2,
-          children: [
-            for (final t in SpendingTier.values)
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 8, height: 8,
-                    decoration: BoxDecoration(
-                      color: _tierColors[t],
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    '${t.label} ${pcts[idx][t.index]}%  '
-                    '${fmt.format(sel.amountOf(t))}',
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 11, color: cs.onSurfaceVariant),
-                  ),
-                ],
+        if (idx == null)
+          Text('Tap a month for its split',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11,
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.75)))
+        else ...[
+          Row(
+            children: [
+              Text(DateFormat('MMMM yyyy').format(live[idx].month),
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: cs.onSurface)),
+              const Spacer(),
+              InkWell(
+                onTap: () => setState(() => _selected = null),
+                borderRadius: BorderRadius.circular(6),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 2),
+                  child: Text('clear',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11, color: cs.primary)),
+                ),
               ),
-          ],
-        ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 14,
+            runSpacing: 2,
+            children: [
+              for (final t in SpendingTier.values)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8, height: 8,
+                      decoration: BoxDecoration(
+                        color: _tierColors[t],
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${t.label} ${pcts[idx][t.index]}%  '
+                      '${fmt.format(live[idx].amountOf(t))}',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11, color: cs.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+        ],
         const SizedBox(height: 12),
         LayoutBuilder(
           builder: (ctx, box) => GestureDetector(
@@ -2653,7 +2687,7 @@ class _TierMonthChartState extends State<_TierMonthChart> {
                 months:    live,
                 pcts:      pcts,
                 maxY:      maxY,
-                selected:  idx,
+                selected:  idx,   // null = nothing highlighted
                 grid:      cs.outlineVariant.withValues(alpha: 0.35),
                 axisText:  cs.onSurfaceVariant,
                 highlight: cs.onSurface.withValues(alpha: 0.06),
@@ -2670,7 +2704,7 @@ class _TierChartPainter extends CustomPainter {
   final List<TierMonth> months;
   final List<List<int>> pcts;
   final double maxY;
-  final int selected;
+  final int? selected;
   final Color grid;
   final Color axisText;
   final Color highlight;
@@ -2711,11 +2745,13 @@ class _TierChartPainter extends CustomPainter {
     // Three bars per slot, sharing 62% of it so months stay visually apart.
     final barW = (slot * 0.62) / SpendingTier.values.length;
 
-    // Highlight behind the selected month.
-    canvas.drawRect(
-      Rect.fromLTWH(plot.left + slot * selected, plot.top, slot, plot.height),
-      Paint()..color = highlight,
-    );
+    // Highlight behind the selected month, if one has been tapped.
+    if (selected != null) {
+      canvas.drawRect(
+        Rect.fromLTWH(plot.left + slot * selected!, plot.top, slot, plot.height),
+        Paint()..color = highlight,
+      );
+    }
 
     for (var i = 0; i < months.length; i++) {
       final centre = plot.left + slot * i + slot / 2;
