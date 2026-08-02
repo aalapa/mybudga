@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'reports_provider.dart';
 
 // ---------------------------------------------------------------------------
@@ -20,6 +21,194 @@ class ReportsScreen extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<ReportsScreen> createState() => _ReportsScreenState();
+}
+
+/// Drag-to-reorder over the section list. A separate sheet rather than drag
+/// handles inline, matching how group reordering already works elsewhere and
+/// avoiding a drag gesture competing with the accordion taps.
+class _ReorderSectionsSheet extends StatefulWidget {
+  final List<_RSection> order;
+  final ValueChanged<List<_RSection>> onDone;
+  const _ReorderSectionsSheet({required this.order, required this.onDone});
+
+  @override
+  State<_ReorderSectionsSheet> createState() => _ReorderSectionsSheetState();
+}
+
+class _ReorderSectionsSheetState extends State<_ReorderSectionsSheet> {
+  late List<_RSection> _list = List.of(widget.order);
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHigh,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+      constraints:
+          BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Text('Reorder sections',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  color: cs.onSurface)),
+          const SizedBox(height: 4),
+          Text('Drag to change the order reports appear in.',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12, color: cs.onSurfaceVariant)),
+          const SizedBox(height: 12),
+          Flexible(
+            child: ReorderableListView(
+              shrinkWrap: true,
+              buildDefaultDragHandles: false,
+              onReorder: (oldIdx, newIdx) => setState(() {
+                if (newIdx > oldIdx) newIdx -= 1;
+                _list.insert(newIdx, _list.removeAt(oldIdx));
+              }),
+              children: [
+                for (int i = 0; i < _list.length; i++)
+                  ReorderableDragStartListener(
+                    key: ValueKey(_list[i].name),
+                    index: i,
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.drag_handle,
+                          size: 20,
+                          color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
+                      title: Text(_list[i].title,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: cs.onSurface)),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          FilledButton(
+            onPressed: () {
+              widget.onDone(_list);
+              Navigator.pop(context);
+            },
+            style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(48)),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Accordion shell
+// ---------------------------------------------------------------------------
+
+/// The report sections, in their default order. Stored by name so a saved
+/// order survives adding or removing sections.
+enum _RSection {
+  netWorth('Net worth'),
+  summary('Summary'),
+  spending('Spending by category'),
+  budgetVsActual('Budget vs actual'),
+  trend('Income vs expenses'),
+  savingsRate('Savings rate'),
+  budgetHealth('Budget health'),
+  tiers('Committed vs free'),
+  payees('Top payees');
+
+  const _RSection(this.title);
+  final String title;
+}
+
+/// Marks that a section is being rendered inside an accordion, so [_Section]
+/// drops its own heading and rule — the slot draws those.
+class _InAccordion extends InheritedWidget {
+  const _InAccordion({required super.child});
+  static bool of(BuildContext c) =>
+      c.dependOnInheritedWidgetOfExactType<_InAccordion>() != null;
+  @override
+  bool updateShouldNotify(_InAccordion _) => false;
+}
+
+/// One collapsible section. Only one is open at a time: with nine sections
+/// the page was a long scroll of charts, and opening one thing meant
+/// scrolling past everything above it.
+class _AccordionSlot extends StatelessWidget {
+  final String title;
+  final bool expanded;
+  final VoidCallback onToggle;
+  final Widget child;
+
+  const _AccordionSlot({
+    required this.title,
+    required this.expanded,
+    required this.onToggle,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Divider(
+            height: 1, color: cs.outlineVariant.withValues(alpha: 0.55)),
+        InkWell(
+          onTap: onToggle,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: expanded ? FontWeight.w700 : FontWeight.w600,
+                      color: expanded ? cs.onSurface : cs.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                AnimatedRotation(
+                  turns: expanded ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 180),
+                  child: Icon(Icons.expand_more,
+                      size: 20, color: cs.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+        ),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+          alignment: Alignment.topCenter,
+          child: expanded
+              ? _InAccordion(child: child)
+              : const SizedBox(width: double.infinity),
+        ),
+      ],
+    );
+  }
 }
 
 /// Report window. Kept as intent rather than a bare month count because YTD
@@ -56,6 +245,58 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   // Year to date by default: the window people actually reason about, and
   // wide enough for the multi-month sections to have something to say.
   _Period     _period       = _Period.ytd;
+
+  // Order and open-state are device-local, like the sidebar and account
+  // groups — a layout preference, not household data.
+  static const _kOrderKey = 'reports_section_order';
+  List<_RSection> _order = List.of(_RSection.values);
+  _RSection? _open = _RSection.values.first;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOrder();
+  }
+
+  Future<void> _loadOrder() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getStringList(_kOrderKey);
+    if (saved == null || !mounted) return;
+    // Rebuilt against the enum so a saved order survives sections being
+    // added or removed: unknown names drop out, new ones append.
+    final byName = {for (final s in _RSection.values) s.name: s};
+    final restored = <_RSection>[
+      for (final n in saved)
+        if (byName[n] != null) byName[n]!,
+    ];
+    for (final s in _RSection.values) {
+      if (!restored.contains(s)) restored.add(s);
+    }
+    setState(() => _order = restored);
+  }
+
+  Future<void> _persistOrder() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kOrderKey, [for (final s in _order) s.name]);
+  }
+
+  void _toggleSection(_RSection sec) =>
+      setState(() => _open = _open == sec ? null : sec);
+
+  Future<void> _showReorderSheet() async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => _ReorderSectionsSheet(
+        order: List.of(_order),
+        onDone: (next) {
+          setState(() => _order = next);
+          _persistOrder();
+        },
+      ),
+    );
+  }
   int         _touchedIdx   = -1;
   Set<String> _excludedCats = {};
 
@@ -118,6 +359,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
             data:       data,
             period:     _period,
             months:     _period.months,
+            order:           _order,
+            openSection:     _open,
+            onToggleSection: _toggleSection,
+            onReorder:       _showReorderSheet,
             touchedIdx: _touchedIdx,
             onPeriodChanged:     (p) => setState(() {
               _period = p; _touchedIdx = -1; _excludedCats = {};
@@ -150,6 +395,10 @@ class _ReportsBody extends StatelessWidget {
   final Set<String> excludedCats;
   final _Period period;
   final ValueChanged<_Period> onPeriodChanged;
+  final List<_RSection> order;
+  final _RSection? openSection;
+  final ValueChanged<_RSection> onToggleSection;
+  final VoidCallback onReorder;
   final ValueChanged<int> onTouchedIdxChanged;
   final void Function(CategorySpend, Color) onDrillDown;
   final void Function(String) onExclude;
@@ -161,10 +410,42 @@ class _ReportsBody extends StatelessWidget {
     required this.excludedCats,
     required this.period,
     required this.onPeriodChanged,
+    required this.order,
+    required this.openSection,
+    required this.onToggleSection,
+    required this.onReorder,
     required this.onTouchedIdxChanged,
     required this.onDrillDown,
     required this.onExclude,
   });
+
+  /// Null when a section has nothing worth showing for this period.
+  Widget? _bodyFor(_RSection sec) => switch (sec) {
+        _RSection.netWorth => _NetWorthSection(data: data),
+        _RSection.summary  => _SummarySection(data: data, months: months),
+        _RSection.spending => data.byCategory.isEmpty
+            ? const _EmptySection(
+                label:   'SPENDING BY CATEGORY',
+                message: 'No expense transactions in this period',
+              )
+            : _SpendingSection(
+                data:         data,
+                touchedIdx:   touchedIdx,
+                excludedCats: excludedCats,
+                onTouch:      onTouchedIdxChanged,
+                onDrillDown:  onDrillDown,
+                onExclude:    onExclude,
+              ),
+        _RSection.budgetVsActual =>
+          data.budgetVsActual.isEmpty ? null : _BudgetVsActualSection(data: data),
+        _RSection.trend       => _TrendSection(data: data, months: months),
+        _RSection.savingsRate =>
+          months > 1 ? _SavingsRateTrendSection(data: data) : null,
+        _RSection.budgetHealth => _BudgetHealthSection(data: data),
+        _RSection.tiers        => _SpendingTierSection(data: data),
+        _RSection.payees =>
+          data.topPayees.isEmpty ? null : _PayeesSection(data: data),
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -183,64 +464,42 @@ class _ReportsBody extends StatelessWidget {
                         color: Theme.of(context).colorScheme.onSurface)),
                 const SizedBox(height: 14),
                 _PeriodSelector(period: period, onChanged: onPeriodChanged),
-                const SizedBox(height: 20),
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: onReorder,
+                    icon: const Icon(Icons.swap_vert, size: 16),
+                    label: Text('Reorder',
+                        style: GoogleFonts.plusJakartaSans(fontSize: 12)),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
               ],
             ),
           ),
         ),
 
-        // ── Net Worth ───────────────────────────────────────────────────────
-        SliverToBoxAdapter(child: _NetWorthSection(data: data)),
-
-        // ── Summary (income / expenses / saved / rate) ─────────────────────
-        SliverToBoxAdapter(child: _SummarySection(data: data, months: months)),
-
-        // ── Spending by category (donut + bottom-sheet drill) ─────────────
-        SliverToBoxAdapter(
-          child: data.byCategory.isEmpty
-              ? _EmptySection(
-                  label:   'SPENDING BY CATEGORY',
-                  message: 'No expense transactions in this period',
-                )
-              : _SpendingSection(
-                  data:         data,
-                  touchedIdx:   touchedIdx,
-                  excludedCats: excludedCats,
-                  onTouch:      onTouchedIdxChanged,
-                  onDrillDown:  onDrillDown,
-                  onExclude:    onExclude,
-                ),
-        ),
-
-        // ── Budget vs Actual ────────────────────────────────────────────────
-        SliverToBoxAdapter(
-          child: data.budgetVsActual.isEmpty
-              ? const SizedBox.shrink()
-              : _BudgetVsActualSection(data: data),
-        ),
-
-        // ── Monthly income vs expenses trend ────────────────────────────────
-        SliverToBoxAdapter(child: _TrendSection(data: data, months: months)),
-
-        // ── Savings rate trend ──────────────────────────────────────────────
-        SliverToBoxAdapter(
-          child: months > 1
-              ? _SavingsRateTrendSection(data: data)
-              : const SizedBox.shrink(),
-        ),
-
-        // ── Budget health ───────────────────────────────────────────────────
-        SliverToBoxAdapter(child: _BudgetHealthSection(data: data)),
-
-        // ── Committed vs free ───────────────────────────────────────────────
-        SliverToBoxAdapter(child: _SpendingTierSection(data: data)),
-
-        // ── Top payees ──────────────────────────────────────────────────────
-        SliverToBoxAdapter(
-          child: data.topPayees.isEmpty
-              ? const SizedBox.shrink()
-              : _PayeesSection(data: data),
-        ),
+        // ── Sections, in the user's order, one open at a time ───────────────
+        ...order.map((sec) {
+          final body = _bodyFor(sec);
+          // Sections with nothing to show are skipped entirely rather than
+          // offering a header that opens onto blank space.
+          if (body == null) return const SliverToBoxAdapter(child: SizedBox.shrink());
+          return SliverToBoxAdapter(
+            child: _AccordionSlot(
+              title:    sec.title,
+              expanded: openSection == sec,
+              onToggle: () => onToggleSection(sec),
+              child:    body,
+            ),
+          );
+        }),
 
         const SliverToBoxAdapter(child: SizedBox(height: 100)),
       ],
@@ -2288,6 +2547,13 @@ class _Section extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    // Inside an accordion the slot already drew the heading and the rule.
+    if (_InAccordion.of(context)) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+        child: child,
+      );
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
       child: Column(
