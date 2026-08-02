@@ -2329,6 +2329,30 @@ class _HealthFact extends StatelessWidget {
 // Committed vs free — outflow split by how much choice you have over it
 // ---------------------------------------------------------------------------
 
+/// Whole percents that sum to exactly 100.
+///
+/// Rounding each share on its own lands on 99 or 101 whenever the fractions
+/// straddle a half — three thirds round to 33 each and visibly lose a point.
+/// Largest remainder instead: floor everything, then hand the leftover points
+/// to the largest fractional parts. Zero stays zero.
+List<int> _wholePercents(List<double> parts) {
+  final total = parts.fold(0.0, (s, v) => s + v);
+  if (total <= 0) return List.filled(parts.length, 0);
+
+  final exact  = [for (final v in parts) v / total * 100];
+  final result = [for (final v in exact) v.floor()];
+  var leftover = 100 - result.fold(0, (s, v) => s + v);
+
+  final order = [for (var i = 0; i < exact.length; i++) i]
+    ..sort((a, b) =>
+        (exact[b] - result[b]).compareTo(exact[a] - result[a]));
+
+  for (var i = 0; leftover > 0 && i < order.length; i++, leftover--) {
+    result[order[i]]++;
+  }
+  return result;
+}
+
 const _tierColors = <SpendingTier, Color>{
   SpendingTier.fixed:         Color(0xFF6C63FF),
   SpendingTier.essential:     Color(0xFF42A5F5),
@@ -2369,6 +2393,10 @@ class _SpendingTierSectionState extends ConsumerState<_SpendingTierSection> {
     }
 
     final unconfirmed = data.groupTiers.where((g) => g.isDefault).length;
+    // Same apportionment as the month rows, so the headline reaches 100 too
+    // and agrees with the sentence beneath it.
+    final periodPcts = _wholePercents(
+        [for (final t in SpendingTier.values) data.tierTotal(t)]);
     // Every group still on its default guess means the split carries no
     // information — showing "100% essential" as though it were a finding is
     // worse than admitting nothing has been classified.
@@ -2448,7 +2476,7 @@ class _SpendingTierSectionState extends ConsumerState<_SpendingTierSection> {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      Text('${(data.tierShare(t) * 100).round()}%',
+                      Text('${periodPcts[t.index]}%',
                           style: GoogleFonts.plusJakartaSans(
                               fontSize: 22,
                               fontWeight: FontWeight.w800,
@@ -2467,7 +2495,7 @@ class _SpendingTierSectionState extends ConsumerState<_SpendingTierSection> {
           if (!allGuessed)
             Text(
               'Of every dollar that left, '
-              '${(data.tierShare(SpendingTier.discretionary) * 100).round()}c '
+              '${periodPcts[SpendingTier.discretionary.index]}c '
               'was genuinely yours to choose.',
               style: GoogleFonts.plusJakartaSans(
                   fontSize: 12, color: cs.onSurfaceVariant),
@@ -2541,12 +2569,18 @@ class _TierMonthRow extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     if (month.total <= 0) return const SizedBox.shrink();
 
+    // Written beside the bar rather than inside it: a thin segment cannot hold
+    // its own label, and hiding one made the visible numbers fail to reach 100
+    // however carefully they were rounded.
+    final pcts = _wholePercents(
+        [for (final t in SpendingTier.values) month.amountOf(t)]);
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
           SizedBox(
-            width: 38,
+            width: 34,
             child: Text(DateFormat('MMM').format(month.month),
                 style: GoogleFonts.plusJakartaSans(
                     fontSize: 11, color: cs.onSurfaceVariant)),
@@ -2555,39 +2589,33 @@ class _TierMonthRow extends StatelessWidget {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: SizedBox(
-                height: 20,
+                height: 16,
                 child: Row(
                   children: [
                     for (final t in SpendingTier.values)
                       if (month.shareOf(t) > 0)
                         Expanded(
                           flex: (month.shareOf(t) * 1000).round(),
-                          child: ColoredBox(
-                            color: _tierColors[t]!,
-                            // Each share is written into its own segment, so
-                            // all three are labelled without a trailing column
-                            // eating the width the bar needs. Skipped on
-                            // slivers too narrow to hold the text, where it
-                            // would clip to nonsense.
-                            child: month.shareOf(t) >= 0.13
-                                ? Center(
-                                    child: Text(
-                                      '${(month.shareOf(t) * 100).round()}%',
-                                      style: GoogleFonts.plusJakartaSans(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w700,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  )
-                                : null,
-                          ),
+                          child: ColoredBox(color: _tierColors[t]!),
                         ),
                   ],
                 ),
               ),
             ),
           ),
+          for (int i = 0; i < SpendingTier.values.length; i++)
+            SizedBox(
+              width: 30,
+              child: Text(
+                '${pcts[i]}%',
+                textAlign: TextAlign.right,
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: _tierColors[SpendingTier.values[i]],
+                ),
+              ),
+            ),
         ],
       ),
     );
