@@ -52,19 +52,34 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       body: SafeArea(
         child: async.when(
           loading: () => const Center(child: CircularProgressIndicator()),
-          error:   (e, _) => Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.error_outline, size: 48, color: cs.error),
-                const SizedBox(height: 12),
-                Text('Could not load reports',
-                    style: GoogleFonts.plusJakartaSans(color: cs.onSurfaceVariant)),
-                TextButton(
-                  onPressed: () => ref.invalidate(reportsProvider(_months)),
-                  child: const Text('Retry'),
-                ),
-              ],
+          // Show what actually failed. A bare "could not load" gives no way to
+          // tell a missing column from a dropped connection.
+          error: (e, _) => Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.error_outline, size: 48, color: cs.error),
+                  const SizedBox(height: 12),
+                  Text('Could not load reports',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: cs.onSurface)),
+                  const SizedBox(height: 8),
+                  SelectableText(
+                    e.toString(),
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12, color: cs.onSurfaceVariant),
+                  ),
+                  TextButton(
+                    onPressed: () => ref.invalidate(reportsProvider(_months)),
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
             ),
           ),
           data: (data) => _ReportsBody(
