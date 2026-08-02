@@ -111,6 +111,8 @@ class _ThreeColumnBudget extends ConsumerWidget {
                 style: IconButton.styleFrom(
                     backgroundColor: cs.surfaceContainerHigh),
               ),
+              // Mirrors the toggle on the right so the chips stay centred.
+              const SizedBox(width: 44),
               const Spacer(),
               _MonthChip(
                 month: prevMonth, isCurrent: false,
@@ -122,14 +124,9 @@ class _ThreeColumnBudget extends ConsumerWidget {
                 month: nextMonth, isCurrent: false,
                 onTap: () => notifier.goToMonth(nextMonth)),
               const Spacer(),
-              IconButton(
-                onPressed: () => notifier.goToMonth(nextMonth),
-                icon: const Icon(Icons.chevron_right),
-                style: IconButton.styleFrom(
-                    backgroundColor: cs.surfaceContainerHigh),
-              ),
-              const SizedBox(width: 8),
               // ── Layout toggle ────────────────────────────────────────────
+              // Inside the right chevron, matching the single-month header, so
+              // the chevrons stay the outermost controls on both layouts.
               IconButton(
                 tooltip: 'Budget + Transactions split view',
                 icon: const Icon(Icons.vertical_split_outlined, size: 18),
@@ -140,6 +137,13 @@ class _ThreeColumnBudget extends ConsumerWidget {
                   backgroundColor: cs.surfaceContainerHigh,
                   padding: const EdgeInsets.all(6),
                 ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                onPressed: () => notifier.goToMonth(nextMonth),
+                icon: const Icon(Icons.chevron_right),
+                style: IconButton.styleFrom(
+                    backgroundColor: cs.surfaceContainerHigh),
               ),
             ],
           ),
