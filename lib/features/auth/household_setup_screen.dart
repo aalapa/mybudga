@@ -1,3 +1,4 @@
+import '../../core/theme/semantic_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -252,7 +253,7 @@ class _SuccessView extends StatelessWidget {
                   color: cs.tertiaryContainer,
                   shape: BoxShape.circle,
                 ),
-                child: Icon(Icons.check_rounded, size: 40, color: cs.tertiary),
+                child: Icon(Icons.check_rounded, size: 40, color: context.money.positive),
               ),
               const SizedBox(height: 24),
               Text(

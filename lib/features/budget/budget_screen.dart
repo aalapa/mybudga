@@ -1,3 +1,4 @@
+import '../../core/theme/semantic_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -319,7 +320,7 @@ class _PanelContentState extends State<_PanelContent> {
                     sign:       state.carryForward > 0 ? '+' : '−',
                     value:      state.carryForward.abs(),
                     label:      'Carried from ${DateFormat('MMM').format(DateTime(state.month.year, state.month.month - 1))}',
-                    valueColor: state.carryForward > 0 ? cs.tertiary : cs.error,
+                    valueColor: state.carryForward > 0 ? context.money.positive : cs.error,
                   ),
                 if (state.carryForward != 0) const SizedBox(height: 2),
                 // Income line — tappable, expands to show individual transactions
@@ -479,7 +480,7 @@ class _PanelColHeaders extends StatelessWidget {
           _PanelColLabel('BUDGET',   bg: cs.primary.withValues(alpha: 0.07),
               total: totalBudgeted, cs: cs),
           _PanelColLabel('ACTIVITY', total: totalActivity, cs: cs),
-          _PanelColLabel('AVAIL',    bg: cs.tertiary.withValues(alpha: 0.07),
+          _PanelColLabel('AVAIL',    bg: context.money.positive.withValues(alpha: 0.07),
               total: totalAvailable, cs: cs),
           const SizedBox(width: _kCarrySlotW),
         ],
@@ -586,7 +587,7 @@ class _PanelGroupRow extends StatelessWidget {
             _PanelNum(
               totalAvailable,
               totalAvailable < 0 ? cs.error : cs.onSurfaceVariant,
-              bg: cs.tertiary.withValues(alpha: 0.07),
+              bg: context.money.positive.withValues(alpha: 0.07),
             ),
             const SizedBox(width: _kCarrySlotW),
           ],
@@ -613,7 +614,7 @@ class _PanelEntryRow extends ConsumerWidget {
     final cs         = Theme.of(context).colorScheme;
     final isOverspent = entry.balance < 0;
     final availColor  = isOverspent ? cs.error
-        : entry.balance > 0 ? cs.tertiary
+        : entry.balance > 0 ? context.money.positive
         : cs.onSurfaceVariant;
 
     final iconCp = entry.iconCodePoint;
@@ -692,7 +693,7 @@ class _PanelEntryRow extends ConsumerWidget {
           Tooltip(
             message: _availBreakdown(entry, month),
             child: _PanelNum(entry.balance, availColor, bold: true,
-                bg: cs.tertiary.withValues(alpha: 0.07)),
+                bg: context.money.positive.withValues(alpha: 0.07)),
           ),
           // Fixed-width slot so the numeric columns stay tabulated whether or
           // not a given row is overspent.
@@ -1135,7 +1136,7 @@ class _BudgetHeader extends StatelessWidget {
                     sign:       carryForward > 0 ? '+' : '−',
                     value:      carryForward.abs(),
                     label:      'Carried from ${DateFormat('MMM').format(DateTime(month.year, month.month - 1))}',
-                    valueColor: carryForward > 0 ? cs.tertiary : cs.error,
+                    valueColor: carryForward > 0 ? context.money.positive : cs.error,
                   ),
                   const SizedBox(height: 3),
                 ],
@@ -1274,7 +1275,7 @@ class _IncomeLineState extends State<_IncomeLine> {
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    color: cs.tertiary.withValues(alpha: 0.7),
+                    color: context.money.positive.withValues(alpha: 0.7),
                   ),
                 ),
               ),
@@ -1283,7 +1284,7 @@ class _IncomeLineState extends State<_IncomeLine> {
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: cs.tertiary,
+                  color: context.money.positive,
                 ),
               ),
               if (widget.txns.isNotEmpty)
@@ -1295,7 +1296,7 @@ class _IncomeLineState extends State<_IncomeLine> {
                     child: Icon(
                       Icons.expand_more,
                       size:  14,
-                      color: cs.tertiary.withValues(alpha: 0.7),
+                      color: context.money.positive.withValues(alpha: 0.7),
                     ),
                   ),
                 ),
@@ -1339,7 +1340,7 @@ class _IncomeLineState extends State<_IncomeLine> {
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
-                          color: cs.tertiary,
+                          color: context.money.positive,
                         ),
                       ),
                     ],
@@ -1809,11 +1810,11 @@ class _BatteryBar extends StatelessWidget {
 
     final Color fill;
     if (pct > 1.0) {
-      fill = cs.error;
+      fill = context.money.negative;
     } else if (pct >= 0.8) {
-      fill = const Color(0xFFF57F17); // amber 800
+      fill = context.money.warning;
     } else {
-      fill = const Color(0xFF2E7D32); // green 800
+      fill = context.money.positive;
     }
 
     return Padding(
@@ -1932,7 +1933,7 @@ class _ColumnHeaders extends StatelessWidget {
               total: totalBudgeted, cs: cs),
           if (isWide) _ColLabel('ACTIVITY', total: totalActivity, cs: cs),
           _ColLabel(isWide ? 'AVAILABLE' : 'AVAIL',
-              bg: cs.tertiary.withValues(alpha: 0.07),
+              bg: context.money.positive.withValues(alpha: 0.07),
               total: totalAvailable, cs: cs),
         ],
       ),
@@ -2080,7 +2081,7 @@ class _GroupHeaderRow extends StatelessWidget {
               groupAvailable,
               groupAvailable < 0 ? cs.error : cs.onSurfaceVariant,
               bold: true,
-              bg: cs.tertiary.withValues(alpha: 0.07),
+              bg: context.money.positive.withValues(alpha: 0.07),
             ),
           ],
         ),
@@ -2120,7 +2121,7 @@ class _CategoryTableRow extends ConsumerWidget {
     final isFullyUsed = entry.balance == 0 && entry.spent > 0;
     final availColor  = isOverspent  ? cs.error
         : isFullyUsed               ? cs.onSurfaceVariant
-        : entry.balance > 0         ? cs.tertiary
+        : entry.balance > 0         ? context.money.positive
         :                             cs.onSurfaceVariant;
 
     return Column(
@@ -2150,7 +2151,7 @@ class _CategoryTableRow extends ConsumerWidget {
                 if (entry.goal != null)
                   Padding(
                     padding: const EdgeInsets.only(right: 5),
-                    child: Icon(Icons.flag_outlined, size: 12, color: cs.tertiary),
+                    child: Icon(Icons.flag_outlined, size: 12, color: context.money.positive),
                   ),
                 Expanded(
                   child: Column(
@@ -2186,7 +2187,7 @@ class _CategoryTableRow extends ConsumerWidget {
                 Tooltip(
                   message: _availBreakdown(entry, month),
                   child: _NumCell(entry.balance, availColor, bold: true,
-                      bg: cs.tertiary.withValues(alpha: 0.07)),
+                      bg: context.money.positive.withValues(alpha: 0.07)),
                 ),
                 if (isOverspent && !entry.isCcPayment)
                   _CarryOverspendArrow(entry: entry)
@@ -2773,7 +2774,7 @@ class _CategoryTxPanel extends ConsumerWidget {
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
-                      color: entry.carriedIn < 0 ? cs.error : cs.tertiary,
+                      color: entry.carriedIn < 0 ? cs.error : context.money.positive,
                     ),
                   ),
                 ],
@@ -2947,7 +2948,7 @@ class _CategoryTxRow extends StatelessWidget {
             style: GoogleFonts.plusJakartaSans(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: isIncome ? cs.tertiary : cs.onSurface,
+              color: isIncome ? context.money.positive : cs.onSurface,
             ),
           ),
         ],
@@ -3318,7 +3319,7 @@ class _CategoryDetailSheetState extends ConsumerState<_CategoryDetailSheet> {
                   _StatCell(
                     label: 'Carried in',
                     value: fmt.format(entry.carriedIn),
-                    color: entry.carriedIn < 0 ? cs.error : cs.tertiary,
+                    color: entry.carriedIn < 0 ? cs.error : context.money.positive,
                   ),
                 _StatCell(
                   label: 'Budgeted',
@@ -3335,7 +3336,7 @@ class _CategoryDetailSheetState extends ConsumerState<_CategoryDetailSheet> {
                 _StatCell(
                   label: isOverspent ? 'Overspent' : 'Remaining',
                   value: fmt.format(entry.balance.abs()),
-                  color: isOverspent ? cs.error : cs.tertiary,
+                  color: isOverspent ? cs.error : context.money.positive,
                 ),
               ],
             ),
@@ -3579,7 +3580,7 @@ class _GoalDetailCard extends StatelessWidget {
     final fmtDec     = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
     final savedSoFar = entry.balance.clamp(0.0, double.infinity);
     final onTrack    = goal.isOnTrack(month, entry.budgeted, savedSoFar);
-    final trackColor = onTrack ? cs.tertiary : cs.error;
+    final trackColor = onTrack ? context.money.positive : cs.error;
     final monthsLeft = goal.monthsRemaining(month);
 
     return Container(
@@ -3779,7 +3780,7 @@ class _SetGoalSheetState extends State<_SetGoalSheet> {
             const SizedBox(height: 20),
             Row(
               children: [
-                Icon(Icons.flag_outlined, size: 20, color: cs.tertiary),
+                Icon(Icons.flag_outlined, size: 20, color: context.money.positive),
                 const SizedBox(width: 8),
                 Text('Set a Goal',
                     style: GoogleFonts.plusJakartaSans(
@@ -5101,7 +5102,7 @@ class _CategorySplitPanel extends ConsumerWidget {
         ? (entry!.spent / entry!.budgeted).clamp(0.0, 1.0)
         : 0.0;
     final isOver = entry!.balance < 0;
-    final barColor = isOver ? cs.error : cs.tertiary;
+    final barColor = isOver ? cs.error : context.money.positive;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -5151,7 +5152,7 @@ class _CategorySplitPanel extends ConsumerWidget {
                         : '${fmt.format(entry!.balance)} left',
                     style: GoogleFonts.plusJakartaSans(
                         fontSize: 13, fontWeight: FontWeight.w600,
-                        color: isOver ? cs.error : cs.tertiary),
+                        color: isOver ? cs.error : context.money.positive),
                   ),
                 ],
               ),
@@ -5252,7 +5253,7 @@ class _SplitTxRow extends StatelessWidget {
             '${tx.amount < 0 ? '-' : '+'}${fmt.format(tx.amount.abs())}',
             style: GoogleFonts.plusJakartaSans(
                 fontSize: 13, fontWeight: FontWeight.w600,
-                color: tx.amount < 0 ? cs.onSurface : cs.tertiary),
+                color: tx.amount < 0 ? cs.onSurface : context.money.positive),
           ),
         ],
       ),

@@ -1,3 +1,4 @@
+import '../../core/theme/semantic_colors.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -213,7 +214,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   padding: const EdgeInsets.only(bottom: 3),
                   child: Row(children: [
                     Icon(Icons.check_circle_outline,
-                        size: 14, color: cs.tertiary),
+                        size: 14, color: context.money.positive),
                     const SizedBox(width: 6),
                     Text(item,
                         style: GoogleFonts.plusJakartaSans(fontSize: 13)),
@@ -676,7 +677,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   color: cs.outlineVariant.withValues(alpha: 0.4)),
               ListTile(
                 leading: Icon(Icons.upload_file_outlined,
-                    color: cs.tertiary, size: 20),
+                    color: context.money.positive, size: 20),
                 title: Text('Import from YNAB',
                     style: GoogleFonts.plusJakartaSans(
                         fontWeight: FontWeight.w600, color: cs.onSurface)),
@@ -2220,7 +2221,7 @@ class _ScheduledTile extends ConsumerWidget {
     final isExpense  = !tx.isTransfer && tx.amount < 0;
     final iconColor  = tx.isTransfer
         ? cs.primary
-        : (isIncome ? cs.tertiary : cs.error);
+        : (isIncome ? context.money.positive : cs.error);
     final icon = tx.isTransfer
         ? Icons.swap_horiz_rounded
         : (isIncome
@@ -2873,7 +2874,7 @@ class _ResultBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: cs.tertiaryContainer.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: cs.tertiary.withValues(alpha: 0.4)),
+        border: Border.all(color: context.money.positive.withValues(alpha: 0.4)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2881,7 +2882,7 @@ class _ResultBanner extends StatelessWidget {
           Row(
             children: [
               Icon(Icons.check_circle_outline,
-                  color: cs.tertiary, size: 20),
+                  color: context.money.positive, size: 20),
               const SizedBox(width: 8),
               Text('Import complete!',
                   style: GoogleFonts.plusJakartaSans(

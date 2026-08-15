@@ -1,3 +1,4 @@
+import 'semantic_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'theme_provider.dart' show CardStyle, CardRadius, CardRadiusExt;
@@ -52,6 +53,8 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme:  cs,
+      // Fixed, not seed-derived: see MoneyColors.
+      extensions:   const [MoneyColors.dark],
       textTheme: GoogleFonts.plusJakartaSansTextTheme(
         ThemeData(brightness: Brightness.dark).textTheme,
       ),
@@ -99,6 +102,7 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme:  cs,
+      extensions:   const [MoneyColors.light],
       textTheme: GoogleFonts.plusJakartaSansTextTheme(
         ThemeData(brightness: Brightness.light).textTheme,
       ),

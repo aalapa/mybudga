@@ -1,3 +1,4 @@
+import '../../core/theme/semantic_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -172,7 +173,7 @@ class _CashflowBody extends StatelessWidget {
                         ? _BalanceCard(
                             label: 'Goes negative',
                             value: runwayLabel,
-                            color: negIdx >= 0 ? cs.error : cs.tertiary,
+                            color: negIdx >= 0 ? cs.error : context.money.positive,
                             icon:  negIdx >= 0
                                 ? Icons.warning_amber_rounded
                                 : Icons.check_circle_outline,
@@ -181,7 +182,7 @@ class _CashflowBody extends StatelessWidget {
                         : _BalanceCard(
                             label: 'Lowest in ${days}d',
                             value: fmt.format(lowest),
-                            color: isDanger ? cs.error : cs.tertiary,
+                            color: isDanger ? cs.error : context.money.positive,
                             icon:  isDanger
                                 ? Icons.warning_amber_rounded
                                 : Icons.trending_down,
@@ -429,7 +430,7 @@ class _CashflowTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef wRef) {
     final cs           = Theme.of(context).colorScheme;
     final fmt          = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
-    final amountColor  = entry.isIncome ? cs.tertiary : cs.onSurface;
+    final amountColor  = entry.isIncome ? context.money.positive : cs.onSurface;
     final balanceColor = isDanger ? cs.error : cs.onSurfaceVariant;
     final hasReminder  = wRef.watch(billRemindersProvider)
         .contains(entry.scheduledTx.id);
@@ -464,7 +465,7 @@ class _CashflowTile extends ConsumerWidget {
                 decoration: BoxDecoration(
                   color: (entry.scheduledTx.isTransfer
                           ? cs.secondary
-                          : entry.isIncome ? cs.tertiary : cs.primary)
+                          : entry.isIncome ? context.money.positive : cs.primary)
                       .withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
@@ -477,7 +478,7 @@ class _CashflowTile extends ConsumerWidget {
                   size: 17,
                   color: entry.scheduledTx.isTransfer
                       ? cs.secondary
-                      : entry.isIncome ? cs.tertiary : cs.primary,
+                      : entry.isIncome ? context.money.positive : cs.primary,
                 ),
               ),
               const SizedBox(width: 12),
@@ -696,7 +697,7 @@ class _EventDayRow extends StatelessWidget {
             Text(
               '+',
               style: GoogleFonts.plusJakartaSans(
-                fontSize: 13, fontWeight: FontWeight.w800, color: cs.tertiary,
+                fontSize: 13, fontWeight: FontWeight.w800, color: context.money.positive,
               ),
             ),
           const SizedBox(width: 6),
@@ -814,12 +815,12 @@ class _BalanceBar extends StatelessWidget {
     this.height = 5,
   });
 
-  Color _fillColor(ColorScheme cs) {
-    if (balance <= 0) return cs.error;
-    if (maxBalance <= 0) return cs.tertiary;
+  Color _fillColor(MoneyColors money) {
+    if (balance <= 0) return money.negative;
+    if (maxBalance <= 0) return money.positive;
     // Amber when below 25 % of the peak balance in the period
-    if (balance / maxBalance < 0.25) return const Color(0xFFFFB300);
-    return cs.tertiary; // green
+    if (balance / maxBalance < 0.25) return money.warning;
+    return money.positive;
   }
 
   @override
@@ -844,7 +845,7 @@ class _BalanceBar extends StatelessWidget {
             child: Container(
               height: height,
               decoration: BoxDecoration(
-                color: _fillColor(cs),
+                color: _fillColor(context.money),
                 borderRadius: BorderRadius.circular(height / 2),
               ),
             ),
@@ -908,7 +909,7 @@ void _showTileActions(
           ),
           const SizedBox(height: 4),
           ListTile(
-            leading: Icon(Icons.check_circle_outline, color: cs.tertiary),
+            leading: Icon(Icons.check_circle_outline, color: context.money.positive),
             title: Text('Enter transaction',
                 style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600)),
             subtitle: Text(
@@ -1965,7 +1966,7 @@ class _ConfirmPaymentSheetState extends ConsumerState<_ConfirmPaymentSheet> {
                   st.isTransfer
                       ? Icons.compare_arrows_rounded
                       : Icons.check_circle_outline,
-                  size: 20, color: cs.tertiary),
+                  size: 20, color: context.money.positive),
                 const SizedBox(width: 8),
                 Text(
                   st.isTransfer ? 'Confirm Transfer' : 'Confirm Payment',

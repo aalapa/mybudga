@@ -1,3 +1,4 @@
+import '../../core/theme/semantic_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -526,7 +527,7 @@ class _SearchSummaryBar extends StatelessWidget {
     final cs  = Theme.of(context).colorScheme;
     final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
     final isPositive = total >= 0;
-    final totalColor = isPositive ? cs.tertiary : cs.error;
+    final totalColor = isPositive ? context.money.positive : cs.error;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -573,7 +574,7 @@ class _PendingReviewSection extends StatelessWidget {
       decoration: BoxDecoration(
         color: cs.tertiaryContainer.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: cs.tertiary.withValues(alpha: 0.3)),
+        border: Border.all(color: context.money.positive.withValues(alpha: 0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -582,16 +583,16 @@ class _PendingReviewSection extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
             child: Row(
               children: [
-                Icon(Icons.sms_outlined, size: 16, color: cs.tertiary),
+                Icon(Icons.sms_outlined, size: 16, color: context.money.positive),
                 const SizedBox(width: 8),
                 Text('SMS Inbox',
                     style: GoogleFonts.plusJakartaSans(
-                        fontSize: 13, fontWeight: FontWeight.w700, color: cs.tertiary)),
+                        fontSize: 13, fontWeight: FontWeight.w700, color: context.money.positive)),
                 const SizedBox(width: 6),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                   decoration: BoxDecoration(
-                    color: cs.tertiary,
+                    color: context.money.positive,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text('${transactions.length}',
@@ -601,11 +602,11 @@ class _PendingReviewSection extends StatelessWidget {
                 const Spacer(),
                 Text('Review all',
                     style: GoogleFonts.plusJakartaSans(
-                        fontSize: 12, color: cs.tertiary, fontWeight: FontWeight.w600)),
+                        fontSize: 12, color: context.money.positive, fontWeight: FontWeight.w600)),
               ],
             ),
           ),
-          Divider(height: 1, color: cs.tertiary.withValues(alpha: 0.2)),
+          Divider(height: 1, color: context.money.positive.withValues(alpha: 0.2)),
           ...transactions.map((tx) => _PendingTile(tx: tx, ref: ref)),
         ],
       ),
@@ -630,7 +631,7 @@ class _PendingTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
-            _PayeeAvatar(payee: tx.displayPayee, color: cs.tertiary),
+            _PayeeAvatar(payee: tx.displayPayee, color: context.money.positive),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -651,7 +652,7 @@ class _PendingTile extends StatelessWidget {
                 Text(fmt.format(tx.amount),
                     style: GoogleFonts.plusJakartaSans(
                         fontSize: 14, fontWeight: FontWeight.w700,
-                        color: tx.amount < 0 ? cs.onSurface : cs.tertiary)),
+                        color: tx.amount < 0 ? cs.onSurface : context.money.positive)),
                 const SizedBox(height: 4),
                 FilledButton.tonal(
                   onPressed: () =>
@@ -835,7 +836,7 @@ class _DateHeader extends StatelessWidget {
         Text(fmt.format(dayTotal),
             style: GoogleFonts.plusJakartaSans(
                 fontSize: 12, fontWeight: FontWeight.w600,
-                color: dayTotal >= 0 ? cs.tertiary : cs.onSurfaceVariant)),
+                color: dayTotal >= 0 ? context.money.positive : cs.onSurfaceVariant)),
       ],
     );
   }
@@ -1027,7 +1028,7 @@ class _TransactionTile extends StatelessWidget {
                 Text(fmt.format(tx.amount),
                     style: GoogleFonts.plusJakartaSans(
                         fontSize: 14, fontWeight: FontWeight.w700,
-                        color: tx.isIncome ? cs.tertiary : cs.onSurface)),
+                        color: tx.isIncome ? context.money.positive : cs.onSurface)),
                 if (tx.isReconciled) ...[
                   const SizedBox(height: 2),
                   Icon(
@@ -1141,7 +1142,7 @@ Future<bool> _showReconciledGate(
     builder: (ctx) => AlertDialog(
       icon: Icon(
         forDelete ? Icons.lock : Icons.lock_outline,
-        color: forDelete ? cs.error : const Color(0xFFFFB300),
+        color: forDelete ? context.money.negative : context.money.warning,
         size: 30,
       ),
       title: Text(
@@ -1812,7 +1813,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                               fontWeight: FontWeight.w800,
                               color: _effectiveDollars == 0
                                   ? cs.onSurfaceVariant
-                                  : _isIncome ? cs.tertiary : cs.onSurface),
+                                  : _isIncome ? context.money.positive : cs.onSurface),
                         ),
                       ],
                     ),
@@ -1835,7 +1836,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                               : cs.surfaceContainerHighest,
                           borderRadius: BorderRadius.circular(20),
                           border: _isIncome
-                              ? Border.all(color: cs.tertiary.withValues(alpha: 0.4))
+                              ? Border.all(color: context.money.positive.withValues(alpha: 0.4))
                               : null,
                         ),
                         child: Row(
@@ -1844,14 +1845,14 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                             Icon(
                               _isIncome ? Icons.arrow_downward : Icons.arrow_upward,
                               size: 13,
-                              color: _isIncome ? cs.tertiary : cs.onSurfaceVariant,
+                              color: _isIncome ? context.money.positive : cs.onSurfaceVariant,
                             ),
                             const SizedBox(width: 5),
                             Text(
                               _isIncome ? 'Income' : 'Expense',
                               style: GoogleFonts.plusJakartaSans(
                                 fontSize: 12, fontWeight: FontWeight.w700,
-                                color: _isIncome ? cs.tertiary : cs.onSurfaceVariant,
+                                color: _isIncome ? context.money.positive : cs.onSurfaceVariant,
                               ),
                             ),
                           ],
@@ -2007,7 +2008,7 @@ class _AddTransactionSheetState extends ConsumerState<_AddTransactionSheet> {
                           style: GoogleFonts.plusJakartaSans(
                             fontSize: 11, fontWeight: FontWeight.w600,
                             color: _splitRemaining.abs() < 0.005
-                                ? cs.tertiary
+                                ? context.money.positive
                                 : cs.error,
                           ),
                         ),
@@ -2508,7 +2509,7 @@ class _CategoryBudgetBar extends ConsumerWidget {
     } else if (pct >= 0.85) {
       barColor = const Color(0xFFF59E0B); // amber
     } else {
-      barColor = cs.tertiary;
+      barColor = context.money.positive;
     }
 
     return Padding(
@@ -3192,7 +3193,7 @@ class _SplitGroupTile extends StatelessWidget {
                     style: GoogleFonts.plusJakartaSans(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
-                        color: total >= 0 ? cs.tertiary : cs.onSurface)),
+                        color: total >= 0 ? context.money.positive : cs.onSurface)),
               ],
             ),
           ),
@@ -3665,7 +3666,7 @@ class _PinnedTemplateTile extends StatelessWidget {
                   style: GoogleFonts.plusJakartaSans(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
-                      color: template.isIncome ? cs.tertiary : cs.onSurface)),
+                      color: template.isIncome ? context.money.positive : cs.onSurface)),
               const SizedBox(width: 4),
             ],
             IconButton(

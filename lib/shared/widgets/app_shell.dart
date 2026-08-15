@@ -1,3 +1,4 @@
+import '../../core/theme/semantic_colors.dart';
 import '../../features/cashflow/cashflow_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -693,7 +694,7 @@ class _SidebarAccountGroupState extends State<_SidebarAccountGroup> {
     // Net balance of all accounts in this group (respecting future-sum adjustments).
     final groupTotal = widget.accounts.fold(
         0.0, (s, a) => s + a.balance - (widget.futureSums[a.id] ?? 0.0));
-    final totalColor = groupTotal < 0 ? cs.error : cs.tertiary;
+    final totalColor = groupTotal < 0 ? cs.error : context.money.positive;
 
     return InkWell(
       onTap:        _toggle,
@@ -873,12 +874,13 @@ class _SidebarDueBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final cs    = Theme.of(context).colorScheme;
+    final money = context.money;
 
     final Color borderColor = switch (status) {
-      _SidebarDueStatus.paid     => const Color(0xFF4CAF50),
-      _SidebarDueStatus.dueSoon  => const Color(0xFFFFB300),
-      _SidebarDueStatus.overdue  => cs.error,
+      _SidebarDueStatus.paid     => money.positive,
+      _SidebarDueStatus.dueSoon  => money.warning,
+      _SidebarDueStatus.overdue  => money.negative,
       _SidebarDueStatus.upcoming => cs.outlineVariant,
     };
 

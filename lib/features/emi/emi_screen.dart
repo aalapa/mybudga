@@ -1,3 +1,4 @@
+import '../../core/theme/semantic_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -237,7 +238,7 @@ class _EmiCard extends ConsumerWidget {
                 minHeight:       5,
                 backgroundColor: cs.surfaceContainerHigh,
                 valueColor: AlwaysStoppedAnimation(
-                  plan.isCompleted ? cs.tertiary : cs.primary,
+                  plan.isCompleted ? context.money.positive : cs.primary,
                 ),
               ),
             ),

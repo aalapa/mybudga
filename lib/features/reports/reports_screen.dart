@@ -1,3 +1,4 @@
+import '../../core/theme/semantic_colors.dart';
 import 'dart:ui' as ui;
 import 'dart:math' show max, min;
 
@@ -567,7 +568,7 @@ class _NetWorthSection extends StatelessWidget {
     final cs  = Theme.of(context).colorScheme;
     final fmt = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
     final nw  = data.netWorth;
-    final nwColor = nw >= 0 ? cs.tertiary : cs.error;
+    final nwColor = nw >= 0 ? context.money.positive : cs.error;
 
     return _Section(
       label: 'NET WORTH',
@@ -613,7 +614,7 @@ class _NetWorthSection extends StatelessWidget {
             Row(
               children: [
                 _NwLegend(
-                    color: cs.tertiary, label: 'Assets',
+                    color: context.money.positive, label: 'Assets',
                     value: fmt.format(data.totalAssets)),
                 const SizedBox(width: 24),
                 _NwLegend(
@@ -653,7 +654,7 @@ class _NetWorthTrend extends StatelessWidget {
     final saved  = last.assets - first.assets;
     final paid   = first.liabilities - last.liabilities;
     final up     = change >= 0;
-    final line   = up ? cs.tertiary : cs.error;
+    final line   = up ? context.money.positive : cs.error;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -809,7 +810,7 @@ class _NetWorthBar extends StatelessWidget {
                 child: Container(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: [cs.tertiary, cs.tertiary.withValues(alpha: 0.8)],
+                      colors: [context.money.positive, context.money.positive.withValues(alpha: 0.8)],
                     ),
                   ),
                 ),
@@ -879,7 +880,7 @@ class _SummarySection extends StatelessWidget {
             label: 'Income',
             value: fmt.format(data.totalIncome),
             icon:  Icons.arrow_downward_rounded,
-            color: cs.tertiary,
+            color: context.money.positive,
           ),
           const SizedBox(width: 8),
           _MetricCard(
@@ -897,7 +898,7 @@ class _SummarySection extends StatelessWidget {
             icon:  saved >= 0
                 ? Icons.savings_outlined
                 : Icons.warning_amber_rounded,
-            color: saved >= 0 ? cs.tertiary : cs.error,
+            color: saved >= 0 ? context.money.positive : cs.error,
           ),
           const SizedBox(width: 8),
           _MetricCard(
@@ -905,7 +906,7 @@ class _SummarySection extends StatelessWidget {
             value: pct.format(data.savingsRate),
             icon:  Icons.percent,
             color: data.savingsRate >= 0.2
-                ? cs.tertiary
+                ? context.money.positive
                 : data.savingsRate >= 0
                     ? cs.onSurface
                     : cs.error,
@@ -980,7 +981,7 @@ class _BudgetVsActualSectionState extends State<_BudgetVsActualSection> {
     final ratio = e.spent / e.budgeted;
     if (ratio > 1.0) return cs.error;
     if (ratio > 0.85) return const Color(0xFFFF9800);
-    return cs.tertiary;
+    return context.money.positive;
   }
 
   @override
@@ -1740,7 +1741,7 @@ class _TrendSection extends StatelessWidget {
             width:  10,
             borderRadius: BorderRadius.circular(4),
             gradient: LinearGradient(
-              colors: [cs.tertiary.withValues(alpha: 0.5), cs.tertiary],
+              colors: [context.money.positive.withValues(alpha: 0.5), context.money.positive],
               begin: Alignment.bottomCenter,
               end:   Alignment.topCenter,
             ),
@@ -1769,7 +1770,7 @@ class _TrendSection extends StatelessWidget {
         children: [
           Row(
             children: [
-              _BarLegend(color: cs.tertiary, label: 'Income'),
+              _BarLegend(color: context.money.positive, label: 'Income'),
               const SizedBox(width: 16),
               _BarLegend(color: cs.primary, label: 'Expenses'),
             ],
@@ -1924,7 +1925,7 @@ class _SavingsRateTrendSection extends StatelessWidget {
         .toList();
 
     final avgRate = rates.reduce((a, b) => a + b) / rates.length;
-    final lineColor = avgRate >= 0 ? cs.tertiary : cs.error;
+    final lineColor = avgRate >= 0 ? context.money.positive : cs.error;
 
     return _Section(
       label: 'SAVINGS RATE TREND',
@@ -2248,7 +2249,7 @@ class _HealthRow extends StatelessWidget {
     final Color biasColor;
     final String biasText;
     if (health.isOnTarget) {
-      biasColor = cs.tertiary;
+      biasColor = context.money.positive;
       biasText  = 'on target';
     } else if (health.budgetsLow) {
       biasColor = cs.error;

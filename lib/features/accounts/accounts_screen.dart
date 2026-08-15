@@ -1,3 +1,4 @@
+import '../../core/theme/semantic_colors.dart';
 import 'dart:math' as math;
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
@@ -427,7 +428,7 @@ class _NetWorthHeader extends StatelessWidget {
               _NetWorthStat(
                 label: 'Liquid Cash',
                 value: fmt.format(liquidCash),
-                color: cs.tertiary,
+                color: context.money.positive,
                 icon:  Icons.account_balance_outlined,
                 onTap: onLiquidCashTap,
               ),
@@ -524,7 +525,7 @@ class _LiquidityBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs      = Theme.of(context).colorScheme;
     final isPos   = liquidity >= 0;
-    final color   = isPos ? cs.tertiary : cs.error;
+    final color   = isPos ? context.money.positive : cs.error;
     final sign    = isPos ? '' : '-';
 
     return Container(
@@ -753,7 +754,7 @@ class _AccountTile extends ConsumerWidget {
     final fmt         = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
     final isNeg       = account.balance < 0;
     final balColor    = isNeg ? cs.error : cs.onSurface;
-    final iconColor   = _iconColor(cs);
+    final iconColor   = _iconColor(cs, context.money);
     final isPortrait  =
         MediaQuery.orientationOf(context) == Orientation.portrait;
     final creditDates =
@@ -831,13 +832,13 @@ class _AccountTile extends ConsumerWidget {
     );
   }
 
-  Color _iconColor(ColorScheme cs) => switch (account.type) {
+  Color _iconColor(ColorScheme cs, MoneyColors money) => switch (account.type) {
     AccountType.checking     => cs.primary,
-    AccountType.savings      => cs.tertiary,
-    AccountType.creditCard   => cs.error,
-    AccountType.lineOfCredit => cs.error,
-    AccountType.cash         => cs.tertiary,
-    AccountType.investment   => const Color(0xFF4CAF50),
+    AccountType.savings      => money.positive,
+    AccountType.creditCard   => money.negative,
+    AccountType.lineOfCredit => money.negative,
+    AccountType.cash         => money.positive,
+    AccountType.investment   => money.positive,
     AccountType.mortgage     => cs.onSurfaceVariant,
     AccountType.loan         => cs.onSurfaceVariant,
     AccountType.asset        => cs.onSurfaceVariant,
@@ -858,9 +859,9 @@ class _DueDateBadge extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
 
     final Color borderColor = switch (status) {
-      _DueStatus.paid     => const Color(0xFF4CAF50),   // green
-      _DueStatus.dueSoon  => const Color(0xFFFFB300),   // amber
-      _DueStatus.overdue  => cs.error,                  // red
+      _DueStatus.paid     => context.money.positive,
+      _DueStatus.dueSoon  => context.money.warning,
+      _DueStatus.overdue  => context.money.negative,
       _DueStatus.upcoming => cs.outlineVariant,          // subtle grey
     };
 
@@ -1006,7 +1007,7 @@ class _LiquidCashChart extends StatelessWidget {
                 toY:          e.value.cash,
                 fromY:        e.value.cash < 0 ? e.value.cash : 0,
                 color:        isPositive
-                    ? cs.tertiary.withValues(alpha: 0.75)
+                    ? context.money.positive.withValues(alpha: 0.75)
                     : cs.error.withValues(alpha: 0.75),
                 width:        18,
                 borderRadius: BorderRadius.vertical(
@@ -1559,7 +1560,7 @@ class _AccountDetailSheetState extends ConsumerState<_AccountDetailSheet> {
     final fmt     = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
     final account = widget.account;
     final isNeg   = account.balance < 0;
-    final balColor = isNeg ? cs.error : cs.tertiary;
+    final balColor = isNeg ? cs.error : context.money.positive;
 
     final txAsync = ref.watch(accountTransactionsProvider(
       (accountId: account.id, days: _days),
@@ -1909,7 +1910,7 @@ class _TxGroup extends StatelessWidget {
               Text(fmt.format(dayTotal),
                   style: GoogleFonts.plusJakartaSans(
                       fontSize: 12, fontWeight: FontWeight.w600,
-                      color: dayTotal >= 0 ? cs.tertiary : cs.onSurfaceVariant)),
+                      color: dayTotal >= 0 ? context.money.positive : cs.onSurfaceVariant)),
             ],
           ),
           const SizedBox(height: 6),
@@ -1962,7 +1963,7 @@ class _TxGroup extends StatelessWidget {
                                   : Icons.circle_outlined,
                               size: 18,
                               color: tx.cleared
-                                  ? const Color(0xFF4CAF50)
+                                  ? context.money.positive
                                   : cs.onSurfaceVariant
                                         .withValues(alpha: 0.3),
                             ),
@@ -2004,7 +2005,7 @@ class _TxGroup extends StatelessWidget {
                             style: GoogleFonts.plusJakartaSans(
                                 fontSize: 14, fontWeight: FontWeight.w700,
                                 color: tx.isIncome
-                                    ? cs.tertiary
+                                    ? context.money.positive
                                     : cs.onSurface)),
                       ],
                     ),
@@ -2657,7 +2658,7 @@ class _ReconcileSheetState extends ConsumerState<_ReconcileSheet> {
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   decoration: BoxDecoration(
                     color: isMatch
-                        ? const Color(0xFF4CAF50).withValues(alpha: 0.12)
+                        ? context.money.positive.withValues(alpha: 0.12)
                         : cs.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -2666,7 +2667,7 @@ class _ReconcileSheetState extends ConsumerState<_ReconcileSheet> {
                       Icon(
                         isMatch ? Icons.check_circle_rounded : Icons.adjust_outlined,
                         size: 16,
-                        color: isMatch ? const Color(0xFF4CAF50) : cs.onSurfaceVariant,
+                        color: isMatch ? context.money.positive : cs.onSurfaceVariant,
                       ),
                       const SizedBox(width: 8),
                       Expanded(
@@ -2677,7 +2678,7 @@ class _ReconcileSheetState extends ConsumerState<_ReconcileSheet> {
                           style: GoogleFonts.plusJakartaSans(
                               fontSize: 13, fontWeight: FontWeight.w600,
                               color: isMatch
-                                  ? const Color(0xFF4CAF50)
+                                  ? context.money.positive
                                   : cs.onSurfaceVariant),
                         ),
                       ),
@@ -2711,7 +2712,7 @@ class _ReconcileSheetState extends ConsumerState<_ReconcileSheet> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(Icons.check_circle_outline,
-                                size: 48, color: const Color(0xFF4CAF50)),
+                                size: 48, color: context.money.positive),
                             const SizedBox(height: 12),
                             Text('All transactions reconciled',
                                 style: GoogleFonts.plusJakartaSans(
@@ -2768,7 +2769,7 @@ class _ReconcileSheetState extends ConsumerState<_ReconcileSheet> {
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,
                                         color: amount >= 0
-                                            ? cs.tertiary
+                                            ? context.money.positive
                                             : cs.onSurface),
                                   ),
                                 ],

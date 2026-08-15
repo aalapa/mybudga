@@ -1,3 +1,4 @@
+import '../../core/theme/semantic_colors.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -81,7 +82,7 @@ class DashboardScreen extends ConsumerWidget {
                     label: 'Net Worth',
                     value: fmt.format(netWorth),
                     icon: Icons.trending_up_outlined,
-                    color: cs.tertiary,
+                    color: context.money.positive,
                     sub: '${fmt.format(assets)} assets',
                   )),
                   const SizedBox(width: 16),
@@ -388,7 +389,7 @@ class _RecentTxRow extends StatelessWidget {
             child: Icon(
               isExp ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
               size: 14,
-              color: isExp ? cs.error : cs.tertiary,
+              color: isExp ? cs.error : context.money.positive,
             ),
           ),
           const SizedBox(width: 10),
@@ -411,7 +412,7 @@ class _RecentTxRow extends StatelessWidget {
             '${isExp ? '-' : '+'}${fmt.format((tx.amount as double).abs())}',
             style: GoogleFonts.plusJakartaSans(
                 fontSize: 13, fontWeight: FontWeight.w600,
-                color: isExp ? cs.onSurface : cs.tertiary),
+                color: isExp ? cs.onSurface : context.money.positive),
           ),
         ],
       ),
@@ -525,7 +526,7 @@ class _CashflowChart extends StatelessWidget {
             barRods: [
               BarChartRodData(
                 toY: m.income,
-                color: cs.tertiary,
+                color: context.money.positive,
                 width: 22,
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
               ),
