@@ -3769,18 +3769,22 @@ class _SuggestionTile extends StatelessWidget {
 // Transfer sheet
 // ---------------------------------------------------------------------------
 
-void showTransferSheet(BuildContext context, WidgetRef ref) {
+/// [from] pre-selects the source account — pass the one the user is already
+/// looking at. Opening a transfer from an account and then being asked which
+/// account you meant is a question the app can answer itself.
+void showTransferSheet(BuildContext context, WidgetRef ref, {Account? from}) {
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (_) => _TransferSheet(widgetRef: ref),
+    builder: (_) => _TransferSheet(widgetRef: ref, initialFrom: from),
   );
 }
 
 class _TransferSheet extends StatefulWidget {
   final WidgetRef widgetRef;
-  const _TransferSheet({required this.widgetRef});
+  final Account? initialFrom;
+  const _TransferSheet({required this.widgetRef, this.initialFrom});
 
   @override
   State<_TransferSheet> createState() => _TransferSheetState();
@@ -3793,6 +3797,62 @@ class _TransferSheetState extends State<_TransferSheet> {
   Account? _toAccount;
   DateTime _date = DateTime.now();
   bool _saving = false;
+
+  /// A tappable field that opens the tag-grouped account picker — the same
+  /// sheet the add-transaction flow uses. A flat dropdown ignored the labels
+  /// the user set up, so accounts arrived in whatever order the list happened
+  /// to be in.
+  Widget _accountField({
+    required String label,
+    required IconData icon,
+    required Account? value,
+    required List<Account> options,
+    required Widget Function(Account) item,
+    required ValueChanged<Account> onPick,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: () => showModalBottomSheet(
+        context:            context,
+        useSafeArea:        true,
+        isScrollControlled: true,
+        builder: (_) => _AccountPickerSheet(
+          accounts:        options,
+          selectedAccount: value,
+          onSelect: (a) {
+            onPick(a);
+            Navigator.pop(context);
+          },
+        ),
+      ),
+      borderRadius: BorderRadius.circular(12),
+      child: InputDecorator(
+        isEmpty: value == null,
+        decoration: InputDecoration(
+          labelText:  label,
+          prefixIcon: Icon(icon, size: 18),
+          suffixIcon: const Icon(Icons.arrow_drop_down),
+        ),
+        child: value == null
+            ? null
+            : DefaultTextStyle.merge(
+                style: TextStyle(color: cs.onSurface), child: item(value)),
+      ),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // Cards are never a transfer source here, so a pre-selection that is one
+    // is dropped rather than shown as an option the picker would not offer.
+    final from = widget.initialFrom;
+    if (from != null &&
+        from.type != AccountType.creditCard &&
+        from.type != AccountType.lineOfCredit) {
+      _fromAccount = from;
+    }
+  }
 
   @override
   void dispose() {
@@ -3899,44 +3959,43 @@ class _TransferSheetState extends State<_TransferSheet> {
             const SizedBox(height: 24),
 
             // From account — checking / savings / cash / tracking (no credit cards)
-            DropdownButtonFormField<Account>(
-              initialValue: _fromAccount,
-              decoration: const InputDecoration(
-                labelText: 'From account',
-                prefixIcon: Icon(Icons.arrow_upward, size: 18),
-              ),
-              items: fromAccounts.map((a) => DropdownMenuItem(
-                value: a,
-                child: accountItem(a),
-              )).toList(),
-              onChanged: (v) => setState(() => _fromAccount = v),
+            _accountField(
+              label:   'From account',
+              icon:    Icons.arrow_upward,
+              value:   _fromAccount,
+              options: fromAccounts,
+              item:    accountItem,
+              onPick:  (a) => setState(() => _fromAccount = a),
             ),
             const SizedBox(height: 16),
 
             // To account — all active accounts (budget + tracking)
-            DropdownButtonFormField<Account>(
-              initialValue: _toAccount,
-              decoration: const InputDecoration(
-                labelText: 'To account',
-                prefixIcon: Icon(Icons.arrow_downward, size: 18),
-              ),
-              items: allAccounts.map((a) => DropdownMenuItem(
-                value: a,
-                child: accountItem(a),
-              )).toList(),
-              onChanged: (v) => setState(() => _toAccount = v),
+            _accountField(
+              label:   'To account',
+              icon:    Icons.arrow_downward,
+              value:   _toAccount,
+              options: allAccounts,
+              item:    accountItem,
+              onPick:  (a) => setState(() => _toAccount = a),
             ),
             const SizedBox(height: 16),
 
-            // Amount
+            // Amount — filled, because the Date control below it is, and an
+            // unfilled field beside a filled one reads as the inert one.
             TextField(
               controller: _amountCtrl,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               textInputAction: TextInputAction.next,
               onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Amount',
                 prefixText: '\$ ',
+                filled: true,
+                fillColor: cs.surfaceContainerHighest,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
               ),
             ),
             const SizedBox(height: 16),

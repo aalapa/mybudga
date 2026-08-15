@@ -1018,8 +1018,11 @@ class _DesktopFabLayer extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cs   = Theme.of(context).colorScheme;
-    final path = GoRouterState.of(context).uri.path;
+    final cs    = Theme.of(context).colorScheme;
+    final state = GoRouterState.of(context);
+    final path  = state.uri.path;
+    // The account the sidebar has filtered to, if any.
+    final viewedAccountId = state.uri.queryParameters['account'];
 
     switch (path) {
       case '/transactions':
@@ -1029,7 +1032,12 @@ class _DesktopFabLayer extends ConsumerWidget {
           children: [
             FloatingActionButton.small(
               heroTag:         'desk_transfer',
-              onPressed:       () => showTransferSheet(context, ref),
+              onPressed: () => showTransferSheet(context, ref,
+                  from: viewedAccountId == null
+                      ? null
+                      : (ref.read(accountsProvider).valueOrNull ?? const [])
+                          .where((a) => a.id == viewedAccountId)
+                          .firstOrNull),
               backgroundColor: cs.secondaryContainer,
               foregroundColor: cs.onSecondaryContainer,
               child: const Icon(Icons.swap_horiz),

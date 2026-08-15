@@ -847,20 +847,13 @@ class _UnplannedBillRow extends ConsumerWidget {
           Tooltip(
             message: 'Not a bill',
             child: InkWell(
-              onTap: () {
-                final messenger = ScaffoldMessenger.of(context);
-                final notifier  = ref.read(ignoredBillPayeesProvider.notifier);
-                notifier.ignore(bill.payeeName);
-                messenger.clearSnackBars();
-                messenger.showSnackBar(SnackBar(
-                  content: Text('${bill.payeeName} won\'t be flagged again'),
-                  behavior: SnackBarBehavior.floating,
-                  action: SnackBarAction(
-                    label: 'Undo',
-                    onPressed: () => notifier.restore(bill.payeeName),
-                  ),
-                ));
-              },
+              // No confirmation toast. The row vanishing is the confirmation,
+              // and the card footer already counts what is dismissed and offers
+              // it back — a snackbar repeating that covered the list to say
+              // what the list had already said.
+              onTap: () => ref
+                  .read(ignoredBillPayeesProvider.notifier)
+                  .ignore(bill.payeeName),
               borderRadius: BorderRadius.circular(8),
               child: SizedBox(
                 height: 30,

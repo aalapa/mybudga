@@ -1296,8 +1296,10 @@ class _BudgetListControls extends ConsumerWidget {
       if (unfunded.isNotEmpty || activeFilter == 'unfunded')
         _AttentionChip(
           icon:  Icons.schedule,
+          // Not cashflow's "not in your plan": these bills *are* scheduled,
+          // their envelopes are just short of what is due.
           label: '${unfunded.length} '
-              '${unfunded.length == 1 ? 'bill' : 'bills'} unfunded',
+              '${unfunded.length == 1 ? 'bill needs' : 'bills need'} funding',
           tint:     money.warning,
           fill:     0.12,
           border:   0.32,
@@ -2801,7 +2803,11 @@ class _CategoryRowBody extends StatelessWidget {
       children: [
         Row(
           children: [
-            Flexible(
+            // Expanded, not Flexible-plus-Spacer: those are two flex children
+            // that split the free space between them, so a short category name
+            // left the amount parked mid-row while a long one pushed it to the
+            // edge. One flex child means the amount is always flush right.
+            Expanded(
               child: Text(entry.categoryName,
                   overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.plusJakartaSans(
@@ -2813,7 +2819,6 @@ class _CategoryRowBody extends StatelessWidget {
               const SizedBox(width: 5),
               Icon(Icons.flag_outlined, size: 13, color: money.positive),
             ],
-            const Spacer(),
             const SizedBox(width: 8),
             Text(f0.format(entry.balance),
                 style: GoogleFonts.plusJakartaSans(
@@ -2958,9 +2963,10 @@ class _CategoryTableRow extends ConsumerWidget {
               // Narrow reads as a sentence rather than a table line: what the
               // category is, what is left, and how much of it has gone.
               : Container(
-                  margin: isOverspent
-                      ? const EdgeInsets.symmetric(horizontal: 8, vertical: 2)
-                      : EdgeInsets.zero,
+                  // Applied whether or not the row is tinted: when only
+                  // overspent rows carried it, their amounts sat 8px inside the
+                  // column every other row lined up on.
+                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   padding: const EdgeInsets.fromLTRB(10, 12, 12, 12),
                   decoration: isOverspent
                       ? BoxDecoration(
