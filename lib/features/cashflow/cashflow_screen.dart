@@ -118,8 +118,15 @@ class _CashflowBody extends StatelessWidget {
         : '365+ days safe';
 
     return SafeArea(
-      child: Column(
-        children: [
+      // One scroll view rather than fixed blocks above a scrolling list: the
+      // verdict and the chart are read once and then want to be out of the
+      // way, and on a phone they were taking roughly half the screen for the
+      // whole session.
+      child: CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Column(
+              children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: Column(
@@ -223,26 +230,34 @@ class _CashflowBody extends StatelessWidget {
           // EMI plans section — horizontal cards, collapsed when empty
           const EmiSection(),
 
-          // Overdue section — shown above the timeline when items exist
-          if (overdue.isNotEmpty)
-            _OverdueSection(overdueItems: overdue, ref: ref),
+                // Overdue section — shown above the timeline when items exist
+                if (overdue.isNotEmpty)
+                  _OverdueSection(overdueItems: overdue, ref: ref),
 
-          _BalanceChart(
-            dayRows: dayRows,
-            startBalance: state.startingBalance,
+              ],
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: _BalanceChart(
+              dayRows: dayRows,
+              startBalance: state.startingBalance,
+            ),
           ),
 
           // Only days where something happens. An empty Tuesday told the
           // reader nothing and pushed the next real event off screen.
-          Expanded(
+          SliverToBoxAdapter(
             child: Builder(builder: (context) {
               final eventDays = dayRows.where((d) => d.hasEvents).toList();
               if (eventDays.isEmpty) {
-                return Center(
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 40),
+                  child: Center(
                   child: Text('Nothing scheduled in this range',
                       style: GoogleFonts.plusJakartaSans(
                           fontSize: 13,
                           color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                  ),
                 );
               }
               var lowIdx = 0;
@@ -253,6 +268,8 @@ class _CashflowBody extends StatelessWidget {
               }
               final lowDate = dayRows[lowIdx].date;
               return ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
                 itemCount: eventDays.length,
                 itemBuilder: (context, i) {
