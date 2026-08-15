@@ -747,8 +747,7 @@ class _PanelNum extends StatelessWidget {
         ),
       ),
     );
-    if (bg == null) return cell;
-    return ColoredBox(color: bg!, child: cell);
+    return cell;
   }
 }
 
@@ -2300,14 +2299,20 @@ class _ColumnHeaders extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Expanded(child: SizedBox()),
-          _ColLabel(isWide ? 'BUDGETED' : 'BUDGET',
-              bg: cs.primary.withValues(alpha: 0.07),
-              total: totalBudgeted, cs: cs),
-          if (isWide) _ColLabel('ACTIVITY', total: totalActivity, cs: cs),
-          _ColLabel(isWide ? 'AVAILABLE' : 'AVAIL',
-              bg: context.money.positive.withValues(alpha: 0.07),
-              total: totalAvailable, cs: cs),
+          Expanded(
+            child: Text('CATEGORY',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1,
+                  color: cs.onSurfaceVariant,
+                )),
+          ),
+          // Column tints removed: a named header does that job without
+          // colouring every cell beneath it.
+          _ColLabel('ASSIGNED', total: totalBudgeted,  cs: cs),
+          _ColLabel('SPENT',    total: totalActivity,  cs: cs),
+          _ColLabel('LEFT',     total: totalAvailable, cs: cs),
         ],
       ),
     );
@@ -2449,14 +2454,12 @@ class _GroupHeaderRow extends StatelessWidget {
             // Numeric columns on wide only. On mobile the group states its
             // remaining balance in words and leaves the arithmetic to the rows.
             if (isWide) ...[
-              _NumCell(groupBudgeted, cs.onSurfaceVariant, bold: true,
-                  bg: cs.primary.withValues(alpha: 0.07)),
+              _NumCell(groupBudgeted, cs.onSurfaceVariant, bold: true),
               _NumCell(groupActivity, cs.onSurfaceVariant, bold: true),
               _NumCell(
                 groupAvailable,
                 groupAvailable < 0 ? context.money.negative : cs.onSurfaceVariant,
                 bold: true,
-                bg: context.money.positive.withValues(alpha: 0.07),
               ),
             ] else ...[
               Text(
@@ -2797,14 +2800,11 @@ class _CategoryTableRow extends ConsumerWidget {
                           ],
                         ),
                       ),
-                      _tintIfBudgetable(
-                          entry, cs, _InlineBudgetAmount(entry: entry)),
+                      _InlineBudgetAmount(entry: entry),
                       _NumCell(entry.activity, cs.onSurfaceVariant),
                       Tooltip(
                         message: _availBreakdown(entry, month),
-                        child: _NumCell(entry.balance, availColor, bold: true,
-                            bg: context.money.positive
-                                .withValues(alpha: 0.07)),
+                        child: _NumCell(entry.balance, availColor, bold: true),
                       ),
                       const SizedBox(width: 4),
                       Icon(isExpanded ? Icons.expand_less : Icons.expand_more,
@@ -3815,9 +3815,8 @@ class _NumCell extends StatelessWidget {
   final double value;
   final Color color;
   final bool bold;
-  final Color? bg;
 
-  const _NumCell(this.value, this.color, {this.bold = false, this.bg});
+  const _NumCell(this.value, this.color, {this.bold = false});
 
   static String _fmt(double v) {
     final abs = v.abs();
@@ -3843,8 +3842,7 @@ class _NumCell extends StatelessWidget {
         ),
       ),
     );
-    if (bg == null) return cell;
-    return ColoredBox(color: bg!, child: cell);
+    return cell;
   }
 }
 
