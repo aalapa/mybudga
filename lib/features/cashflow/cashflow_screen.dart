@@ -1,3 +1,4 @@
+import '../accounts/account_labels_provider.dart' show accountLabelsProvider;
 import 'dart:ui' as ui;
 import '../../core/theme/semantic_colors.dart';
 import 'package:flutter/material.dart';
@@ -26,7 +27,6 @@ class CashflowScreen extends ConsumerStatefulWidget {
 
 class _CashflowScreenState extends ConsumerState<CashflowScreen> {
   int  _days    = 30;
-  bool _compact = true;
 
   @override
   Widget build(BuildContext context) {
@@ -41,9 +41,7 @@ class _CashflowScreenState extends ConsumerState<CashflowScreen> {
         data:    (s) => _CashflowBody(
           state:            s,
           days:             _days,
-          compact:          _compact,
           onDaysChanged:    (d) => setState(() => _days = d),
-          onCompactChanged: (c) => setState(() => _compact = c),
           ref:              ref,
         ),
       ),
@@ -65,24 +63,19 @@ class _CashflowScreenState extends ConsumerState<CashflowScreen> {
 class _CashflowBody extends StatelessWidget {
   final CashflowState state;
   final int days;
-  final bool compact;
   final ValueChanged<int> onDaysChanged;
-  final ValueChanged<bool> onCompactChanged;
   final WidgetRef ref;
 
   const _CashflowBody({
     required this.state,
     required this.days,
-    required this.compact,
     required this.onDaysChanged,
-    required this.onCompactChanged,
     required this.ref,
   });
 
   @override
   Widget build(BuildContext context) {
     final cs       = Theme.of(context).colorScheme;
-    final fmt      = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
     final today    = DateTime.now();
     final accounts = ref.watch(accountsProvider).valueOrNull ?? [];
 
@@ -104,18 +97,11 @@ class _CashflowBody extends StatelessWidget {
       if (d.endBalance > maxBalance) maxBalance = d.endBalance;
     }
 
-    final lowest = dayRows.isEmpty
-        ? state.startingBalance
-        : dayRows.map((d) => d.endBalance).reduce((a, b) => a < b ? a : b);
-    final isDanger = lowest < 500;
 
     // DD mode: find how many days until balance goes negative
     final negIdx = isDoomsday
         ? dayRows.indexWhere((d) => d.endBalance < 0)
         : -1;
-    final runwayLabel = negIdx >= 0
-        ? 'Day $negIdx · ${DateFormat('MMM d').format(dayRows[negIdx].date)}'
-        : '365+ days safe';
 
     return SafeArea(
       // One scroll view rather than fixed blocks above a scrolling list: the
@@ -153,15 +139,12 @@ class _CashflowBody extends StatelessWidget {
                         ],
                       ),
                     ),
+                    // Was a compact/detail toggle; since the chart became the
+                    // compact view it switched between two identical lists.
                     IconButton(
-                      icon: Icon(
-                        compact
-                            ? Icons.view_agenda_outlined
-                            : Icons.view_stream_outlined,
-                        color: cs.onSurfaceVariant,
-                      ),
-                      tooltip: compact ? 'Show details' : 'Compact view',
-                      onPressed: () => onCompactChanged(!compact),
+                      icon: Icon(Icons.event_repeat, color: cs.onSurfaceVariant),
+                      tooltip: 'Scheduled transactions',
+                      onPressed: () => _showScheduledSheet(context, ref),
                     ),
                   ],
                 ),
@@ -288,7 +271,6 @@ class _CashflowBody extends StatelessWidget {
                         day: day,
                         ref: ref,
                         maxBalance: maxBalance,
-                        compact: false,
                         isLowPoint: day.date == lowDate,
                       ),
                     ],
@@ -951,12 +933,10 @@ class _EventDayRow extends StatelessWidget {
   final _DayData day;
   final WidgetRef ref;
   final double maxBalance;
-  final bool compact;
   const _EventDayRow({
     required this.day,
     required this.ref,
     required this.maxBalance,
-    required this.compact,
     this.isLowPoint = false,
   });
 
@@ -1208,6 +1188,180 @@ void _showTileActions(
 // ---------------------------------------------------------------------------
 // Add options picker (Bill or EMI)
 // ---------------------------------------------------------------------------
+
+/// Every schedule, grouped by the account labels already used to group
+/// accounts in the sidebar.
+///
+/// The cashflow list shows *occurrences* — the same rent appears four times
+/// across a 90-day window. This shows the schedules themselves, which until
+/// now could only be managed from Settings.
+void _showScheduledSheet(BuildContext context, WidgetRef ref) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (_) => const _ScheduledListSheet(),
+  );
+}
+
+class _ScheduledListSheet extends ConsumerWidget {
+  const _ScheduledListSheet();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs       = Theme.of(context).colorScheme;
+    final money    = context.money;
+    final fmt      = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final state    = ref.watch(cashflowProvider).valueOrNull;
+    final accounts = ref.watch(accountsProvider).valueOrNull ?? [];
+    final labels   = ref.watch(accountLabelsProvider);
+    final all      = state?.scheduled ?? const <ScheduledTransaction>[];
+
+    // Reuse the account labels rather than inventing a second tagging system:
+    // a schedule belongs to whichever label claims its account.
+    Account? accountOf(ScheduledTransaction st) => st.accountId == null
+        ? null
+        : accounts.where((a) => a.id == st.accountId).firstOrNull;
+
+    final groups = <String, List<ScheduledTransaction>>{};
+    for (final st in all) {
+      final acc = accountOf(st);
+      final label = acc == null
+          ? null
+          : labels.where((l) => l.matches(acc)).firstOrNull;
+      groups.putIfAbsent(label?.name ?? 'Everything else', () => []).add(st);
+    }
+    final orderedKeys = groups.keys.toList()
+      ..sort((a, b) {
+        if (a == 'Everything else') return 1;
+        if (b == 'Everything else') return -1;
+        return a.compareTo(b);
+      });
+
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHigh,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+      constraints:
+          BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.85),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: Text('Scheduled transactions',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: cs.onSurface)),
+              ),
+              TextButton.icon(
+                onPressed: () {
+                  Navigator.pop(context);
+                  showAddScheduledSheet(context, ref, prefill: null);
+                },
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('New'),
+              ),
+            ],
+          ),
+          if (labels.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 2, bottom: 6),
+              child: Text(
+                'Grouped by account label — add labels in Accounts to group '
+                'these too.',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11, color: cs.onSurfaceVariant),
+              ),
+            ),
+          const SizedBox(height: 8),
+          Flexible(
+            child: all.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 28),
+                    child: Text('Nothing scheduled yet.',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 13, color: cs.onSurfaceVariant)),
+                  )
+                : ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final key in orderedKeys) ...[
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(0, 12, 0, 6),
+                          child: Text(key.toUpperCase(),
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.8,
+                                color: cs.onSurfaceVariant,
+                              )),
+                        ),
+                        for (final st in groups[key]!)
+                          ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(
+                              st.isActive
+                                  ? Icons.event_repeat
+                                  : Icons.pause_circle_outline,
+                              size: 20,
+                              color: st.isActive
+                                  ? cs.onSurfaceVariant
+                                  : cs.onSurfaceVariant.withValues(alpha: 0.4),
+                            ),
+                            title: Text(
+                                st.payeeName?.isNotEmpty == true
+                                    ? st.payeeName!
+                                    : (st.memo ?? 'Scheduled'),
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: cs.onSurface)),
+                            subtitle: Text(
+                                '${st.frequency.label} · next '
+                                '${DateFormat('MMM d').format(st.nextDate)}'
+                                '${st.endDate != null ? ' · until ${DateFormat('MMM yyyy').format(st.endDate!)}' : ''}',
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 11,
+                                    color: cs.onSurfaceVariant)),
+                            trailing: Text(
+                                fmt.format(st.amount.abs()),
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: st.amount >= 0
+                                      ? money.positive
+                                      : cs.onSurface,
+                                )),
+                            onTap: () {
+                              Navigator.pop(context);
+                              showAddScheduledSheet(context, ref, prefill: st);
+                            },
+                          ),
+                      ],
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 void _showAddOptions(BuildContext context, WidgetRef ref) {
   final cs = Theme.of(context).colorScheme;
