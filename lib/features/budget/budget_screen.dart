@@ -1,3 +1,4 @@
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/theme/semantic_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -266,11 +267,12 @@ class _PanelContent extends StatefulWidget {
 }
 
 class _PanelContentState extends State<_PanelContent> {
-  /// Only one group is open at a time; null = all collapsed.
-  String? _expandedGroupId;
+  /// Groups the user has collapsed; everything else is open, matching the
+  /// single-month body.
+  final Set<String> _collapsedGroupIds = {};
 
   void _toggleGroup(String id) => setState(() {
-        _expandedGroupId = _expandedGroupId == id ? null : id;
+        if (!_collapsedGroupIds.remove(id)) _collapsedGroupIds.add(id);
       });
 
   @override
@@ -283,7 +285,7 @@ class _PanelContentState extends State<_PanelContent> {
     final rows = <({BudgetGroupData group, BudgetEntry? entry})>[];
     for (final g in state.groups) {
       rows.add((group: g, entry: null));           // group header always shown
-      if (_expandedGroupId == g.id) {
+      if (!_collapsedGroupIds.contains(g.id)) {
         for (final e in g.entries) {
           rows.add((group: g, entry: e));
         }
@@ -400,7 +402,7 @@ class _PanelContentState extends State<_PanelContent> {
               return row.entry == null
                   ? _PanelGroupRow(
                       group:      row.group,
-                      isExpanded: _expandedGroupId == row.group.id,
+                      isExpanded: !_collapsedGroupIds.contains(row.group.id),
                       onTap:      () => _toggleGroup(row.group.id),
                     )
                   : _PanelEntryRow(
@@ -792,8 +794,12 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
   /// Non-null while the user is typing a new category name inline.
   String? _inlineGroupId;
 
-  /// Only one group is expanded at a time; null = all collapsed.
-  String? _expandedGroupId;
+  /// Groups the user has collapsed. Everything not in here is open, so a cold
+  /// start shows categories rather than a stack of grey bars — and collapsing
+  /// one group no longer closes another, which the old single-open accordion
+  /// did every time.
+  final Set<String> _collapsedGroupIds = {};
+  static const _kGroupCollapsedPrefix = 'budget_grp_collapsed_';
 
   /// The category whose detail panel is currently open (accordion: at most one).
   String? _expandedCategoryId;
@@ -801,18 +807,50 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
   /// Clears the active inline-add row.
   void _closeInline() => setState(() => _inlineGroupId = null);
 
-  /// Toggles a group open/closed. Opening a group closes any other open group
-  /// and collapses any previously expanded category row.
-  void _toggleGroup(String groupId) => setState(() {
-        if (_expandedGroupId == groupId) {
-          _expandedGroupId = null;
-          _inlineGroupId   = null;
-        } else {
-          _expandedGroupId    = groupId;
-          _expandedCategoryId = null; // close any open category detail
-          if (_inlineGroupId != groupId) _inlineGroupId = null;
-        }
-      });
+  @override
+  void initState() {
+    super.initState();
+    _restoreCollapsed();
+  }
+
+  Future<void> _restoreCollapsed() async {
+    final prefs = await SharedPreferences.getInstance();
+    final ids = widget.state.groups
+        .map((g) => g.id)
+        .where((id) => prefs.getBool('$_kGroupCollapsedPrefix$id') ?? false)
+        .toSet();
+    if (ids.isNotEmpty && mounted) {
+      setState(() => _collapsedGroupIds.addAll(ids));
+    }
+  }
+
+  bool _isCollapsed(String groupId) => _collapsedGroupIds.contains(groupId);
+
+  void _toggleGroup(String groupId) {
+    setState(() {
+      if (!_collapsedGroupIds.remove(groupId)) {
+        _collapsedGroupIds.add(groupId);
+        if (_inlineGroupId == groupId) _inlineGroupId = null;
+      }
+    });
+    SharedPreferences.getInstance().then((p) => p.setBool(
+        '$_kGroupCollapsedPrefix$groupId', _collapsedGroupIds.contains(groupId)));
+  }
+
+  /// Backs the "Collapse all" menu entry.
+  void collapseAllGroups() {
+    setState(() {
+      _collapsedGroupIds
+        ..clear()
+        ..addAll(widget.state.groups.map((g) => g.id));
+      _inlineGroupId = null;
+    });
+    SharedPreferences.getInstance().then((p) {
+      for (final g in widget.state.groups) {
+        p.setBool('$_kGroupCollapsedPrefix${g.id}', true);
+      }
+    });
+  }
 
   /// Toggles a category's expansion, or notifies the split panel.
   void _toggleCategory(String categoryId) {
@@ -889,7 +927,7 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
     final groupSlivers = <Widget>[];
     for (int gi = 0; gi < state.groups.length; gi++) {
       final group          = state.groups[gi];
-      final isGroupExpanded = _expandedGroupId == group.id;
+      final isGroupExpanded = !_isCollapsed(group.id);
 
       groupSlivers.add(SliverToBoxAdapter(
         child: _GroupHeaderRow(
@@ -951,6 +989,9 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
       child: CustomScrollView(
         slivers: [
           header,
+          // Column headers are for the wide table only; the mobile row states
+          // its own figures in words.
+          if (isWide)
           SliverToBoxAdapter(
             child: _ColumnHeaders(
               isWide:         isWide,
@@ -2073,16 +2114,33 @@ class _GroupHeaderRow extends StatelessWidget {
                 ],
               ),
             ),
-            // Numeric columns
-            _NumCell(groupBudgeted, cs.onSurfaceVariant, bold: true,
-                bg: cs.primary.withValues(alpha: 0.07)),
-            if (isWide) _NumCell(groupActivity, cs.onSurfaceVariant, bold: true),
-            _NumCell(
-              groupAvailable,
-              groupAvailable < 0 ? cs.error : cs.onSurfaceVariant,
-              bold: true,
-              bg: context.money.positive.withValues(alpha: 0.07),
-            ),
+            // Numeric columns on wide only. On mobile the group states its
+            // remaining balance in words and leaves the arithmetic to the rows.
+            if (isWide) ...[
+              _NumCell(groupBudgeted, cs.onSurfaceVariant, bold: true,
+                  bg: cs.primary.withValues(alpha: 0.07)),
+              _NumCell(groupActivity, cs.onSurfaceVariant, bold: true),
+              _NumCell(
+                groupAvailable,
+                groupAvailable < 0 ? context.money.negative : cs.onSurfaceVariant,
+                bold: true,
+                bg: context.money.positive.withValues(alpha: 0.07),
+              ),
+            ] else ...[
+              Text(
+                '${NumberFormat.currency(symbol: '\$', decimalDigits: 0).format(groupAvailable)} left',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: groupAvailable < 0
+                      ? context.money.negative
+                      : cs.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Icon(isExpanded ? Icons.expand_less : Icons.expand_more,
+                  size: 18, color: cs.onSurfaceVariant),
+            ],
           ],
         ),
       ),
@@ -2094,9 +2152,146 @@ class _GroupHeaderRow extends StatelessWidget {
 // Category table row
 // ---------------------------------------------------------------------------
 
+/// Icon avatar for a category row. The code point already existed and was only
+/// being drawn in the desktop panels.
+class _CategoryAvatar extends StatelessWidget {
+  final BudgetEntry entry;
+  const _CategoryAvatar({required this.entry});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final cp = entry.iconCodePoint;
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Center(
+        child: entry.isCcPayment
+            ? Icon(Icons.credit_card, size: 20, color: cs.primary)
+            : cp != null
+                ? iconFromCodePoint(cp, size: 20, color: cs.onSurfaceVariant)
+                : Icon(Icons.category, size: 20, color: cs.onSurfaceVariant),
+      ),
+    );
+  }
+}
+
+/// The three lines of a mobile category row: name and what is left, then the
+/// same figures as a sentence, then progress.
+///
+/// The middle line restores the Activity number, which the old narrow layout
+/// dropped entirely — mobile could see budgeted and remaining but never what
+/// had actually been spent.
+class _CategoryRowBody extends StatelessWidget {
+  final BudgetEntry entry;
+  const _CategoryRowBody({required this.entry});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs    = Theme.of(context).colorScheme;
+    final money = context.money;
+    final f0    = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+
+    final over  = entry.balance < 0;
+    final spent = entry.spent;
+    final amountColor = over
+        ? money.negative
+        : entry.balance > 0
+            ? money.positive
+            : cs.onSurfaceVariant.withValues(alpha: 0.8);
+
+    final String detail;
+    if (entry.isCcPayment) {
+      detail = '${f0.format(entry.reserved)} set aside';
+    } else if (entry.budgeted == 0 && spent == 0) {
+      detail = 'Nothing spent yet';
+    } else if (entry.balance == 0 && spent > 0) {
+      detail = 'All ${f0.format(spent)} spent';
+    } else {
+      detail = '${f0.format(spent)} of ${f0.format(entry.budgeted)} spent';
+    }
+
+    final pct = entry.budgeted > 0 ? (spent / entry.budgeted) : 0.0;
+    final barColor = pct >= 1.0
+        ? money.negative
+        : pct >= 0.8
+            ? money.warning
+            : money.positive;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            Flexible(
+              child: Text(entry.categoryName,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: cs.onSurface)),
+            ),
+            if (entry.goal != null) ...[
+              const SizedBox(width: 5),
+              Icon(Icons.flag_outlined, size: 13, color: money.positive),
+            ],
+            const Spacer(),
+            const SizedBox(width: 8),
+            Text(f0.format(entry.balance),
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 15, fontWeight: FontWeight.w700,
+                    color: amountColor)),
+          ],
+        ),
+        const SizedBox(height: 3),
+        Row(
+          children: [
+            Expanded(
+              child: Text(detail,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      color: over
+                          ? money.negative
+                          : cs.onSurfaceVariant.withValues(alpha: 0.65))),
+            ),
+            const SizedBox(width: 8),
+            Text(over ? 'over' : 'left',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    color: over
+                        ? money.negative
+                        : cs.onSurfaceVariant.withValues(alpha: 0.55))),
+          ],
+        ),
+        if (entry.showsBudgetProgress) ...[
+          const SizedBox(height: 7),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value: pct.clamp(0.0, 1.0),
+              minHeight: 4,
+              backgroundColor: cs.surfaceContainerHigh,
+              valueColor: AlwaysStoppedAnimation(barColor),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class _CategoryTableRow extends ConsumerWidget {
   final BudgetEntry entry;
   final bool isWide;
+  /// Drag handles appear only in reorder mode (T5); otherwise they are
+  /// permanent chrome for an action taken once in a while.
+  final bool reorderMode;
   final bool isExpanded;
   final DateTime month;
   final VoidCallback onToggle;
@@ -2105,6 +2300,7 @@ class _CategoryTableRow extends ConsumerWidget {
   const _CategoryTableRow({
     required this.entry,
     required this.isWide,
+    this.reorderMode = false,
     required this.isExpanded,
     required this.month,
     required this.onToggle,
@@ -2130,77 +2326,93 @@ class _CategoryTableRow extends ConsumerWidget {
         // ── Main row ──────────────────────────────────────────
         InkWell(
           onTap: onToggle,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(8, 12, 16, 12),
-            child: Row(
-              children: [
-                // Drag handle — long-press anywhere on the row to reorder
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: Icon(
-                    Icons.drag_handle,
-                    size: 16,
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.28),
-                  ),
-                ),
-                if (entry.isCcPayment)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: Icon(Icons.credit_card, size: 13, color: cs.primary),
-                  ),
-                if (entry.goal != null)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 5),
-                    child: Icon(Icons.flag_outlined, size: 12, color: context.money.positive),
-                  ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
+          child: isWide
+              // Wide keeps the table: named columns carry the meaning there.
+              ? Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 12, 16, 12),
+                  child: Row(
                     children: [
-                      Text(
-                        entry.categoryName,
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: cs.onSurface,
+                      if (reorderMode)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Icon(Icons.drag_handle,
+                              size: 16,
+                              color: cs.onSurfaceVariant.withValues(alpha: 0.28)),
+                        ),
+                      if (entry.isCcPayment)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: Icon(Icons.credit_card,
+                              size: 13, color: cs.primary),
+                        ),
+                      if (entry.goal != null)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 5),
+                          child: Icon(Icons.flag_outlined,
+                              size: 12, color: context.money.positive),
+                        ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(entry.categoryName,
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: cs.onSurface,
+                                )),
+                            if (entry.showsBudgetProgress)
+                              _BatteryBar(
+                                  budgeted: entry.budgeted, spent: entry.spent),
+                          ],
                         ),
                       ),
-                      if (entry.showsBudgetProgress)
-                        _BatteryBar(
-                          budgeted: entry.budgeted,
-                          spent:    entry.spent,
-                        ),
+                      _tintIfBudgetable(
+                          entry, cs, _InlineBudgetAmount(entry: entry)),
+                      _NumCell(entry.activity, cs.onSurfaceVariant),
+                      Tooltip(
+                        message: _availBreakdown(entry, month),
+                        child: _NumCell(entry.balance, availColor, bold: true,
+                            bg: context.money.positive
+                                .withValues(alpha: 0.07)),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(isExpanded ? Icons.expand_less : Icons.expand_more,
+                          size: 16,
+                          color: cs.onSurfaceVariant.withValues(alpha: 0.6)),
+                    ],
+                  ),
+                )
+              // Narrow reads as a sentence rather than a table line: what the
+              // category is, what is left, and how much of it has gone.
+              : Container(
+                  margin: isOverspent
+                      ? const EdgeInsets.symmetric(horizontal: 8, vertical: 2)
+                      : EdgeInsets.zero,
+                  padding: const EdgeInsets.fromLTRB(10, 12, 12, 12),
+                  decoration: isOverspent
+                      ? BoxDecoration(
+                          color: context.money.negative
+                              .withValues(alpha: 0.07),
+                          borderRadius: BorderRadius.circular(14),
+                        )
+                      : null,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _CategoryAvatar(entry: entry),
+                      const SizedBox(width: 12),
+                      Expanded(child: _CategoryRowBody(entry: entry)),
+                      if (reorderMode) ...[
+                        const SizedBox(width: 8),
+                        Icon(Icons.drag_handle,
+                            size: 18,
+                            color: cs.onSurfaceVariant.withValues(alpha: 0.4)),
+                      ],
                     ],
                   ),
                 ),
-                if (isWide) ...[
-                  // Tapping the budgeted cell edits it inline.
-                  _tintIfBudgetable(
-                      entry, cs, _InlineBudgetAmount(entry: entry)),
-                  _NumCell(entry.activity, cs.onSurfaceVariant),
-                ] else
-                  // Narrow shares the same cell so a card envelope reads N/A
-                  // here too rather than a misleading $0.
-                  _tintIfBudgetable(
-                      entry, cs, _InlineBudgetAmount(entry: entry)),
-                Tooltip(
-                  message: _availBreakdown(entry, month),
-                  child: _NumCell(entry.balance, availColor, bold: true,
-                      bg: context.money.positive.withValues(alpha: 0.07)),
-                ),
-                if (isOverspent && !entry.isCcPayment)
-                  _CarryOverspendArrow(entry: entry)
-                else
-                  const SizedBox(width: 4),
-                Icon(
-                  isExpanded ? Icons.expand_less : Icons.expand_more,
-                  size: 16,
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.6),
-                ),
-              ],
-            ),
-          ),
         ),
         // ── Expanded transactions panel ───────────────────────
         AnimatedSize(
