@@ -2,7 +2,7 @@ name: mybudga
 description: "Personal finance budgeting app — YNAB4-style envelope budgeting"
 publish_to: 'none'
 
-version: 2.2.129+160
+version: 2.2.130+161
 
 environment:
   sdk: ^3.11.5

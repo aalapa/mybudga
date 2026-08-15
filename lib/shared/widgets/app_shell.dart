@@ -90,6 +90,16 @@ class AppShell extends ConsumerWidget {
   const AppShell({super.key, required this.child});
 
   // Mobile bottom nav — 5 tabs, no dashboard
+  /// Opt-in layout: Home answers "am I OK?", which mobile could not ask
+  /// anywhere before — the dashboard was desktop-only. Add is a centre pill
+  /// rather than a destination, and More holds the screens that are visited
+  /// deliberately rather than daily.
+  static const _newMobileTabs = [
+    _TabItem(path: '/dashboard', label: 'Home',     icon: Icons.home_outlined,            activeIcon: Icons.home),
+    _TabItem(path: '/budget',    label: 'Budget',   icon: Icons.account_balance_wallet_outlined, activeIcon: Icons.account_balance_wallet),
+    _TabItem(path: '/cashflow',  label: 'Cashflow', icon: Icons.waterfall_chart_outlined, activeIcon: Icons.waterfall_chart),
+  ];
+
   static const _mobileTabs = [
     _TabItem(path: '/budget',       label: 'Budget',   icon: Icons.account_balance_wallet_outlined, activeIcon: Icons.account_balance_wallet),
     _TabItem(path: '/accounts',     label: 'Accounts', icon: Icons.credit_card_outlined,            activeIcon: Icons.credit_card),
@@ -168,6 +178,24 @@ class AppShell extends ConsumerWidget {
     }
 
     // ── Mobile ───────────────────────────────────────────────────────────────
+    final newNav = ref.watch(themeProvider).useNewNav;
+    if (newNav) {
+      final tabs = _newMobileTabs;
+      final path = GoRouterState.of(context).uri.path;
+      var idx = tabs.indexWhere((t) => path.startsWith(t.path));
+      if (idx < 0) idx = 0;
+      return Scaffold(
+        body: SafeArea(bottom: false, child: child),
+        bottomNavigationBar: _NewBottomBar(
+          tabs:          tabs,
+          selectedIndex: idx,
+          onTabSelected: (i) => context.go(tabs[i].path),
+          onAdd:         () => showQuickAddSheet(context, ref),
+          onMore:        () => _showMoreSheet(context),
+        ),
+      );
+    }
+
     return Scaffold(
       body: SafeArea(bottom: false, child: child),
       bottomNavigationBar: _BottomBar(
@@ -1061,6 +1089,156 @@ class _DesktopFabLayer extends ConsumerWidget {
 }
 
 // ── Custom bottom bar (mobile — unchanged) ────────────────────────────────────
+
+/// Destinations visited deliberately rather than daily.
+void _showMoreSheet(BuildContext context) {
+  showModalBottomSheet(
+    context: context,
+    useSafeArea: true,
+    builder: (ctx) {
+      final cs = Theme.of(ctx).colorScheme;
+      Widget row(IconData i, String label, String path) => ListTile(
+            leading: Icon(i, size: 22, color: cs.onSurfaceVariant),
+            title: Text(label,
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 15, fontWeight: FontWeight.w500)),
+            onTap: () {
+              Navigator.pop(ctx);
+              ctx.push(path);
+            },
+          );
+      return SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 12),
+            row(Icons.credit_card_outlined, 'Accounts',     '/accounts'),
+            row(Icons.receipt_long_outlined, 'Transactions', '/transactions'),
+            row(Icons.bar_chart_outlined,    'Reports',      '/reports'),
+            // Settings stops being an unlabelled icon in the bottom bar.
+            row(Icons.settings_outlined,     'Settings',     '/settings'),
+            const SizedBox(height: 8),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+/// Three destinations, a centre Add pill and More. Add is an action, not a
+/// place, so it is deliberately not a selectable tab.
+class _NewBottomBar extends StatelessWidget {
+  final List<_TabItem> tabs;
+  final int selectedIndex;
+  final ValueChanged<int> onTabSelected;
+  final VoidCallback onAdd;
+  final VoidCallback onMore;
+
+  const _NewBottomBar({
+    required this.tabs,
+    required this.selectedIndex,
+    required this.onTabSelected,
+    required this.onAdd,
+    required this.onMore,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    Widget item(int i) {
+      final t = tabs[i];
+      final sel = selectedIndex == i;
+      return Expanded(
+        child: InkWell(
+          onTap: () => onTabSelected(i),
+          child: SizedBox(
+            height: 58,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(sel ? t.activeIcon : t.icon,
+                    size: 22,
+                    color: sel ? cs.primary : cs.onSurfaceVariant),
+                const SizedBox(height: 3),
+                Text(t.label,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11,
+                      fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+                      color: sel ? cs.primary : cs.onSurfaceVariant,
+                    )),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surface,
+        border: Border(
+            top: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.4))),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            item(0),
+            item(1),
+            // 44x44 minimum, centred.
+            Expanded(
+              child: Center(
+                child: InkWell(
+                  onTap: onAdd,
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    width: 52,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: cs.primary,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Icon(Icons.add, size: 24, color: cs.onPrimary),
+                  ),
+                ),
+              ),
+            ),
+            item(2),
+            Expanded(
+              child: InkWell(
+                onTap: onMore,
+                child: SizedBox(
+                  height: 58,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.more_horiz,
+                          size: 22, color: cs.onSurfaceVariant),
+                      const SizedBox(height: 3),
+                      Text('More',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: cs.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _BottomBar extends StatelessWidget {
   final List<_TabItem>     tabs;

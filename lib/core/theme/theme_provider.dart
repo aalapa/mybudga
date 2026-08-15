@@ -9,6 +9,7 @@ const _kCardStyle    = 'pref_card_style';    // CardStyle.index
 const _kCardRadius   = 'pref_card_radius';   // CardRadius.index
 const _kSidebarColor = 'pref_sidebar_color'; // ARGB int, 0 = default
 const _kTextScale    = 'pref_text_scale';    // double, 1.0 = default
+const _kNewNav       = 'pref_new_nav';       // bool, opt-in bottom navigation
 
 // ── Default seed ────────────────────────────────────────────────────────────
 const _kDefaultSeedValue = 0xFF5C00F2; // Electric Indigo
@@ -99,6 +100,10 @@ class ThemeSettings {
   /// rather than overriding it.
   final double     textScale;
 
+  /// Opt-in: Home · Budget · (+) · Cashflow · More. Off by default because it
+  /// moves where four destinations live.
+  final bool       useNewNav;
+
   const ThemeSettings({
     required this.mode,
     required this.seedColor,
@@ -106,6 +111,7 @@ class ThemeSettings {
     this.cardRadius  = CardRadius.standard,
     this.sidebarColor,
     this.textScale = 1.0,
+    this.useNewNav = false,
   });
 
   ThemeSettings copyWith({
@@ -116,6 +122,7 @@ class ThemeSettings {
     Color?      sidebarColor,
     bool        clearSidebarColor = false,
     double?     textScale,
+    bool?       useNewNav,
   }) => ThemeSettings(
     mode:         mode       ?? this.mode,
     seedColor:    seedColor  ?? this.seedColor,
@@ -123,6 +130,7 @@ class ThemeSettings {
     cardRadius:   cardRadius ?? this.cardRadius,
     sidebarColor: clearSidebarColor ? null : (sidebarColor ?? this.sidebarColor),
     textScale:    textScale  ?? this.textScale,
+    useNewNav:    useNewNav  ?? this.useNewNav,
   );
 }
 
@@ -154,6 +162,7 @@ class ThemeNotifier extends StateNotifier<ThemeSettings> {
               ? Color(_prefs.getInt(_kSidebarColor)!)
               : null,
           textScale: (_prefs.getDouble(_kTextScale) ?? 1.0).clamp(0.9, 1.2),
+          useNewNav: _prefs.getBool(_kNewNav) ?? false,
         ));
 
   Future<void> setMode(ThemeMode mode) async {
@@ -183,6 +192,11 @@ class ThemeNotifier extends StateNotifier<ThemeSettings> {
   Future<void> setTextScale(double scale) async {
     state = state.copyWith(textScale: scale);
     await _prefs.setDouble(_kTextScale, scale);
+  }
+
+  Future<void> setUseNewNav(bool v) async {
+    state = state.copyWith(useNewNav: v);
+    await _prefs.setBool(_kNewNav, v);
   }
 
   Future<void> setSidebarColor(Color? color) async {

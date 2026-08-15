@@ -954,6 +954,30 @@ class _AppearanceCard extends ConsumerWidget {
             const Divider(height: 1),
             const SizedBox(height: 14),
 
+            // ── Navigation ────────────────────────────────────────────────
+            // Opt-in: it moves where four destinations live, so it is not
+            // imposed on anyone who already knows the current bar.
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: settings.useNewNav,
+              onChanged: notifier.setUseNewNav,
+              title: Text('New bottom navigation',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: cs.onSurface)),
+              subtitle: Text(
+                'Home · Budget · Add · Cashflow · More. Accounts, '
+                'Transactions, Reports and Settings move into More.',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11, color: cs.onSurfaceVariant),
+              ),
+            ),
+
+            const SizedBox(height: 8),
+            const Divider(height: 1),
+            const SizedBox(height: 14),
+
             // ── Text size ─────────────────────────────────────────────────
             Row(
               children: [
