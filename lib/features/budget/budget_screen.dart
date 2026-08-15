@@ -4111,6 +4111,11 @@ class _CategoryDetailSheetState extends ConsumerState<_CategoryDetailSheet> {
               runSpacing: 4,
               children: [
                 _PanelAction(
+                  icon:  Icons.show_chart,
+                  label: 'Pace',
+                  onTap: () => _showSpendPaceSheet(context, entry, widget.month),
+                ),
+                _PanelAction(
                   icon:  Icons.drive_file_rename_outline,
                   label: 'Rename',
                   onTap: () => _showRenameCategoryDialog(
@@ -5778,10 +5783,92 @@ class _PanelPaceLine extends StatelessWidget {
 ///
 /// The sentence stays: a chart shows the shape, but the number is what people
 /// read first.
+/// The desktop third panel's pace section, on a phone.
+///
+/// Desktop can afford a permanent column; a phone sheet cannot, and burying a
+/// 150px chart between the budget field and the delete button would make the
+/// sheet worse for the far more common visits that are just "set the number".
+/// So it gets its own surface, reached from the action row — and full width,
+/// which the chart reads better at than it would squeezed inline.
+Future<void> _showSpendPaceSheet(
+    BuildContext context, BudgetEntry entry, DateTime month) {
+  return showModalBottomSheet(
+    context:              context,
+    isScrollControlled:   true,
+    backgroundColor:      Theme.of(context).colorScheme.surface,
+    shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+    builder: (_) => _SpendPaceSheet(entry: entry, month: month),
+  );
+}
+
+class _SpendPaceSheet extends ConsumerWidget {
+  final BudgetEntry entry;
+  final DateTime month;
+  const _SpendPaceSheet({required this.entry, required this.month});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+
+    final allTxns = ref.watch(transactionsProvider).valueOrNull ?? [];
+    final txns    = allTxns.where((t) =>
+        t.categoryId == entry.categoryId &&
+        t.date.year  == month.year  &&
+        t.date.month == month.month &&
+        !t.isPendingReview).length;
+
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+            20, 12, 20, MediaQuery.of(context).viewInsets.bottom + 24),
+        child: Column(
+          mainAxisSize:       MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(entry.categoryName,
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 17, fontWeight: FontWeight.w700,
+                    color: cs.onSurface)),
+            const SizedBox(height: 2),
+            Text(DateFormat('MMMM yyyy').format(month),
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12, color: cs.onSurfaceVariant)),
+            const SizedBox(height: 14),
+            _PanelPaceLine(entry: entry, month: month, txnCount: txns),
+            const SizedBox(height: 16),
+            _SpendPacePanel(
+                entry: entry, month: month, showEmptyHint: true),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SpendPacePanel extends ConsumerWidget {
   final BudgetEntry entry;
   final DateTime month;
-  const _SpendPacePanel({required this.entry, required this.month});
+
+  /// On the desktop panel, no history means draw nothing — the panel has other
+  /// content and an explanation would be noise. A sheet opened *for* the chart
+  /// has to say why it is empty, or it reads as broken.
+  final bool showEmptyHint;
+  const _SpendPacePanel({
+    required this.entry,
+    required this.month,
+    this.showEmptyHint = false,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -5794,7 +5881,18 @@ class _SpendPacePanel extends ConsumerWidget {
     return async.maybeWhen(
       orElse: () => const SizedBox.shrink(),
       data: (pace) {
-        if (!pace.hasHistory) return const SizedBox.shrink();
+        if (!pace.hasHistory) {
+          if (!showEmptyHint) return const SizedBox.shrink();
+          return Text(
+            'No spending history for ${entry.categoryName} yet. Once this '
+            'category has a full month behind it, this month\'s pace will be '
+            'drawn against it.',
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 12,
+                height: 1.5,
+                color: Theme.of(context).colorScheme.onSurfaceVariant),
+          );
+        }
 
         final last    = pace.lastMonth;
         final soFar   = pace.currentSoFar;
