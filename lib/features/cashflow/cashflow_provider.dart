@@ -1,3 +1,5 @@
+import '../insights/payee_pattern.dart';
+import '../insights/insights_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -524,4 +526,66 @@ final scheduledCatchUpProvider = FutureProvider<int>((ref) async {
     // Never block the shell from rendering because a schedule failed to post.
     return 0;
   }
+});
+
+
+// ---------------------------------------------------------------------------
+// Plan completeness — recurring money the projection cannot see
+// ---------------------------------------------------------------------------
+
+/// A payee that behaves like a recurring bill but has no scheduled transaction.
+class UnplannedBill {
+  final String payeeName;
+  final FrequencyType frequency;
+  final double avgAmount;
+
+  const UnplannedBill({
+    required this.payeeName,
+    required this.frequency,
+    required this.avgAmount,
+  });
+
+  /// Roughly what this costs in a month, for stating the effect on the
+  /// projection.
+  double get monthlyCost => switch (frequency) {
+        FrequencyType.weekly   => avgAmount * 4.33,
+        FrequencyType.biweekly => avgAmount * 2.17,
+        FrequencyType.monthly  => avgAmount,
+      };
+}
+
+/// Established recurring payees with nothing scheduled against them.
+///
+/// Works from transactions rather than accounts, which is the whole point: a
+/// bill charged to a credit card has no account of its own, so nothing on the
+/// Accounts screen could ever represent it. Rent from checking and a gym
+/// membership on the Amex are the same kind of gap and are found the same way.
+final unplannedBillsProvider =
+    FutureProvider.autoDispose<List<UnplannedBill>>((ref) async {
+  final patterns = await ref.watch(notificationPatternsProvider.future);
+  final flow     = ref.watch(cashflowProvider).valueOrNull;
+  if (flow == null) return const [];
+
+  // Anything already scheduled, by payee, however it is paid.
+  final planned = <String>{
+    for (final st in flow.scheduled)
+      if (st.isActive && st.payeeName != null)
+        st.payeeName!.toLowerCase().trim(),
+  };
+
+  final out = <UnplannedBill>[];
+  for (final p in patterns) {
+    // Established only: three sightings of a coffee shop is not a bill.
+    if (p.confidence != PatternConfidence.established) continue;
+    if (p.frequency == null) continue;
+    if (planned.contains(p.payeeName.toLowerCase().trim())) continue;
+    if (p.avgSpend <= 0) continue;
+    out.add(UnplannedBill(
+      payeeName: p.payeeName,
+      frequency: p.frequency!,
+      avgAmount: p.avgSpend,
+    ));
+  }
+  out.sort((a, b) => b.monthlyCost.compareTo(a.monthlyCost));
+  return out;
 });

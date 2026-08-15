@@ -1,3 +1,4 @@
+import '../insights/payee_pattern.dart';
 import '../accounts/account_labels_provider.dart' show accountLabelsProvider;
 import 'dart:ui' as ui;
 import '../../core/theme/semantic_colors.dart';
@@ -224,6 +225,16 @@ class _CashflowBody extends StatelessWidget {
             child: _BalanceChart(
               dayRows: dayRows,
               startBalance: state.startingBalance,
+            ),
+          ),
+          // Directly under the projection it undermines.
+          SliverToBoxAdapter(
+            child: _UnplannedBillsCard(
+              lowestBalance: dayRows.isEmpty
+                  ? state.startingBalance
+                  : dayRows
+                      .map((d) => d.endBalance)
+                      .reduce((a, b) => a < b ? a : b),
             ),
           ),
 
@@ -622,6 +633,130 @@ class _BalanceChartPainter extends CustomPainter {
   @override
   bool shouldRepaint(_BalanceChartPainter old) =>
       old.rows.length != rows.length || old.lowIdx != lowIdx;
+}
+
+/// Recurring money the projection cannot see, and what it would do to the
+/// tightest moment.
+///
+/// Deliberately not an indicator on Accounts: a bill charged to a credit card
+/// is a line inside a card balance, not an account, so nothing account-shaped
+/// could represent it. Asking "is my plan complete?" instead of "does this
+/// account have a payment?" makes rent-from-checking and gym-on-the-Amex the
+/// same question, answered once, next to the number they affect.
+class _UnplannedBillsCard extends ConsumerWidget {
+  final double lowestBalance;
+  const _UnplannedBillsCard({required this.lowestBalance});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs    = Theme.of(context).colorScheme;
+    final money = context.money;
+    final f0    = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+
+    final bills = ref.watch(unplannedBillsProvider).valueOrNull ?? const [];
+    if (bills.isEmpty) return const SizedBox.shrink();
+
+    final shown  = bills.take(4).toList();
+    final impact = bills.fold(0.0, (s, b) => s + b.monthlyCost);
+    final after  = lowestBalance - impact;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: money.warning.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: money.warning.withValues(alpha: 0.28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.help_outline, size: 15, color: money.warning),
+              const SizedBox(width: 7),
+              Text('NOT IN YOUR PLAN',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.8,
+                    color: money.warning,
+                  )),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${bills.length} ${bills.length == 1 ? 'payee looks' : 'payees look'} '
+            'regular but ${bills.length == 1 ? 'is' : 'are'} not scheduled, so '
+            'the projection above does not include them.',
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 12, height: 1.5, color: cs.onSurfaceVariant),
+          ),
+          const SizedBox(height: 10),
+          ...shown.map((b) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${b.payeeName} · ${b.frequency.shortLabel} · '
+                        '~${f0.format(b.avgAmount)}',
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12.5, color: cs.onSurface),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Straight into the existing sheet, prefilled by name.
+                    InkWell(
+                      onTap: () => showAddScheduledSheet(context, ref,
+                          prefill: null, presetPayee: b.payeeName),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        height: 30,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: cs.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                              color: cs.primary.withValues(alpha: 0.35)),
+                        ),
+                        child: Text('Schedule',
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: cs.primary)),
+                      ),
+                    ),
+                  ],
+                ),
+              )),
+          if (bills.length > shown.length)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text('and ${bills.length - shown.length} more',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11, color: cs.onSurfaceVariant)),
+            ),
+          const SizedBox(height: 8),
+          Divider(height: 1, color: money.warning.withValues(alpha: 0.25)),
+          const SizedBox(height: 8),
+          // The consequence, which is the reason to care.
+          Text(
+            'Adding these would put your tightest moment near '
+            '${f0.format(after)}.',
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              height: 1.4,
+              color: after < 0 ? money.negative : cs.onSurface,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// The cashflow verdict: the tightest moment, when it lands, what causes it,
@@ -1425,19 +1560,25 @@ void showAddScheduledSheet(
   BuildContext context,
   WidgetRef ref, {
   ScheduledTransaction? prefill,
+  /// Seeds the payee field when creating from a detected pattern, so the
+  /// name does not have to be retyped exactly to match.
+  String? presetPayee,
 }) {
   showModalBottomSheet(
     context:            context,
     isScrollControlled: true,
     backgroundColor:    Colors.transparent,
-    builder: (_) => _AddScheduledSheet(prefill: prefill, widgetRef: ref),
+    builder: (_) => _AddScheduledSheet(
+        prefill: prefill, presetPayee: presetPayee, widgetRef: ref),
   );
 }
 
 class _AddScheduledSheet extends ConsumerStatefulWidget {
   final ScheduledTransaction? prefill;
+  final String? presetPayee;
   final WidgetRef widgetRef;
-  const _AddScheduledSheet({this.prefill, required this.widgetRef});
+  const _AddScheduledSheet(
+      {this.prefill, this.presetPayee, required this.widgetRef});
 
   @override
   ConsumerState<_AddScheduledSheet> createState() => _AddScheduledSheetState();
@@ -1471,6 +1612,11 @@ class _AddScheduledSheetState extends ConsumerState<_AddScheduledSheet> {
   @override
   void initState() {
     super.initState();
+    // Creating from a detected pattern: seed the name so it matches the payee
+    // the detector found, rather than relying on it being retyped identically.
+    if (widget.presetPayee != null) {
+      _payeeCtrl.text = widget.presetPayee!;
+    }
     final p = widget.prefill;
     if (p != null) {
       _amountCtrl.text = p.amount.abs().toStringAsFixed(2);
