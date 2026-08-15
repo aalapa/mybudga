@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import '../../core/theme/semantic_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -159,36 +160,13 @@ class _CashflowBody extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
 
-                // Balance cards
-                Row(
-                  children: [
-                    _BalanceCard(
-                      label: 'Today',
-                      value: fmt.format(state.startingBalance),
-                      color: cs.primary,
-                      icon: Icons.account_balance_outlined,
-                    ),
-                    const SizedBox(width: 10),
-                    isDoomsday
-                        ? _BalanceCard(
-                            label: 'Goes negative',
-                            value: runwayLabel,
-                            color: negIdx >= 0 ? cs.error : context.money.positive,
-                            icon:  negIdx >= 0
-                                ? Icons.warning_amber_rounded
-                                : Icons.check_circle_outline,
-                            isWarning: negIdx >= 0,
-                          )
-                        : _BalanceCard(
-                            label: 'Lowest in ${days}d',
-                            value: fmt.format(lowest),
-                            color: isDanger ? cs.error : context.money.positive,
-                            icon:  isDanger
-                                ? Icons.warning_amber_rounded
-                                : Icons.trending_down,
-                            isWarning: isDanger,
-                          ),
-                  ],
+                // One verdict, not two figures the reader has to combine.
+                _VerdictCard(
+                  dayRows:    dayRows,
+                  today:      today,
+                  startBalance: state.startingBalance,
+                  isDoomsday: isDoomsday,
+                  negIdx:     negIdx,
                 ),
                 const SizedBox(height: 14),
 
@@ -197,14 +175,15 @@ class _CashflowBody extends StatelessWidget {
                   children: [
                     (30,  '30d'),
                     (60,  '60d'),
-                    (90,  '90d'),
-                    (_CashflowBody._ddSentinel, 'DD'),
+                    (90,  '90 days'),
+                    (_CashflowBody._ddSentinel, 'Until I run out'),
                   ].map(((int, String) opt) {
                     final (value, label) = opt;
                     final selected  = days == value;
                     final isDdChip  = value == _CashflowBody._ddSentinel;
-                    final chipColor = isDdChip && selected ? cs.error : cs.primary;
+                    final chipColor = cs.primary;
                     return Expanded(
+                      flex: isDdChip ? 3 : 2,
                       child: GestureDetector(
                         onTap: () => onDaysChanged(value),
                         child: AnimatedContainer(
@@ -213,9 +192,7 @@ class _CashflowBody extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           decoration: BoxDecoration(
                             color: selected
-                                ? (isDdChip
-                                    ? cs.errorContainer
-                                    : cs.primaryContainer)
+                                ? cs.primaryContainer
                                 : cs.surfaceContainerHigh,
                             borderRadius: BorderRadius.circular(10),
                             border: selected
@@ -229,9 +206,7 @@ class _CashflowBody extends StatelessWidget {
                               fontSize: 13,
                               fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                               color: selected
-                                  ? (isDdChip
-                                      ? cs.onErrorContainer
-                                      : cs.onPrimaryContainer)
+                                  ? cs.onPrimaryContainer
                                   : cs.onSurfaceVariant,
                             ),
                           ),
@@ -252,18 +227,58 @@ class _CashflowBody extends StatelessWidget {
           if (overdue.isNotEmpty)
             _OverdueSection(overdueItems: overdue, ref: ref),
 
-          // Timeline
+          _BalanceChart(
+            dayRows: dayRows,
+            startBalance: state.startingBalance,
+          ),
+
+          // Only days where something happens. An empty Tuesday told the
+          // reader nothing and pushed the next real event off screen.
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
-              itemCount: dayRows.length,
-              itemBuilder: (context, i) {
-                final day = dayRows[i];
-                return day.hasEvents
-                    ? _EventDayRow(day: day, ref: ref, maxBalance: maxBalance, compact: compact)
-                    : _EmptyDayRow(day: day, maxBalance: maxBalance);
-              },
-            ),
+            child: Builder(builder: (context) {
+              final eventDays = dayRows.where((d) => d.hasEvents).toList();
+              if (eventDays.isEmpty) {
+                return Center(
+                  child: Text('Nothing scheduled in this range',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                );
+              }
+              var lowIdx = 0;
+              for (var i = 1; i < dayRows.length; i++) {
+                if (dayRows[i].endBalance < dayRows[lowIdx].endBalance) {
+                  lowIdx = i;
+                }
+              }
+              final lowDate = dayRows[lowIdx].date;
+              return ListView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
+                itemCount: eventDays.length,
+                itemBuilder: (context, i) {
+                  final day  = eventDays[i];
+                  final prev = i == 0 ? null : eventDays[i - 1].date;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (_needsWeekHeader(prev, day.date, today))
+                        _WeekHeader(
+                          date: day.date,
+                          today: today,
+                          gapFrom: prev,
+                        ),
+                      _EventDayRow(
+                        day: day,
+                        ref: ref,
+                        maxBalance: maxBalance,
+                        compact: false,
+                        isLowPoint: day.date == lowDate,
+                      ),
+                    ],
+                  );
+                },
+              );
+            }),
           ),
         ],
       ),
@@ -349,69 +364,409 @@ class _CashflowBody extends StatelessWidget {
       a.year == b.year && a.month == b.month && a.day == b.day;
 }
 
-// ---------------------------------------------------------------------------
-// Balance card
-// ---------------------------------------------------------------------------
+/// True when [date] opens a different week from [prev].
+bool _needsWeekHeader(DateTime? prev, DateTime date, DateTime today) {
+  if (prev == null) return true;
+  DateTime weekStart(DateTime d) =>
+      DateTime(d.year, d.month, d.day).subtract(Duration(days: d.weekday - 1));
+  return weekStart(prev) != weekStart(date);
+}
 
-class _BalanceCard extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color color;
-  final IconData icon;
-  final bool isWarning;
-
-  const _BalanceCard({
-    required this.label,
-    required this.value,
-    required this.color,
-    required this.icon,
-    this.isWarning = false,
-  });
+/// Week divider, naming the gap it skipped so an empty stretch is stated
+/// rather than silently missing.
+class _WeekHeader extends StatelessWidget {
+  final DateTime date;
+  final DateTime today;
+  final DateTime? gapFrom;
+  const _WeekHeader({required this.date, required this.today, this.gapFrom});
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(14),
-          border: isWarning ? Border.all(color: color.withValues(alpha: 0.4)) : null,
-        ),
-        child: Row(
-          children: [
-            Icon(icon, size: 18, color: color),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    value,
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 15, fontWeight: FontWeight.w800, color: color,
-                    ),
-                  ),
-                  Text(
-                    label,
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 11, color: cs.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+    DateTime weekStart(DateTime d) =>
+        DateTime(d.year, d.month, d.day).subtract(Duration(days: d.weekday - 1));
+    final diff = weekStart(date).difference(weekStart(today)).inDays ~/ 7;
+    final label = diff <= 0
+        ? 'THIS WEEK'
+        : diff == 1
+            ? 'NEXT WEEK'
+            : 'WEEK OF ${DateFormat('MMM d').format(weekStart(date)).toUpperCase()}';
+
+    String? gap;
+    if (gapFrom != null) {
+      final from = gapFrom!.add(const Duration(days: 1));
+      final to   = date.subtract(const Duration(days: 1));
+      if (!to.isBefore(from)) {
+        gap = from == to
+            ? 'nothing ${DateFormat('MMM d').format(from)}'
+            : 'nothing ${DateFormat('MMM d').format(from)}–${DateFormat('d').format(to)}';
+      }
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 16, 2, 8),
+      child: Row(
+        children: [
+          Text(label,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.8,
+                color: cs.onSurfaceVariant,
+              )),
+          if (gap != null) ...[
+            const Spacer(),
+            Text(gap,
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 10,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.6))),
           ],
-        ),
+        ],
       ),
     );
   }
 }
 
-// ---------------------------------------------------------------------------
-// Cashflow tile
-// ---------------------------------------------------------------------------
+/// Balance over the projection as a step line.
+///
+/// Replaces a column of per-day bars scaled to the period peak, where a
+/// $4,183 -> $1,868 fall read as a slightly shorter bar. Balance is a step
+/// function — it changes only when something lands — so the line is not
+/// smoothed.
+class _BalanceChart extends StatelessWidget {
+  final List<_DayData> dayRows;
+  final double startBalance;
+  final ValueChanged<DateTime>? onTapDate;
+
+  const _BalanceChart({
+    required this.dayRows,
+    required this.startBalance,
+    this.onTapDate,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs    = Theme.of(context).colorScheme;
+    final money = context.money;
+    final f0    = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    if (dayRows.length < 2) return const SizedBox.shrink();
+
+    var lowIdx = 0;
+    for (var i = 1; i < dayRows.length; i++) {
+      if (dayRows[i].endBalance < dayRows[lowIdx].endBalance) lowIdx = i;
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          LayoutBuilder(
+            builder: (ctx, box) => GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: (d) {
+                if (onTapDate == null || box.maxWidth <= 0) return;
+                final i = ((d.localPosition.dx / box.maxWidth) *
+                        (dayRows.length - 1))
+                    .round()
+                    .clamp(0, dayRows.length - 1);
+                onTapDate!(dayRows[i].date);
+              },
+              child: CustomPaint(
+                size: Size(box.maxWidth, 128),
+                painter: _BalanceChartPainter(
+                  rows:      dayRows,
+                  start:     startBalance,
+                  lowIdx:    lowIdx,
+                  positive:  money.positive,
+                  negative:  money.negative,
+                  warning:   money.warning,
+                  primary:   cs.primary,
+                  gridColor: cs.outlineVariant.withValues(alpha: 0.5),
+                  labelColor: cs.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Text('Today · ${f0.format(startBalance)}',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 10, color: cs.onSurfaceVariant)),
+              ),
+              Expanded(
+                child: Text(DateFormat('MMM d').format(dayRows[lowIdx].date),
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: dayRows[lowIdx].endBalance < 0
+                            ? money.negative
+                            : money.warning)),
+              ),
+              Expanded(
+                child: Text(
+                    '${DateFormat('MMM d').format(dayRows.last.date)} · '
+                    '${f0.format(dayRows.last.endBalance)}',
+                    textAlign: TextAlign.right,
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 10, color: cs.onSurfaceVariant)),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BalanceChartPainter extends CustomPainter {
+  final List<_DayData> rows;
+  final double start;
+  final int lowIdx;
+  final Color positive, negative, warning, primary, gridColor, labelColor;
+
+  const _BalanceChartPainter({
+    required this.rows,
+    required this.start,
+    required this.lowIdx,
+    required this.positive,
+    required this.negative,
+    required this.warning,
+    required this.primary,
+    required this.gridColor,
+    required this.labelColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final top = 16.0, bottom = size.height - 4;
+    var maxV = start, minV = start;
+    for (final r in rows) {
+      if (r.endBalance > maxV) maxV = r.endBalance;
+      if (r.endBalance < minV) minV = r.endBalance;
+    }
+    if (minV > 0) minV = 0;               // always show the zero line
+    if (maxV <= minV) maxV = minV + 1;
+
+    double y(double v) =>
+        bottom - ((v - minV) / (maxV - minV)) * (bottom - top);
+    double x(int i) => rows.length < 2 ? 0 : size.width * i / (rows.length - 1);
+
+    // Zero line
+    final zeroY = y(0);
+    final dash = Paint()..color = gridColor..strokeWidth = 1;
+    for (double dx = 0; dx < size.width; dx += 6) {
+      canvas.drawLine(Offset(dx, zeroY), Offset(dx + 3, zeroY), dash);
+    }
+
+    // Step path: the balance holds until something lands.
+    final path = Path()..moveTo(0, y(start));
+    for (var i = 0; i < rows.length; i++) {
+      path.lineTo(x(i), y(i == 0 ? start : rows[i - 1].endBalance));
+      path.lineTo(x(i), y(rows[i].endBalance));
+    }
+
+    final fill = Path.from(path)
+      ..lineTo(size.width, zeroY)
+      ..lineTo(0, zeroY)
+      ..close();
+    canvas.drawPath(
+      fill,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [positive.withValues(alpha: 0.28), positive.withValues(alpha: 0.0)],
+        ).createShader(Rect.fromLTWH(0, top, size.width, bottom - top)),
+    );
+
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = rows.any((r) => r.endBalance < 0) ? negative : positive
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5
+        ..strokeJoin = StrokeJoin.round,
+    );
+
+    // Low point.
+    final lowY = y(rows[lowIdx].endBalance);
+    final lowX = x(lowIdx);
+    final ringColor = rows[lowIdx].endBalance < 0 ? negative : warning;
+    canvas.drawCircle(Offset(lowX, lowY), 5,
+        Paint()..color = ringColor..style = PaintingStyle.stroke..strokeWidth = 2);
+
+    final tp = TextPainter(
+      text: TextSpan(
+        text: NumberFormat.currency(symbol: '\$', decimalDigits: 0)
+            .format(rows[lowIdx].endBalance),
+        style: GoogleFonts.plusJakartaSans(
+            fontSize: 11, fontWeight: FontWeight.w700, color: ringColor),
+      ),
+      textDirection: ui.TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas,
+        Offset((lowX - tp.width / 2).clamp(0, size.width - tp.width), lowY - 20));
+
+    // Today.
+    canvas.drawCircle(Offset(0, y(start)), 4, Paint()..color = primary);
+  }
+
+  @override
+  bool shouldRepaint(_BalanceChartPainter old) =>
+      old.rows.length != rows.length || old.lowIdx != lowIdx;
+}
+
+/// The cashflow verdict: the tightest moment, when it lands, what causes it,
+/// and how it resolves — in that order.
+///
+/// Replaces two figures ("Today", "Lowest in 30d") that stated the inputs and
+/// left the reader to work out whether they were in trouble.
+class _VerdictCard extends StatelessWidget {
+  final List<_DayData> dayRows;
+  final DateTime today;
+  final double startBalance;
+  final bool isDoomsday;
+  final int negIdx;
+
+  const _VerdictCard({
+    required this.dayRows,
+    required this.today,
+    required this.startBalance,
+    required this.isDoomsday,
+    required this.negIdx,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs    = Theme.of(context).colorScheme;
+    final money = context.money;
+    final f0    = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+
+    if (dayRows.isEmpty) return const SizedBox.shrink();
+
+    // The low point, and the day it happens.
+    var lowIdx = 0;
+    for (var i = 1; i < dayRows.length; i++) {
+      if (dayRows[i].endBalance < dayRows[lowIdx].endBalance) lowIdx = i;
+    }
+    final low     = dayRows[lowIdx];
+    final goesNeg = dayRows.any((d) => d.endBalance < 0);
+
+    // Average daily outflow, to judge whether a positive minimum is actually
+    // comfortable or merely above zero.
+    final totalOut = dayRows
+        .expand((d) => d.events)
+        .where((e) => !e.isIncome)
+        .fold(0.0, (s, e) => s + e.amount.abs());
+    final monthOut = dayRows.isEmpty ? 0.0 : totalOut / dayRows.length * 30;
+    final comfortable = !goesNeg && low.endBalance > monthOut;
+
+    final tint = goesNeg
+        ? money.negative
+        : comfortable
+            ? money.positive
+            : money.warning;
+
+    // Headline.
+    final String headline;
+    if (isDoomsday) {
+      headline = negIdx >= 0
+          ? '${f0.format(0)} on ${DateFormat('MMM d').format(dayRows[negIdx].date)}'
+              ' — $negIdx days of runway'
+          : '365+ days safe';
+    } else {
+      headline =
+          '${f0.format(low.endBalance)} on ${DateFormat('EEE, MMM d').format(low.date)}';
+    }
+
+    // Cause: the one or two largest expenses at or before the low point.
+    final causes = dayRows
+        .take(lowIdx + 1)
+        .expand((d) => d.events)
+        .where((e) => !e.isIncome)
+        .toList()
+      ..sort((a, b) => b.amount.abs().compareTo(a.amount.abs()));
+    final causeNames = causes.take(2).map((e) => e.payee).toList();
+
+    // Resolution: the next income after the low point.
+    _ProjectedEntry? nextIn;
+    double? afterIn;
+    for (var i = lowIdx; i < dayRows.length; i++) {
+      final inc = dayRows[i].events.where((e) => e.isIncome);
+      if (inc.isNotEmpty) {
+        nextIn  = inc.first;
+        afterIn = dayRows[i].endBalance;
+        break;
+      }
+    }
+
+    final daysAway = low.date.difference(
+        DateTime(today.year, today.month, today.day)).inDays;
+
+    final buf = StringBuffer();
+    if (!isDoomsday) {
+      buf.write(daysAway <= 0 ? 'Today' : '$daysAway days away');
+      if (causeNames.isNotEmpty) {
+        buf.write(', right after ${causeNames.join(' and ')} land');
+      }
+      buf.write('. ');
+    }
+    buf.write(goesNeg
+        ? 'You go negative on ${DateFormat('MMM d').format(dayRows.firstWhere((d) => d.endBalance < 0).date)}'
+        : 'You stay above zero all month');
+    if (nextIn != null && afterIn != null) {
+      buf.write(' — ${nextIn.payee} on '
+          '${DateFormat('MMM d').format(nextIn.date)} puts you back to '
+          '${f0.format(afterIn)}');
+    }
+    buf.write('.');
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: tint.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: tint.withValues(alpha: 0.28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(isDoomsday ? 'RUNWAY' : 'TIGHTEST MOMENT',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.8,
+                color: tint,
+              )),
+          const SizedBox(height: 6),
+          Text(headline,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 26,
+                fontWeight: FontWeight.w800,
+                color: cs.onSurface,
+              )),
+          const SizedBox(height: 8),
+          Text(buf.toString(),
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 12.5,
+                height: 1.55,
+                color: cs.onSurfaceVariant,
+              )),
+        ],
+      ),
+    );
+  }
+}
 
 class _CashflowTile extends ConsumerWidget {
   final _ProjectedEntry entry;
@@ -573,73 +928,9 @@ class _DayData {
   bool get hasEvents => events.isNotEmpty;
 }
 
-// ---------------------------------------------------------------------------
-// Day row — no events
-// ---------------------------------------------------------------------------
-
-class _EmptyDayRow extends StatelessWidget {
-  final _DayData day;
-  final double maxBalance;
-  const _EmptyDayRow({required this.day, required this.maxBalance});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs      = Theme.of(context).colorScheme;
-    final fmt     = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
-    final isToday = _sameDay(day.date, DateTime.now());
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 56,
-            child: Text(
-              isToday ? 'Today' : DateFormat('MMM d').format(day.date),
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 11,
-                fontWeight: isToday ? FontWeight.w700 : FontWeight.w400,
-                color: isToday
-                    ? cs.primary
-                    : cs.onSurfaceVariant.withValues(alpha: 0.55),
-              ),
-            ),
-          ),
-          // ── Balance bar fills the dead space ──────────────────────────
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              child: _BalanceBar(
-                balance:    day.endBalance,
-                maxBalance: maxBalance,
-                height:     5,
-              ),
-            ),
-          ),
-          Text(
-            fmt.format(day.endBalance),
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: day.endBalance < 500
-                  ? cs.error.withValues(alpha: 0.7)
-                  : cs.onSurfaceVariant.withValues(alpha: 0.55),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static bool _sameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
-}
-
-// ---------------------------------------------------------------------------
-// Day row — has events
-// ---------------------------------------------------------------------------
-
 class _EventDayRow extends StatelessWidget {
+  /// The single tinted card in the list, matching the chart's marker.
+  final bool isLowPoint;
   final _DayData day;
   final WidgetRef ref;
   final double maxBalance;
@@ -649,81 +940,12 @@ class _EventDayRow extends StatelessWidget {
     required this.ref,
     required this.maxBalance,
     required this.compact,
+    this.isLowPoint = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return compact ? _buildCompact(context) : _buildFull(context);
-  }
-
-  Widget _buildCompact(BuildContext context) {
-    final cs         = Theme.of(context).colorScheme;
-    final fmt        = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
-    final now        = DateTime.now();
-    final isToday    = _sameDay(day.date, now);
-    final isTomorrow = _sameDay(day.date, now.add(const Duration(days: 1)));
-    final hasIncome  = day.events.any((e) => e.isIncome);
-    final hasExpense = day.events.any((e) => !e.isIncome);
-
-    final dateLabel = isToday
-        ? 'Today'
-        : isTomorrow
-            ? 'Tmrw'
-            : DateFormat('MMM d').format(day.date);
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 56,
-            child: Text(
-              dateLabel,
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 11,
-                fontWeight: isToday ? FontWeight.w700 : FontWeight.w500,
-                color: isToday ? cs.primary : cs.onSurface,
-              ),
-            ),
-          ),
-          if (hasExpense)
-            Text(
-              '−',
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 13, fontWeight: FontWeight.w800, color: cs.primary,
-              ),
-            ),
-          if (hasIncome)
-            Text(
-              '+',
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 13, fontWeight: FontWeight.w800, color: context.money.positive,
-              ),
-            ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: _BalanceBar(
-                balance:    day.endBalance,
-                maxBalance: maxBalance,
-                height:     5,
-              ),
-            ),
-          ),
-          Text(
-            fmt.format(day.endBalance),
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: day.endBalance < 500
-                  ? cs.error.withValues(alpha: 0.7)
-                  : cs.onSurfaceVariant.withValues(alpha: 0.55),
-            ),
-          ),
-        ],
-      ),
-    );
+    return _buildFull(context);
   }
 
   Widget _buildFull(BuildContext context) {
@@ -739,7 +961,24 @@ class _EventDayRow extends StatelessWidget {
             ? 'Tomorrow · ${DateFormat('MMM d').format(day.date)}'
             : DateFormat('EEE · MMM d').format(day.date);
 
-    return Column(
+    final money = context.money;
+    // The low point is the only tinted day, so the chart's marker and this
+    // list are pointing at the same thing.
+    return Container(
+      margin: isLowPoint
+          ? const EdgeInsets.symmetric(vertical: 4)
+          : EdgeInsets.zero,
+      padding: isLowPoint
+          ? const EdgeInsets.symmetric(horizontal: 10, vertical: 2)
+          : EdgeInsets.zero,
+      decoration: isLowPoint
+          ? BoxDecoration(
+              color: money.warning.withValues(alpha: 0.09),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: money.warning.withValues(alpha: 0.25)),
+            )
+          : null,
+      child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
@@ -749,7 +988,11 @@ class _EventDayRow extends StatelessWidget {
             style: GoogleFonts.plusJakartaSans(
               fontSize: 11,
               fontWeight: FontWeight.w700,
-              color: isToday ? cs.primary : cs.onSurfaceVariant,
+              color: isLowPoint
+                  ? money.warning
+                  : isToday
+                      ? cs.primary
+                      : cs.onSurfaceVariant,
               letterSpacing: 0.5,
             ),
           ),
@@ -765,7 +1008,7 @@ class _EventDayRow extends StatelessWidget {
           child: Row(
             children: [
               Text(
-                'Balance',
+                'leaves',
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 11,
                   color: cs.onSurfaceVariant,
@@ -786,13 +1029,18 @@ class _EventDayRow extends StatelessWidget {
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: day.endBalance < 500 ? cs.error : cs.onSurface,
+                  color: isLowPoint
+                      ? money.warning
+                      : day.endBalance < 0
+                          ? money.negative
+                          : cs.onSurface,
                 ),
               ),
             ],
           ),
         ),
       ],
+      ),
     );
   }
 
