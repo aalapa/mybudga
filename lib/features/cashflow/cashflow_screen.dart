@@ -670,22 +670,48 @@ class _BalanceChartPainter extends CustomPainter {
 /// could represent it. Asking "is my plan complete?" instead of "does this
 /// account have a payment?" makes rent-from-checking and gym-on-the-Amex the
 /// same question, answered once, next to the number they affect.
-class _UnplannedBillsCard extends ConsumerWidget {
+class _UnplannedBillsCard extends ConsumerStatefulWidget {
   final double lowestBalance;
   const _UnplannedBillsCard({required this.lowestBalance});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_UnplannedBillsCard> createState() =>
+      _UnplannedBillsCardState();
+}
+
+class _UnplannedBillsCardState extends ConsumerState<_UnplannedBillsCard> {
+  /// Four is enough to make the point without burying the consequence line
+  /// underneath a list. The rest are one tap away rather than unreachable.
+  static const _collapsedCount = 4;
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
     final cs    = Theme.of(context).colorScheme;
     final money = context.money;
     final f0    = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
 
-    final bills = ref.watch(unplannedBillsProvider).valueOrNull ?? const [];
-    if (bills.isEmpty) return const SizedBox.shrink();
+    final bills   = ref.watch(unplannedBillsProvider).valueOrNull ?? const [];
+    final ignored = ref.watch(ignoredBillPayeesProvider);
 
-    final shown  = bills.take(4).toList();
+    // The card goes away when everything is either scheduled or dismissed,
+    // but the dismissals stay reachable — see the footer below.
+    if (bills.isEmpty) {
+      return ignored.isEmpty
+          ? const SizedBox.shrink()
+          : Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: _RestoreIgnoredButton(count: ignored.length),
+              ),
+            );
+    }
+
+    final shown = _expanded ? bills : bills.take(_collapsedCount).toList();
+    final hidden = bills.length - shown.length;
     final impact = bills.fold(0.0, (s, b) => s + b.monthlyCost);
-    final after  = lowestBalance - impact;
+    final after  = widget.lowestBalance - impact;
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -720,51 +746,29 @@ class _UnplannedBillsCard extends ConsumerWidget {
                 fontSize: 12, height: 1.5, color: cs.onSurfaceVariant),
           ),
           const SizedBox(height: 10),
-          ...shown.map((b) => Padding(
-                padding: const EdgeInsets.only(bottom: 6),
+          ...shown.map((b) => _UnplannedBillRow(bill: b, f0: f0)),
+          if (hidden > 0 || _expanded)
+            InkWell(
+              onTap: () => setState(() => _expanded = !_expanded),
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Expanded(
-                      child: Text(
-                        '${b.payeeName} · ${b.frequency.shortLabel} · '
-                        '~${f0.format(b.avgAmount)}',
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.plusJakartaSans(
-                            fontSize: 12.5, color: cs.onSurface),
-                      ),
+                    Text(
+                      _expanded ? 'Show fewer' : 'Show all ${bills.length}',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: cs.primary),
                     ),
-                    const SizedBox(width: 8),
-                    // Straight into the existing sheet, prefilled by name.
-                    InkWell(
-                      onTap: () => showAddScheduledSheet(context, ref,
-                          prefill: null, presetPayee: b.payeeName),
-                      borderRadius: BorderRadius.circular(8),
-                      child: Container(
-                        height: 30,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: cs.primary.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                              color: cs.primary.withValues(alpha: 0.35)),
-                        ),
-                        child: Text('Schedule',
-                            style: GoogleFonts.plusJakartaSans(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: cs.primary)),
-                      ),
-                    ),
+                    const SizedBox(width: 2),
+                    Icon(_expanded ? Icons.expand_less : Icons.expand_more,
+                        size: 16, color: cs.primary),
                   ],
                 ),
-              )),
-          if (bills.length > shown.length)
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text('and ${bills.length - shown.length} more',
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 11, color: cs.onSurfaceVariant)),
+              ),
             ),
           const SizedBox(height: 8),
           Divider(height: 1, color: money.warning.withValues(alpha: 0.25)),
@@ -780,7 +784,120 @@ class _UnplannedBillsCard extends ConsumerWidget {
               color: after < 0 ? money.negative : cs.onSurface,
             ),
           ),
+          if (ignored.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _RestoreIgnoredButton(count: ignored.length),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+/// One detected payee: what it looks like, and the two things you can do about
+/// it. "Not a bill" matters as much as "Schedule" — a card that can only be
+/// agreed with keeps nagging about the payee you already decided is irregular,
+/// and an alert nobody can dismiss stops being read at all.
+class _UnplannedBillRow extends ConsumerWidget {
+  final UnplannedBill bill;
+  final NumberFormat f0;
+  const _UnplannedBillRow({required this.bill, required this.f0});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '${bill.payeeName} · ${bill.frequency.shortLabel} · '
+              '~${f0.format(bill.avgAmount)}',
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12.5, color: cs.onSurface),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Straight into the existing sheet, prefilled by name.
+          InkWell(
+            onTap: () => showAddScheduledSheet(context, ref,
+                prefill: null, presetPayee: bill.payeeName),
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              height: 30,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+                border:
+                    Border.all(color: cs.primary.withValues(alpha: 0.35)),
+              ),
+              child: Text('Schedule',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: cs.primary)),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Tooltip(
+            message: 'Not a bill',
+            child: InkWell(
+              onTap: () {
+                final messenger = ScaffoldMessenger.of(context);
+                final notifier  = ref.read(ignoredBillPayeesProvider.notifier);
+                notifier.ignore(bill.payeeName);
+                messenger.clearSnackBars();
+                messenger.showSnackBar(SnackBar(
+                  content: Text('${bill.payeeName} won\'t be flagged again'),
+                  behavior: SnackBarBehavior.floating,
+                  action: SnackBarAction(
+                    label: 'Undo',
+                    onPressed: () => notifier.restore(bill.payeeName),
+                  ),
+                ));
+              },
+              borderRadius: BorderRadius.circular(8),
+              child: SizedBox(
+                height: 30,
+                width: 30,
+                child: Icon(Icons.close_rounded,
+                    size: 16, color: cs.onSurfaceVariant),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Dismissing has to be reversible, and visibly so — otherwise it is a trap
+/// door, and a payee wrongly marked irregular is invisible forever.
+class _RestoreIgnoredButton extends ConsumerWidget {
+  final int count;
+  const _RestoreIgnoredButton({required this.count});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: () => ref.read(ignoredBillPayeesProvider.notifier).restoreAll(),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Text(
+          '$count marked not a bill · Show again',
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 11.5,
+              color: cs.onSurfaceVariant,
+              decoration: TextDecoration.underline,
+              decorationColor: cs.onSurfaceVariant.withValues(alpha: 0.4)),
+        ),
       ),
     );
   }

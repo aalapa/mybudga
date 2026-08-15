@@ -1,3 +1,4 @@
+import '../../core/theme/theme_provider.dart' show sharedPreferencesProvider;
 import '../insights/payee_pattern.dart';
 import '../insights/insights_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -573,8 +574,11 @@ final unplannedBillsProvider =
         st.payeeName!.toLowerCase().trim(),
   };
 
+  final ignored = ref.watch(ignoredBillPayeesProvider);
+
   final out = <UnplannedBill>[];
   for (final p in patterns) {
+    if (ignored.contains(IgnoredBillPayees.key(p.payeeName))) continue;
     // Established only: three sightings of a coffee shop is not a bill.
     if (p.confidence != PatternConfidence.established) continue;
     if (p.frequency == null) continue;
@@ -588,4 +592,43 @@ final unplannedBillsProvider =
   }
   out.sort((a, b) => b.monthlyCost.compareTo(a.monthlyCost));
   return out;
+});
+
+
+/// Payees deliberately marked as "not a bill".
+///
+/// Device-local, like the account labels and section order: it is a reading
+/// preference rather than household data. The cost is that dismissing one here
+/// does not dismiss it on another phone.
+class IgnoredBillPayees extends StateNotifier<Set<String>> {
+  IgnoredBillPayees(super.initial, this._save);
+  final void Function(Set<String>) _save;
+
+  static String key(String payee) => payee.toLowerCase().trim();
+
+  void ignore(String payee) {
+    state = {...state, key(payee)};
+    _save(state);
+  }
+
+  void restore(String payee) {
+    state = {...state}..remove(key(payee));
+    _save(state);
+  }
+
+  void restoreAll() {
+    state = {};
+    _save(state);
+  }
+}
+
+const _kIgnoredBillsKey = 'cashflow_ignored_bill_payees';
+
+final ignoredBillPayeesProvider =
+    StateNotifierProvider<IgnoredBillPayees, Set<String>>((ref) {
+  final prefs = ref.watch(sharedPreferencesProvider);
+  final initial =
+      (prefs.getStringList(_kIgnoredBillsKey) ?? const <String>[]).toSet();
+  return IgnoredBillPayees(
+      initial, (s) => prefs.setStringList(_kIgnoredBillsKey, s.toList()));
 });
