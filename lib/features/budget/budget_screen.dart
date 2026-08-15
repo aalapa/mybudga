@@ -3520,6 +3520,15 @@ class _CategoryTxPanel extends ConsumerWidget {
               spacing: 4,
               runSpacing: 4,
               children: [
+                // Ahead of the edit actions, and deliberately not behind More:
+                // it is the one thing here you open to read rather than to
+                // change, so a detour through a menu of edit tools is a tax on
+                // the most casual reason to have expanded the row at all.
+                _PanelAction(
+                  icon: Icons.show_chart,
+                  label: 'Pace',
+                  onTap: () => _showSpendPaceSheet(context, entry, month),
+                ),
                 _PanelAction(
                   icon: Icons.drive_file_rename_outline,
                   label: 'Rename',
