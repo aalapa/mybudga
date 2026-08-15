@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/theme/semantic_colors.dart';
 import 'package:flutter/material.dart';
@@ -5771,64 +5772,328 @@ class _PanelPaceLine extends StatelessWidget {
 }
 
 /// Same category, same point last month.
-class _ComparedToLastMonth extends ConsumerWidget {
+/// Where this month's spending sits against the same category's own history —
+/// last month, the 3-month average and the 12-month average, all on one set of
+/// axes so they can actually be compared rather than remembered between taps.
+///
+/// The sentence stays: a chart shows the shape, but the number is what people
+/// read first.
+class _SpendPacePanel extends ConsumerWidget {
   final BudgetEntry entry;
   final DateTime month;
-  const _ComparedToLastMonth({required this.entry, required this.month});
+  const _SpendPacePanel({required this.entry, required this.month});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cs    = Theme.of(context).colorScheme;
     final money = context.money;
     final f0    = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
-    final prev  = DateFormat('MMMM').format(
-        DateTime(month.year, month.month - 1));
 
-    final async = ref.watch(
-        sameDayLastMonthSpendProvider((entry.categoryId, month)));
+    final async = ref.watch(spendPaceProvider((entry.categoryId, month)));
 
     return async.maybeWhen(
       orElse: () => const SizedBox.shrink(),
-      data: (lastMonth) {
-        if (lastMonth <= 0) return const SizedBox.shrink();
-        final diff    = entry.spent - lastMonth;
+      data: (pace) {
+        if (!pace.hasHistory) return const SizedBox.shrink();
+
+        final last    = pace.lastMonth;
+        final soFar   = pace.currentSoFar;
+        final lastNow = last?.at(pace.todayDay - 1) ?? 0;
+        final diff    = soFar - lastNow;
         final lighter = diff < 0;
+
+        // The line is coloured by the same comparison the sentence makes, so
+        // text and chart never tell different stories.
+        final currentColor = last == null || !last.hasSpend
+            ? cs.primary
+            : (lighter ? money.positive : money.warning);
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('COMPARED TO ${prev.toUpperCase()}',
+            Text('SPENDING PACE',
                 style: GoogleFonts.plusJakartaSans(
                     fontSize: 10,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 1,
                     color: cs.onSurfaceVariant)),
             const SizedBox(height: 4),
-            Text.rich(
-              TextSpan(
-                text: "You'd spent ${f0.format(lastMonth)} by this point last "
-                    'month. ',
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 12, height: 1.5, color: cs.onSurfaceVariant),
-                children: [
-                  TextSpan(
-                    text: diff.abs() < 1
-                        ? "You're level so far."
-                        : "You're ${f0.format(diff.abs())} "
-                            '${lighter ? 'lighter' : 'heavier'} so far.',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: lighter ? money.positive : money.warning,
+            if (last != null && last.hasSpend)
+              Text.rich(
+                TextSpan(
+                  text: "You'd spent ${f0.format(lastNow)} by this point in "
+                      '${last.label}. ',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, height: 1.5, color: cs.onSurfaceVariant),
+                  children: [
+                    TextSpan(
+                      text: diff.abs() < 1
+                          ? "You're level so far."
+                          : "You're ${f0.format(diff.abs())} "
+                              '${lighter ? 'lighter' : 'heavier'} so far.',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: lighter ? money.positive : money.warning,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 152,
+              child: LayoutBuilder(
+                builder: (context, c) => CustomPaint(
+                  size: Size(c.maxWidth, 152),
+                  painter: _PaceChartPainter(
+                    pace:         pace,
+                    currentColor: currentColor,
+                    baseColor:    cs.onSurfaceVariant,
+                    gridColor:    cs.outlineVariant,
+                    monthLabel:   DateFormat('MMMM').format(month),
+                    fmt:          f0,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 14,
+              runSpacing: 6,
+              children: [
+                _PaceLegend(
+                    color: currentColor,
+                    label: DateFormat('MMM').format(month),
+                    value: f0.format(soFar),
+                    bold:  true),
+                for (var i = 0; i < pace.series.length; i++)
+                  if (pace.series[i].hasSpend)
+                    _PaceLegend(
+                      color: cs.onSurfaceVariant
+                          .withValues(alpha: _PaceChartPainter.alphas[i]),
+                      label: pace.series[i].label,
+                      value: f0.format(pace.series[i].total),
+                    ),
+              ],
             ),
           ],
         );
       },
     );
   }
+}
+
+class _PaceLegend extends StatelessWidget {
+  final Color color;
+  final String label;
+  final String value;
+  final bool bold;
+  const _PaceLegend({
+    required this.color,
+    required this.label,
+    required this.value,
+    this.bold = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+            width: 14,
+            height: 2.5,
+            decoration: BoxDecoration(
+                color: color, borderRadius: BorderRadius.circular(2))),
+        const SizedBox(width: 5),
+        Text('$label ',
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
+                color: cs.onSurfaceVariant)),
+        Text(value,
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: cs.onSurface)),
+      ],
+    );
+  }
+}
+
+/// Cumulative spend curves on a shared day-of-month axis.
+///
+/// History lines are solid up to today and dotted past it: the solid part is
+/// the like-for-like comparison, the dotted part is where that month went on to
+/// finish. Drawing the whole line solid would invite reading a full month
+/// against a part month.
+class _PaceChartPainter extends CustomPainter {
+  final SpendPace pace;
+  final Color currentColor;
+  final Color baseColor;
+  final Color gridColor;
+  final String monthLabel;
+  final NumberFormat fmt;
+
+  /// Recency as opacity: last month reads strongest, the 12-month average
+  /// faintest. Three separate hues would be a colour puzzle for what is
+  /// really one ordered idea.
+  static const alphas = [0.85, 0.5, 0.3];
+  static const widths = [1.7, 1.45, 1.3];
+
+  _PaceChartPainter({
+    required this.pace,
+    required this.currentColor,
+    required this.baseColor,
+    required this.gridColor,
+    required this.monthLabel,
+    required this.fmt,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const topPad = 10.0, bottomPad = 20.0, rightPad = 6.0;
+    final plotH = size.height - topPad - bottomPad;
+    final plotW = size.width - rightPad;
+    final days  = pace.daysInMonth;
+    if (days < 2 || plotH <= 0) return;
+
+    var maxV = 0.0;
+    for (var i = 0; i < pace.todayDay; i++) {
+      if (pace.current[i] > maxV) maxV = pace.current[i];
+    }
+    for (final s in pace.series) {
+      if (s.total > maxV) maxV = s.total;
+    }
+    if (maxV <= 0) return;
+    maxV *= 1.14; // headroom for the finish label
+
+    double dx(int i) => plotW * i / (days - 1);
+    double dy(double v) => topPad + plotH * (1 - v / maxV);
+
+    // Baseline.
+    canvas.drawLine(Offset(0, topPad + plotH), Offset(plotW, topPad + plotH),
+        Paint()..color = gridColor..strokeWidth = 1);
+
+    // Where last month finished — the bar to beat, readable at any x rather
+    // than only at the right edge.
+    final last = pace.lastMonth;
+    if (last != null && last.hasSpend) {
+      final y = dy(last.total);
+      _dashLine(canvas, Offset(0, y), Offset(plotW, y),
+          Paint()
+            ..color = baseColor.withValues(alpha: 0.38)
+            ..strokeWidth = 1,
+          on: 2.5, off: 3.5);
+      _label(canvas, '${last.label} finished ${fmt.format(last.total)}',
+          Offset(plotW, y - 12), baseColor.withValues(alpha: 0.75), 9.5,
+          alignRight: true);
+    }
+
+    // Today.
+    final tx = dx(pace.todayDay - 1);
+    if (pace.todayDay < days) {
+      _dashLine(canvas, Offset(tx, topPad), Offset(tx, topPad + plotH),
+          Paint()
+            ..color = baseColor.withValues(alpha: 0.22)
+            ..strokeWidth = 1,
+          on: 3, off: 4);
+    }
+
+    // History, faintest first so last month sits on top.
+    for (var i = pace.series.length - 1; i >= 0; i--) {
+      final s = pace.series[i];
+      if (!s.hasSpend) continue;
+      final paint = Paint()
+        ..color = baseColor.withValues(alpha: alphas[i])
+        ..strokeWidth = widths[i]
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round;
+
+      final solid = Path();
+      for (var d = 0; d < pace.todayDay; d++) {
+        final p = Offset(dx(d), dy(s.at(d)));
+        d == 0 ? solid.moveTo(p.dx, p.dy) : solid.lineTo(p.dx, p.dy);
+      }
+      canvas.drawPath(solid, paint);
+
+      if (pace.todayDay < days) {
+        final future = Path();
+        for (var d = pace.todayDay - 1; d < days; d++) {
+          final p = Offset(dx(d), dy(s.at(d)));
+          d == pace.todayDay - 1
+              ? future.moveTo(p.dx, p.dy)
+              : future.lineTo(p.dx, p.dy);
+        }
+        _dashPath(canvas, future, paint);
+      }
+    }
+
+    // This month, on top, solid, no projection — we do not know the rest.
+    final cur = Path();
+    for (var d = 0; d < pace.todayDay; d++) {
+      final p = Offset(dx(d), dy(pace.current[d]));
+      d == 0 ? cur.moveTo(p.dx, p.dy) : cur.lineTo(p.dx, p.dy);
+    }
+    canvas.drawPath(
+        cur,
+        Paint()
+          ..color = currentColor
+          ..strokeWidth = 2.6
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round);
+
+    final head = Offset(tx, dy(pace.current[pace.todayDay - 1]));
+    canvas.drawCircle(head, 4.2, Paint()..color = currentColor);
+
+    // Day-of-month axis.
+    final mid = (days / 2).round();
+    for (final d in {1, mid, days}) {
+      _label(canvas, '$d', Offset(dx(d - 1), topPad + plotH + 5),
+          baseColor.withValues(alpha: 0.7), 9.5,
+          center: d != 1 && d != days, alignRight: d == days);
+    }
+  }
+
+  void _dashLine(Canvas c, Offset a, Offset b, Paint p,
+      {double on = 4, double off = 4}) {
+    _dashPath(c, Path()..moveTo(a.dx, a.dy)..lineTo(b.dx, b.dy), p,
+        on: on, off: off);
+  }
+
+  void _dashPath(Canvas c, Path path, Paint p,
+      {double on = 3.5, double off = 3.5}) {
+    for (final m in path.computeMetrics()) {
+      var dist = 0.0;
+      while (dist < m.length) {
+        final next = dist + on < m.length ? dist + on : m.length;
+        c.drawPath(m.extractPath(dist, next), p);
+        dist = next + off;
+      }
+    }
+  }
+
+  void _label(Canvas c, String text, Offset at, Color color, double size,
+      {bool alignRight = false, bool center = false}) {
+    final tp = TextPainter(
+      text: TextSpan(
+          text: text,
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: size, fontWeight: FontWeight.w600, color: color)),
+      textDirection: ui.TextDirection.ltr,
+    )..layout();
+    var dx = at.dx;
+    if (alignRight) dx -= tp.width;
+    else if (center) dx -= tp.width / 2;
+    tp.paint(c, Offset(dx, at.dy));
+  }
+
+  @override
+  bool shouldRepaint(_PaceChartPainter old) =>
+      old.pace != pace || old.currentColor != currentColor;
 }
 
 class _CategorySplitPanel extends ConsumerWidget {
@@ -5943,7 +6208,7 @@ class _CategorySplitPanel extends ConsumerWidget {
               // What the numbers above actually mean for the rest of the month.
               _PanelPaceLine(entry: entry!, month: currentMonth, txnCount: txns.length),
               const SizedBox(height: 12),
-              _ComparedToLastMonth(entry: entry!, month: currentMonth),
+              _SpendPacePanel(entry: entry!, month: currentMonth),
             ],
           ),
         ),

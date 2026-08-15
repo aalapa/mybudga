@@ -1,3 +1,4 @@
+import 'package:intl/intl.dart';
 import '../cashflow/cashflow_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -1126,39 +1127,160 @@ final unfundedBillsProvider =
 /// Spend in the same category, in the previous month, up to the same day of
 /// the month. Answers "am I ahead or behind where I was?" — a comparison the
 /// budget can make but never did.
-final sameDayLastMonthSpendProvider = FutureProvider.autoDispose
-    .family<double, (String, DateTime)>((ref, args) async {
+/// One history line on the pace chart: cumulative spend by day of month,
+/// resampled onto the current month's day grid.
+class PaceSeries {
+  final String label;
+
+  /// Length always equals the current month's day count. For a shorter source
+  /// month the final total carries across the extra days — by the 31st of a
+  /// 30-day month you had indeed spent the whole month.
+  final List<double> cumulative;
+
+  /// How many months went into this line. An "average" of one month is just
+  /// that month, so the UI drops those rather than drawing the same line three
+  /// times under three names.
+  final int monthsAveraged;
+
+  const PaceSeries({
+    required this.label,
+    required this.cumulative,
+    required this.monthsAveraged,
+  });
+
+  double get total => cumulative.isEmpty ? 0 : cumulative.last;
+  double at(int dayIdx) => cumulative.isEmpty
+      ? 0
+      : cumulative[dayIdx.clamp(0, cumulative.length - 1)];
+  bool get hasSpend => total > 0;
+}
+
+/// Cumulative spend for a category this month, against its own history.
+class SpendPace {
+  /// Cumulative spend this month. Real only through [todayDay]; the tail is
+  /// flat and must not be drawn.
+  final List<double> current;
+  final int daysInMonth;
+
+  /// 1-based. The last day of the month when looking at a past month.
+  final int todayDay;
+  final PaceSeries? lastMonth;
+  final PaceSeries? avg3;
+  final PaceSeries? avg12;
+
+  const SpendPace({
+    required this.current,
+    required this.daysInMonth,
+    required this.todayDay,
+    this.lastMonth,
+    this.avg3,
+    this.avg12,
+  });
+
+  double get currentSoFar => current.isEmpty ? 0 : current[todayDay - 1];
+  List<PaceSeries> get series =>
+      [lastMonth, avg3, avg12].whereType<PaceSeries>().toList();
+  bool get hasHistory => series.any((s) => s.hasSpend);
+}
+
+/// Twelve months of daily spend for one category, in a single query.
+///
+/// Averages skip months before the category's first transaction. Counting
+/// those as zero-spend months would drag every average down and report a
+/// brand-new category as spending far above its "usual" — which is not a
+/// comparison, just an artefact of the category not having existed.
+final spendPaceProvider = FutureProvider.autoDispose
+    .family<SpendPace, (String, DateTime)>((ref, args) async {
   final (categoryId, month) = args;
   final householdId = await ref.watch(householdIdProvider.future);
   final client      = ref.watch(supabaseProvider);
 
-  final prev = DateTime(month.year, month.month - 1);
-  // Clamp to the previous month's length: comparing "by the 31st" against a
-  // 30-day month would silently include the whole month.
-  final lastDay = DateTime(prev.year, prev.month + 1, 0).day;
-  final today   = DateTime.now();
-  final upToDay = month.year == today.year && month.month == today.month
-      ? today.day
-      : DateTime(month.year, month.month + 1, 0).day;
-  final cutoffDay = upToDay < lastDay ? upToDay : lastDay;
+  final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
+  final now         = DateTime.now();
+  final isCurrent   = month.year == now.year && month.month == now.month;
+  final todayDay    = isCurrent ? now.day.clamp(1, daysInMonth) : daysInMonth;
 
   String d(DateTime x) =>
       '${x.year}-${x.month.toString().padLeft(2, '0')}-${x.day.toString().padLeft(2, '0')}';
 
   final rows = await client
       .from('transactions')
-      .select('amount')
+      .select('date, amount')
       .eq('household_id', householdId)
       .eq('category_id', categoryId)
       .eq('status', 'confirmed')
       .isFilter('deleted_at', null)
-      .gte('date', d(DateTime(prev.year, prev.month, 1)))
-      .lte('date', d(DateTime(prev.year, prev.month, cutoffDay)));
+      .gte('date', d(DateTime(month.year, month.month - 12, 1)))
+      .lte('date', d(DateTime(month.year, month.month, daysInMonth)));
 
-  var total = 0.0;
+  // month key -> per-day spend, positive
+  final daily = <String, List<double>>{};
+  var earliest = 1 << 30;
   for (final r in rows as List) {
-    final a = (r['amount'] as num).toDouble();
-    if (a < 0) total += a.abs();
+    final amt = (r['amount'] as num).toDouble();
+    if (amt >= 0) continue;
+    final dt  = DateTime.parse(r['date'] as String);
+    final key = '${dt.year}-${dt.month}';
+    final len = DateTime(dt.year, dt.month + 1, 0).day;
+    (daily[key] ??= List.filled(len, 0.0))[dt.day - 1] += amt.abs();
+    final ord = dt.year * 12 + dt.month;
+    if (ord < earliest) earliest = ord;
   }
-  return total;
+
+  List<double> cumulate(List<double> src) {
+    final out = List.filled(src.length, 0.0);
+    var run = 0.0;
+    for (var i = 0; i < src.length; i++) {
+      run += src[i];
+      out[i] = run;
+    }
+    return out;
+  }
+
+  // Resample onto this month's grid, carrying the final total past a shorter
+  // month's end.
+  List<double> onGrid(List<double> cum) => List.generate(daysInMonth,
+      (i) => cum.isEmpty ? 0.0 : cum[i < cum.length ? i : cum.length - 1]);
+
+  final curKey  = '${month.year}-${month.month}';
+  final current = onGrid(cumulate(
+      daily[curKey] ?? List.filled(daysInMonth, 0.0)));
+
+  PaceSeries? average(int months, String label) {
+    final sum = List.filled(daysInMonth, 0.0);
+    var counted = 0;
+    for (var i = 1; i <= months; i++) {
+      final m   = DateTime(month.year, month.month - i);
+      final ord = m.year * 12 + m.month;
+      if (ord < earliest) continue; // before this category existed
+      final len  = DateTime(m.year, m.month + 1, 0).day;
+      final grid = onGrid(cumulate(
+          daily['${m.year}-${m.month}'] ?? List.filled(len, 0.0)));
+      for (var x = 0; x < daysInMonth; x++) {
+        sum[x] += grid[x];
+      }
+      counted++;
+    }
+    if (counted == 0) return null;
+    for (var x = 0; x < daysInMonth; x++) {
+      sum[x] /= counted;
+    }
+    return PaceSeries(label: label, cumulative: sum, monthsAveraged: counted);
+  }
+
+  final prevName = DateFormat('MMMM')
+      .format(DateTime(month.year, month.month - 1));
+  final last = average(1, prevName);
+  final a3   = average(3, '3-mo avg');
+  final a12  = average(12, '12-mo avg');
+
+  return SpendPace(
+    current:     current,
+    daysInMonth: daysInMonth,
+    todayDay:    todayDay,
+    lastMonth:   last,
+    // An average over a single month is that month under a different name.
+    avg3:  (a3?.monthsAveraged  ?? 0) >= 2 ? a3  : null,
+    avg12: (a12?.monthsAveraged ?? 0) >= 4 ? a12 : null,
+  );
 });
