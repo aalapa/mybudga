@@ -317,14 +317,40 @@ class _CashflowBody extends StatelessWidget {
 
     for (final st in cashScheduled) {
       // Resolve TO account name from local accounts list (join removed from query)
-      final toAccountName = st.isTransfer && st.transferToAccountId != null
-          ? accounts
-              .where((a) => a.id == st.transferToAccountId)
-              .firstOrNull
-              ?.displayName
+      final toAccount = st.isTransfer && st.transferToAccountId != null
+          ? accounts.where((a) => a.id == st.transferToAccountId).firstOrNull
           : null;
+      final toAccountName = toAccount?.displayName;
+
+      // A card payment costs whatever is owed, not whatever was scheduled.
+      // Every bill charged to the card since the schedule was written — the
+      // ones that never touch cash directly — lands in this one payment, so a
+      // fixed figure here is optimistic by exactly the amount most easily
+      // forgotten.
+      //
+      // Only the next payment can use the live balance: what a card will owe
+      // three months out is not knowable, so later occurrences keep the
+      // scheduled figure rather than repeating today's balance.
+      final owed = (toAccount != null &&
+              (toAccount.type == AccountType.creditCard ||
+                  toAccount.type == AccountType.lineOfCredit) &&
+              toAccount.balance < 0)
+          ? toAccount.balance.abs()
+          : null;
+      var usedLiveBalance = false;
 
       for (final date in st.occurrencesUntil(today, cutoff)) {
+        var amount = st.amount;
+        var liveHere = false;
+        if (owed != null && !usedLiveBalance && owed > st.amount.abs()) {
+          amount   = -owed;      // outflow from the paying account
+          liveHere = true;
+          usedLiveBalance = true;
+        } else if (owed != null && !usedLiveBalance) {
+          // Owe less than scheduled — the first payment still clears it.
+          usedLiveBalance = true;
+        }
+
         entries.add(_ProjectedEntry(
           scheduledTx: st,
           date:        date,
@@ -334,8 +360,9 @@ class _CashflowBody extends StatelessWidget {
                   : 'Transfer')
               : (st.payeeName ?? st.memo ?? 'Scheduled'),
           accountName: st.accountName,
-          amount:      st.amount,
+          amount:      amount,
           isIncome:    !st.isTransfer && st.amount > 0,
+          usesLiveBalance: liveHere,
           category:    st.isTransfer
               ? '→ ${toAccountName ?? 'account'}'
               : st.categoryName,
@@ -1010,6 +1037,18 @@ class _CashflowTile extends ConsumerWidget {
                             : cs.onSurfaceVariant,
                       ),
                     ),
+                    // Say why the figure is not the scheduled one, otherwise
+                    // it just looks like the schedule is being ignored.
+                    if (entry.usesLiveBalance)
+                      Text(
+                        'current balance, not the scheduled '
+                        '${NumberFormat.currency(symbol: '\$', decimalDigits: 0).format(entry.scheduledTx.amount.abs())}',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10,
+                          fontStyle: FontStyle.italic,
+                          color: context.money.warning,
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -1248,6 +1287,10 @@ class _ProjectedEntry {
   final double amount;
   final bool isIncome;
   final String? category;
+  /// True when the amount came from the card's actual balance rather than the
+  /// scheduled figure, so the row can say so instead of appearing to disagree
+  /// with the schedule.
+  final bool usesLiveBalance;
   double runningBalance = 0;
 
   _ProjectedEntry({
@@ -1257,6 +1300,7 @@ class _ProjectedEntry {
     required this.accountName,
     required this.amount,
     required this.isIncome,
+    this.usesLiveBalance = false,
     this.category,
   });
 }
