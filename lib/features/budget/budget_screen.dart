@@ -5663,6 +5663,17 @@ class _BudgetSplitView extends ConsumerStatefulWidget {
 class _BudgetSplitViewState extends ConsumerState<_BudgetSplitView> {
   BudgetEntry? _selected;
 
+  /// The panel is always populated: an empty "Select a category" pane was
+  /// half the screen saying nothing. Falls back to the first category until
+  /// one is chosen.
+  BudgetEntry? _effectiveSelection(BudgetState state) {
+    if (_selected != null) return _selected;
+    for (final g in state.groups) {
+      if (g.entries.isNotEmpty) return g.entries.first;
+    }
+    return null;
+  }
+
   void _onSelect(BudgetEntry? entry) => setState(() {
     // Tap same category again → deselect
     _selected = _selected?.categoryId == entry?.categoryId ? null : entry;
@@ -5692,19 +5703,24 @@ class _BudgetSplitViewState extends ConsumerState<_BudgetSplitView> {
             onCategorySelect: _onSelect,
           ),
         ),
-        // Right: transactions for the selected category. Tapping that category
-        // again clears the selection and closes this.
-        if (_selected != null) ...[
-          VerticalDivider(
-              width: 1, color: cs.outlineVariant.withValues(alpha: 0.4)),
-          SizedBox(
-            width: 460,
-            child: _CategorySplitPanel(
-              entry:        _selected,
-              currentMonth: widget.state.month,
-            ),
-          ),
-        ],
+        // Right: the selected category, always present.
+        Builder(builder: (_) {
+          final sel = _effectiveSelection(widget.state);
+          if (sel == null) return const SizedBox.shrink();
+          return Row(
+            children: [
+              VerticalDivider(
+                  width: 1, color: cs.outlineVariant.withValues(alpha: 0.4)),
+              SizedBox(
+                width: 360,
+                child: _CategorySplitPanel(
+                  entry:        sel,
+                  currentMonth: widget.state.month,
+                ),
+              ),
+            ],
+          );
+        }),
       ],
     );
   }
@@ -5713,6 +5729,109 @@ class _BudgetSplitViewState extends ConsumerState<_BudgetSplitView> {
 // ---------------------------------------------------------------------------
 // Right-side panel — transactions for the selected category
 // ---------------------------------------------------------------------------
+
+/// Turns the panel's figures into a rate: what is left, over how many days,
+/// is a number you can act on today.
+class _PanelPaceLine extends StatelessWidget {
+  final BudgetEntry entry;
+  final DateTime month;
+  final int txnCount;
+  const _PanelPaceLine({
+    required this.entry,
+    required this.month,
+    required this.txnCount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final f2  = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final now = DateTime.now();
+
+    final lastDay = DateTime(month.year, month.month + 1, 0).day;
+    final isCurrentMonth =
+        month.year == now.year && month.month == now.month;
+    final daysLeft = isCurrentMonth ? (lastDay - now.day) : 0;
+
+    final parts = <String>[
+      '${f2.format(entry.spent)} spent over $txnCount '
+          '${txnCount == 1 ? 'transaction' : 'transactions'}',
+      if (isCurrentMonth)
+        '$daysLeft ${daysLeft == 1 ? 'day' : 'days'} left in '
+            '${DateFormat('MMMM').format(month)}',
+    ];
+
+    // Only meaningful while there is money left and month remaining.
+    if (isCurrentMonth && daysLeft > 0 && entry.balance > 0) {
+      parts.add('about ${f2.format(entry.balance / daysLeft)} a day keeps you inside');
+    }
+
+    return Text('${parts.join(' · ')}.',
+        style: GoogleFonts.plusJakartaSans(
+            fontSize: 12, height: 1.5, color: cs.onSurfaceVariant));
+  }
+}
+
+/// Same category, same point last month.
+class _ComparedToLastMonth extends ConsumerWidget {
+  final BudgetEntry entry;
+  final DateTime month;
+  const _ComparedToLastMonth({required this.entry, required this.month});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs    = Theme.of(context).colorScheme;
+    final money = context.money;
+    final f0    = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final prev  = DateFormat('MMMM').format(
+        DateTime(month.year, month.month - 1));
+
+    final async = ref.watch(
+        sameDayLastMonthSpendProvider((entry.categoryId, month)));
+
+    return async.maybeWhen(
+      orElse: () => const SizedBox.shrink(),
+      data: (lastMonth) {
+        if (lastMonth <= 0) return const SizedBox.shrink();
+        final diff    = entry.spent - lastMonth;
+        final lighter = diff < 0;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('COMPARED TO ${prev.toUpperCase()}',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1,
+                    color: cs.onSurfaceVariant)),
+            const SizedBox(height: 4),
+            Text.rich(
+              TextSpan(
+                text: "You'd spent ${f0.format(lastMonth)} by this point last "
+                    'month. ',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12, height: 1.5, color: cs.onSurfaceVariant),
+                children: [
+                  TextSpan(
+                    text: diff.abs() < 1
+                        ? "You're level so far."
+                        : "You're ${f0.format(diff.abs())} "
+                            '${lighter ? 'lighter' : 'heavier'} so far.',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: lighter ? money.positive : money.warning,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
 
 class _CategorySplitPanel extends ConsumerWidget {
   final BudgetEntry? entry;
@@ -5822,6 +5941,11 @@ class _CategorySplitPanel extends ConsumerWidget {
                   valueColor: AlwaysStoppedAnimation(barColor),
                 ),
               ),
+              const SizedBox(height: 10),
+              // What the numbers above actually mean for the rest of the month.
+              _PanelPaceLine(entry: entry!, month: currentMonth, txnCount: txns.length),
+              const SizedBox(height: 12),
+              _ComparedToLastMonth(entry: entry!, month: currentMonth),
             ],
           ),
         ),

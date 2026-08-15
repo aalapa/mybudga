@@ -1121,3 +1121,44 @@ final unfundedBillsProvider =
       if (due.containsKey(e.categoryId) && e.budgeted < due[e.categoryId]!) e,
   ];
 });
+
+
+/// Spend in the same category, in the previous month, up to the same day of
+/// the month. Answers "am I ahead or behind where I was?" — a comparison the
+/// budget can make but never did.
+final sameDayLastMonthSpendProvider = FutureProvider.autoDispose
+    .family<double, (String, DateTime)>((ref, args) async {
+  final (categoryId, month) = args;
+  final householdId = await ref.watch(householdIdProvider.future);
+  final client      = ref.watch(supabaseProvider);
+
+  final prev = DateTime(month.year, month.month - 1);
+  // Clamp to the previous month's length: comparing "by the 31st" against a
+  // 30-day month would silently include the whole month.
+  final lastDay = DateTime(prev.year, prev.month + 1, 0).day;
+  final today   = DateTime.now();
+  final upToDay = month.year == today.year && month.month == today.month
+      ? today.day
+      : DateTime(month.year, month.month + 1, 0).day;
+  final cutoffDay = upToDay < lastDay ? upToDay : lastDay;
+
+  String d(DateTime x) =>
+      '${x.year}-${x.month.toString().padLeft(2, '0')}-${x.day.toString().padLeft(2, '0')}';
+
+  final rows = await client
+      .from('transactions')
+      .select('amount')
+      .eq('household_id', householdId)
+      .eq('category_id', categoryId)
+      .eq('status', 'confirmed')
+      .isFilter('deleted_at', null)
+      .gte('date', d(DateTime(prev.year, prev.month, 1)))
+      .lte('date', d(DateTime(prev.year, prev.month, cutoffDay)));
+
+  var total = 0.0;
+  for (final r in rows as List) {
+    final a = (r['amount'] as num).toDouble();
+    if (a < 0) total += a.abs();
+  }
+  return total;
+});
