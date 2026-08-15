@@ -1,3 +1,4 @@
+import '../../core/money.dart';
 import 'dart:ui' as ui;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/theme/semantic_colors.dart';
@@ -356,17 +357,17 @@ class _PanelContentState extends State<_PanelContent> {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
-                      color: state.tbb < 0
+                      color: isNegativeMoney(state.tbb)
                           ? cs.errorContainer
                           : cs.tertiaryContainer,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      '= ${state.tbb < 0 ? '-' : '+'}${fmt.format(state.tbb.abs())} TBB',
+                      '= ${isNegativeMoney(state.tbb) ? '-' : '+'}${fmt.format(state.tbb.abs())} TBB',
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        color: state.tbb < 0
+                        color: isNegativeMoney(state.tbb)
                             ? cs.onErrorContainer
                             : cs.onTertiaryContainer,
                       ),
@@ -623,7 +624,7 @@ class _PanelEntryRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cs         = Theme.of(context).colorScheme;
-    final isOverspent = entry.balance < 0;
+    final isOverspent = isNegativeMoney(entry.balance);
     final availColor  = isOverspent ? cs.error
         : entry.balance > 0 ? context.money.positive
         : cs.onSurfaceVariant;
@@ -991,7 +992,7 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
             .toSet()
         : const <String>{};
     bool matchesFilter(BudgetEntry e) => _attentionFilter == 'overspent'
-        ? e.balance < 0
+        ? isNegativeMoney(e.balance)
         : unfundedIds.contains(e.categoryId);
 
     // Reordering indexes into the unfiltered group, so it cannot be trusted
@@ -1274,7 +1275,7 @@ class _BudgetListControls extends ConsumerWidget {
     final money     = context.money;
     final overspent = state.groups
         .expand((g) => g.entries)
-        .where((e) => e.balance < 0)
+        .where((e) => isNegativeMoney(e.balance))
         .toList();
     final unfunded = ref.watch(unfundedBillsProvider(state.month));
 
@@ -1417,7 +1418,7 @@ class _ReadyToAssignHero extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs    = Theme.of(context).colorScheme;
     final money = context.money;
-    final neg   = tbb < 0;
+    final neg   = isNegativeMoney(tbb);
     final tint  = neg ? money.negative : cs.primary;
     final f0    = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
     final f2    = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
@@ -1561,7 +1562,7 @@ class _BudgetHeaderState extends State<_BudgetHeader> {
   @override
   Widget build(BuildContext context) {
     final cs       = Theme.of(context).colorScheme;
-    final isNeg    = widget.tbb < 0;
+    final isNeg    = isNegativeMoney(widget.tbb);
     final tbbColor = isNeg ? cs.error : cs.primary;
     final fmt      = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
 
@@ -2768,7 +2769,7 @@ class _CategoryRowBody extends StatelessWidget {
     final money = context.money;
     final f0    = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
 
-    final over  = entry.balance < 0;
+    final over  = isNegativeMoney(entry.balance);
     final spent = entry.spent;
     final amountColor = over
         ? money.negative
@@ -2886,7 +2887,7 @@ class _CategoryTableRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cs          = Theme.of(context).colorScheme;
-    final isOverspent = entry.balance < 0;
+    final isOverspent = isNegativeMoney(entry.balance);
     final isFullyUsed = entry.balance == 0 && entry.spent > 0;
     final availColor  = isOverspent  ? cs.error
         : isFullyUsed               ? cs.onSurfaceVariant
@@ -4075,7 +4076,7 @@ class _CategoryDetailSheetState extends ConsumerState<_CategoryDetailSheet> {
         widget.entry;
     final cs          = Theme.of(context).colorScheme;
     final fmt         = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
-    final isOverspent = entry.balance < 0;
+    final isOverspent = isNegativeMoney(entry.balance);
 
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
@@ -6384,7 +6385,7 @@ class _CategorySplitPanel extends ConsumerWidget {
     final pct    = entry!.budgeted > 0
         ? (entry!.spent / entry!.budgeted).clamp(0.0, 1.0)
         : 0.0;
-    final isOver = entry!.balance < 0;
+    final isOver = isNegativeMoney(entry!.balance);
     final barColor = isOver ? cs.error : context.money.positive;
 
     return Column(

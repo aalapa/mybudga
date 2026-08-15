@@ -1,3 +1,4 @@
+import '../../core/money.dart';
 import 'package:intl/intl.dart';
 
 enum GoalType {
@@ -151,7 +152,7 @@ class BudgetGroupData {
   });
 
   double get balance => entries.fold(0.0, (s, e) => s + e.balance);
-  bool get hasOverspend => entries.any((e) => e.balance < 0);
+  bool get hasOverspend => entries.any((e) => isNegativeMoney(e.balance));
 }
 
 class CategoryTransaction {

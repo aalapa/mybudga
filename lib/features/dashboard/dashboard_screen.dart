@@ -1,3 +1,4 @@
+import '../../core/money.dart';
 import '../../core/theme/semantic_colors.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
@@ -74,8 +75,10 @@ class DashboardScreen extends ConsumerWidget {
                     label: 'To Be Budgeted',
                     value: fmt.format(tbb),
                     icon: Icons.account_balance_wallet_outlined,
-                    color: tbb < 0 ? cs.error : cs.primary,
-                    sub: tbb < 0 ? 'Over-assigned' : 'Ready to assign',
+                    color: isNegativeMoney(tbb) ? cs.error : cs.primary,
+                    sub: isNegativeMoney(tbb)
+                        ? 'Over-assigned'
+                        : 'Ready to assign',
                   )),
                   const SizedBox(width: 16),
                   Expanded(child: _StatCard(
