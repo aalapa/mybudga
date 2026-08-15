@@ -795,29 +795,27 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
   String? _inlineGroupId;
 
   /// Groups the user has collapsed. Everything not in here is open, so a cold
-  /// start shows categories rather than a stack of grey bars — and collapsing
-  /// one group no longer closes another, which the old single-open accordion
-  /// did every time.
+  /// start shows categories rather than a stack of grey bars.
+  ///
+  /// On a phone, opening one group closes the others (see [_toggleGroup]) —
+  /// screen space is scarce enough that a second open group pushes the first
+  /// out of sight anyway. Wide layouts keep every group independent.
   final Set<String> _collapsedGroupIds = {};
   static const _kGroupCollapsedPrefix = 'budget_grp_collapsed_';
 
   /// The category whose detail panel is currently open (accordion: at most one).
   String? _expandedCategoryId;
 
-  /// Briefly tinted after an attention chip jumps to it, so the row you were
-  /// sent to is obvious without navigating anywhere.
-  String? _highlightedCategoryId;
+  /// Active attention filter: `overspent`, `unfunded`, or null for everything.
+  ///
+  /// Chips used to scroll to the first offender, which answered "where is one"
+  /// when the question is "which ones". Filtering answers the second and makes
+  /// the first trivial.
+  String? _attentionFilter;
 
   /// Drag handles and long-press reordering only exist in this mode, so the
   /// default row is free of controls for an action taken rarely.
   bool _reorderMode = false;
-
-  void _jumpToCategory(String categoryId) {
-    setState(() => _highlightedCategoryId = categoryId);
-    Future.delayed(const Duration(milliseconds: 1200), () {
-      if (mounted) setState(() => _highlightedCategoryId = null);
-    });
-  }
 
   /// Clears the active inline-add row.
   void _closeInline() => setState(() => _inlineGroupId = null);
@@ -842,14 +840,41 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
   bool _isCollapsed(String groupId) => _collapsedGroupIds.contains(groupId);
 
   void _toggleGroup(String groupId) {
+    final narrow = MediaQuery.sizeOf(context).width < 600;
     setState(() {
-      if (!_collapsedGroupIds.remove(groupId)) {
+      if (_collapsedGroupIds.remove(groupId)) {
+        // Opening. One group at a time on a phone: a second open group only
+        // pushes the first off screen, so leaving it open buys nothing and
+        // costs a long scroll back.
+        if (narrow) {
+          _collapsedGroupIds
+              .addAll(widget.state.groups.map((g) => g.id).where((id) => id != groupId));
+        }
+      } else {
         _collapsedGroupIds.add(groupId);
-        if (_inlineGroupId == groupId) _inlineGroupId = null;
+      }
+      // An inline add row inside a group that just closed has nowhere to live.
+      if (_inlineGroupId != null &&
+          _collapsedGroupIds.contains(_inlineGroupId)) {
+        _inlineGroupId = null;
       }
     });
-    SharedPreferences.getInstance().then((p) => p.setBool(
-        '$_kGroupCollapsedPrefix$groupId', _collapsedGroupIds.contains(groupId)));
+    _persistCollapsed();
+  }
+
+  void _persistCollapsed() {
+    SharedPreferences.getInstance().then((p) {
+      for (final g in widget.state.groups) {
+        p.setBool('$_kGroupCollapsedPrefix${g.id}',
+            _collapsedGroupIds.contains(g.id));
+      }
+    });
+  }
+
+  /// Backs the "Expand all" half of the list toggle.
+  void expandAllGroups() {
+    setState(_collapsedGroupIds.clear);
+    _persistCollapsed();
   }
 
   /// Backs the "Collapse all" menu entry.
@@ -860,11 +885,7 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
         ..addAll(widget.state.groups.map((g) => g.id));
       _inlineGroupId = null;
     });
-    SharedPreferences.getInstance().then((p) {
-      for (final g in widget.state.groups) {
-        p.setBool('$_kGroupCollapsedPrefix${g.id}', true);
-      }
-    });
+    _persistCollapsed();
   }
 
   /// Toggles a category's expansion, or notifies the split panel.
@@ -911,7 +932,18 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
     final chips = SliverToBoxAdapter(
       child: isWide
           ? const SizedBox.shrink()
-          : _AttentionChips(state: state, onJumpToCategory: _jumpToCategory),
+          : _BudgetListControls(
+              state:        state,
+              activeFilter: _attentionFilter,
+              onFilter:     (f) => setState(() => _attentionFilter = f),
+              allCollapsed: state.groups.isNotEmpty &&
+                  state.groups.every((g) => _isCollapsed(g.id)),
+              onToggleAll: () =>
+                  state.groups.isNotEmpty &&
+                          state.groups.every((g) => _isCollapsed(g.id))
+                      ? expandAllGroups()
+                      : collapseAllGroups(),
+            ),
     );
 
     if (state.groups.isEmpty) {
@@ -947,10 +979,34 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
 
     // Build one sliver per group header, plus category slivers only for the
     // expanded group (accordion: at most one group open at a time).
+    final unfundedIds = _attentionFilter == 'unfunded'
+        ? ref
+            .watch(unfundedBillsProvider(state.month))
+            .map((e) => e.categoryId)
+            .toSet()
+        : const <String>{};
+    bool matchesFilter(BudgetEntry e) => _attentionFilter == 'overspent'
+        ? e.balance < 0
+        : unfundedIds.contains(e.categoryId);
+
+    // Reordering indexes into the unfiltered group, so it cannot be trusted
+    // while a filter is hiding rows.
+    final canReorder = _reorderMode && _attentionFilter == null;
+
     final groupSlivers = <Widget>[];
+    var matchCount = 0;
     for (int gi = 0; gi < state.groups.length; gi++) {
-      final group          = state.groups[gi];
-      final isGroupExpanded = !_isCollapsed(group.id);
+      final group   = state.groups[gi];
+      final entries = _attentionFilter == null
+          ? group.entries
+          : group.entries.where(matchesFilter).toList();
+      // A heading with an empty body is noise between the rows you asked for.
+      if (_attentionFilter != null && entries.isEmpty) continue;
+      matchCount += entries.length;
+      // Leaving a collapsed group collapsed under a filter would show nothing
+      // and read as broken, so the filter overrides the collapse state.
+      final isGroupExpanded =
+          _attentionFilter != null || !_isCollapsed(group.id);
 
       groupSlivers.add(SliverToBoxAdapter(
         child: _GroupHeaderRow(
@@ -967,7 +1023,7 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
 
       if (isGroupExpanded) {
         groupSlivers.add(SliverReorderableList(
-          itemCount:      group.entries.length,
+          itemCount:      entries.length,
           proxyDecorator: _proxyDecorator,
           onReorder: (oldIdx, newIdx) {
             if (newIdx > oldIdx) newIdx -= 1;
@@ -979,21 +1035,20 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
             );
           },
           itemBuilder: (ctx, idx) {
-            final entry = group.entries[idx];
+            final entry = entries[idx];
             // Only draggable in reorder mode: outside it a long-press on a
             // row should do nothing surprising.
             final row = _CategoryTableRow(
                 entry:       entry,
                 isWide:      isWide,
-                reorderMode: _reorderMode,
-                highlighted: _highlightedCategoryId == entry.categoryId,
+                reorderMode: canReorder,
                 isExpanded:  widget.onCategorySelect == null &&
                              _expandedCategoryId == entry.categoryId,
                 month:       state.month,
                 onToggle:    () => _toggleCategory(entry.categoryId),
                 onDetailTap: (e, m) => widget.onCategoryTap(e, m),
             );
-            return _reorderMode
+            return canReorder
                 ? ReorderableDelayedDragStartListener(
                     key: ValueKey(entry.categoryId), index: idx, child: row)
                 : KeyedSubtree(
@@ -1002,7 +1057,7 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
         ));
 
         // Inline "add category" row — shown directly below the group's categories.
-        if (_inlineGroupId == group.id) {
+        if (_inlineGroupId == group.id && _attentionFilter == null) {
           groupSlivers.add(SliverToBoxAdapter(
             child: _InlineAddRow(
               groupId:  group.id,
@@ -1011,6 +1066,33 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
           ));
         }
       }
+    }
+
+    if (_attentionFilter != null && matchCount == 0) {
+      groupSlivers.add(SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
+          child: Column(
+            children: [
+              Text(
+                _attentionFilter == 'overspent'
+                    ? 'Nothing is overspent any more.'
+                    : 'Every bill is funded.',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.onSurface),
+              ),
+              const SizedBox(height: 10),
+              TextButton(
+                onPressed: () => setState(() => _attentionFilter = null),
+                child: const Text('Show all categories'),
+              ),
+            ],
+          ),
+        ),
+      ));
     }
 
     return SafeArea(
@@ -1160,46 +1242,91 @@ class _BudgetOverflowMenu extends StatelessWidget {
   }
 }
 
-class _AttentionChips extends ConsumerWidget {
+/// The mobile list's control strip: what needs attention on the left, how much
+/// of the list is showing on the right.
+///
+/// Renders even with nothing to flag — the collapse toggle has to stay put, and
+/// a control that comes and goes with unrelated state is one people stop
+/// reaching for.
+class _BudgetListControls extends ConsumerWidget {
   final BudgetState state;
-  final ValueChanged<String> onJumpToCategory;
-  const _AttentionChips({required this.state, required this.onJumpToCategory});
+  final String? activeFilter;
+  final ValueChanged<String?> onFilter;
+  final bool allCollapsed;
+  final VoidCallback onToggleAll;
+
+  const _BudgetListControls({
+    required this.state,
+    required this.activeFilter,
+    required this.onFilter,
+    required this.allCollapsed,
+    required this.onToggleAll,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final cs        = Theme.of(context).colorScheme;
     final money     = context.money;
     final overspent = state.groups
         .expand((g) => g.entries)
         .where((e) => e.balance < 0)
         .toList();
-    final unfunded  = ref.watch(unfundedBillsProvider(state.month));
+    final unfunded = ref.watch(unfundedBillsProvider(state.month));
 
-    if (overspent.isEmpty && unfunded.isEmpty) return const SizedBox.shrink();
+    // A filter with nothing left to match still needs its own chip, or there is
+    // no way back out of it from here.
+    final chips = <Widget>[
+      if (overspent.isNotEmpty || activeFilter == 'overspent')
+        _AttentionChip(
+          icon:     Icons.error_outline,
+          label:    '${overspent.length} overspent',
+          tint:     money.negative,
+          fill:     0.14,
+          border:   0.35,
+          selected: activeFilter == 'overspent',
+          onTap: () =>
+              onFilter(activeFilter == 'overspent' ? null : 'overspent'),
+        ),
+      if (unfunded.isNotEmpty || activeFilter == 'unfunded')
+        _AttentionChip(
+          icon:  Icons.schedule,
+          label: '${unfunded.length} '
+              '${unfunded.length == 1 ? 'bill' : 'bills'} unfunded',
+          tint:     money.warning,
+          fill:     0.12,
+          border:   0.32,
+          selected: activeFilter == 'unfunded',
+          onTap: () =>
+              onFilter(activeFilter == 'unfunded' ? null : 'unfunded'),
+        ),
+    ];
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 4, 16, 10),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
+      padding: const EdgeInsets.fromLTRB(14, 4, 6, 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          if (overspent.isNotEmpty)
-            _AttentionChip(
-              icon:  Icons.error_outline,
-              label: '${overspent.length} overspent',
-              tint:  money.negative,
-              fill:  0.14,
-              border: 0.35,
-              onTap: () => onJumpToCategory(overspent.first.categoryId),
-            ),
-          if (unfunded.isNotEmpty)
-            _AttentionChip(
-              icon:  Icons.schedule,
-              label: '${unfunded.length} '
-                  '${unfunded.length == 1 ? 'bill' : 'bills'} unfunded',
-              tint:  money.warning,
-              fill:  0.12,
-              border: 0.32,
-              onTap: () => onJumpToCategory(unfunded.first.categoryId),
+          Expanded(
+            child: Wrap(spacing: 8, runSpacing: 8, children: chips),
+          ),
+          // Hidden under a filter, where every group is force-expanded and the
+          // toggle would appear to do nothing.
+          if (activeFilter == null)
+            Tooltip(
+              message: allCollapsed ? 'Expand all' : 'Collapse all',
+              child: InkWell(
+                onTap: onToggleAll,
+                borderRadius: BorderRadius.circular(22),
+                child: SizedBox(
+                  height: 44,
+                  width:  44,
+                  child: Icon(
+                    allCollapsed ? Icons.unfold_more : Icons.unfold_less,
+                    size: 20,
+                    color: cs.onSurfaceVariant,
+                  ),
+                ),
+              ),
             ),
         ],
       ),
@@ -1213,6 +1340,7 @@ class _AttentionChip extends StatelessWidget {
   final Color tint;
   final double fill;
   final double border;
+  final bool selected;
   final VoidCallback onTap;
   const _AttentionChip({
     required this.icon,
@@ -1221,6 +1349,7 @@ class _AttentionChip extends StatelessWidget {
     required this.fill,
     required this.border,
     required this.onTap,
+    this.selected = false,
   });
 
   @override
@@ -1232,18 +1361,26 @@ class _AttentionChip extends StatelessWidget {
           height: 44,
           padding: const EdgeInsets.symmetric(horizontal: 14),
           decoration: BoxDecoration(
-            color: tint.withValues(alpha: fill),
+            // Selected reads as filled rather than outlined: the chip is now a
+            // switch, and a slightly darker tint alone would not say so.
+            color: tint.withValues(alpha: selected ? fill * 2.4 : fill),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: tint.withValues(alpha: border)),
+            border: Border.all(
+                color: tint.withValues(alpha: selected ? 0.9 : border),
+                width: selected ? 1.4 : 1),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 15, color: tint),
+              // The close icon states how to get back out; the alert icon has
+              // already done its job once the filter is on.
+              Icon(selected ? Icons.close_rounded : icon, size: 15, color: tint),
               const SizedBox(width: 7),
               Text(label,
                   style: GoogleFonts.plusJakartaSans(
-                      fontSize: 13, fontWeight: FontWeight.w600, color: tint)),
+                      fontSize: 13,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                      color: tint)),
             ],
           ),
         ),
@@ -2723,7 +2860,6 @@ class _CategoryTableRow extends ConsumerWidget {
   /// permanent chrome for an action taken once in a while.
   final bool reorderMode;
   /// Briefly tinted after an attention chip jumped here.
-  final bool highlighted;
   final bool isExpanded;
   final DateTime month;
   final VoidCallback onToggle;
@@ -2733,7 +2869,6 @@ class _CategoryTableRow extends ConsumerWidget {
     required this.entry,
     required this.isWide,
     this.reorderMode = false,
-    this.highlighted = false,
     required this.isExpanded,
     required this.month,
     required this.onToggle,
@@ -2817,16 +2952,14 @@ class _CategoryTableRow extends ConsumerWidget {
               // Narrow reads as a sentence rather than a table line: what the
               // category is, what is left, and how much of it has gone.
               : Container(
-                  margin: (isOverspent || highlighted)
+                  margin: isOverspent
                       ? const EdgeInsets.symmetric(horizontal: 8, vertical: 2)
                       : EdgeInsets.zero,
                   padding: const EdgeInsets.fromLTRB(10, 12, 12, 12),
-                  decoration: (isOverspent || highlighted)
+                  decoration: isOverspent
                       ? BoxDecoration(
-                          color: highlighted
-                              ? cs.primary.withValues(alpha: 0.10)
-                              : context.money.negative
-                                  .withValues(alpha: 0.07),
+                          color: context.money.negative
+                              .withValues(alpha: 0.07),
                           borderRadius: BorderRadius.circular(14),
                         )
                       : null,
