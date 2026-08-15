@@ -272,8 +272,16 @@ class _PanelContentState extends State<_PanelContent> {
   /// single-month body.
   final Set<String> _collapsedGroupIds = {};
 
+  /// One group open at a time. Opening the second group used to push the
+  /// first off screen and leave you scrolling back to a heading you had not
+  /// meant to lose.
   void _toggleGroup(String id) => setState(() {
-        if (!_collapsedGroupIds.remove(id)) _collapsedGroupIds.add(id);
+        if (_collapsedGroupIds.remove(id)) {
+          _collapsedGroupIds.addAll(
+              widget.state.groups.map((g) => g.id).where((g) => g != id));
+        } else {
+          _collapsedGroupIds.add(id);
+        }
       });
 
   @override
@@ -797,9 +805,9 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
   /// Groups the user has collapsed. Everything not in here is open, so a cold
   /// start shows categories rather than a stack of grey bars.
   ///
-  /// On a phone, opening one group closes the others (see [_toggleGroup]) —
-  /// screen space is scarce enough that a second open group pushes the first
-  /// out of sight anyway. Wide layouts keep every group independent.
+  /// Opening one group closes the others (see [_toggleGroup]) — a second open
+  /// group pushes the first out of view rather than sitting beside it, at every
+  /// width. "Expand all" is still there for when you want the whole list.
   final Set<String> _collapsedGroupIds = {};
   static const _kGroupCollapsedPrefix = 'budget_grp_collapsed_';
 
@@ -840,16 +848,13 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
   bool _isCollapsed(String groupId) => _collapsedGroupIds.contains(groupId);
 
   void _toggleGroup(String groupId) {
-    final narrow = MediaQuery.sizeOf(context).width < 600;
     setState(() {
       if (_collapsedGroupIds.remove(groupId)) {
-        // Opening. One group at a time on a phone: a second open group only
-        // pushes the first off screen, so leaving it open buys nothing and
-        // costs a long scroll back.
-        if (narrow) {
-          _collapsedGroupIds
-              .addAll(widget.state.groups.map((g) => g.id).where((id) => id != groupId));
-        }
+        // Opening. One group at a time, every width: a second open group only
+        // pushes the first out of view, so leaving it open buys nothing and
+        // costs a scroll back.
+        _collapsedGroupIds.addAll(
+            widget.state.groups.map((g) => g.id).where((id) => id != groupId));
       } else {
         _collapsedGroupIds.add(groupId);
       }
