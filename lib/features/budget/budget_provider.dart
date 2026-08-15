@@ -1,3 +1,4 @@
+import '../cashflow/cashflow_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/supabase/supabase_provider.dart';
@@ -1081,4 +1082,42 @@ final inactiveCategoriesProvider =
           : null,
     );
   }).toList();
+});
+
+
+// ---------------------------------------------------------------------------
+// Unfunded bills — scheduled money the budget has not been told about
+// ---------------------------------------------------------------------------
+
+/// Categories with a scheduled transaction landing in [month] whose budgeted
+/// amount does not cover it.
+///
+/// Reads the schedules cashflow already loads rather than querying again, and
+/// joins them to BudgetEntry by categoryId. A bill you have set up but not
+/// budgeted for is invisible on the budget screen today: the category simply
+/// looks fine until the money leaves.
+final unfundedBillsProvider =
+    Provider.autoDispose.family<List<BudgetEntry>, DateTime>((ref, month) {
+  final budget = ref.watch(budgetProvider).valueOrNull;
+  final flow   = ref.watch(cashflowProvider).valueOrNull;
+  if (budget == null || flow == null) return const [];
+
+  final monthEnd = DateTime(month.year, month.month + 1, 0);
+
+  // categoryId -> total scheduled outflow landing this month
+  final due = <String, double>{};
+  for (final st in flow.scheduled) {
+    if (!st.isActive || st.categoryId == null || st.amount >= 0) continue;
+    for (final d in st.occurrencesUntil(month, monthEnd)) {
+      if (d.year == month.year && d.month == month.month) {
+        due[st.categoryId!] = (due[st.categoryId!] ?? 0) + st.amount.abs();
+      }
+    }
+  }
+  if (due.isEmpty) return const [];
+
+  return [
+    for (final e in budget.groups.expand((g) => g.entries))
+      if (due.containsKey(e.categoryId) && e.budgeted < due[e.categoryId]!) e,
+  ];
 });

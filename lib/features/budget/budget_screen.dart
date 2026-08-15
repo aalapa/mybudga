@@ -804,6 +804,21 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
   /// The category whose detail panel is currently open (accordion: at most one).
   String? _expandedCategoryId;
 
+  /// Briefly tinted after an attention chip jumps to it, so the row you were
+  /// sent to is obvious without navigating anywhere.
+  String? _highlightedCategoryId;
+
+  /// Drag handles and long-press reordering only exist in this mode, so the
+  /// default row is free of controls for an action taken rarely.
+  bool _reorderMode = false;
+
+  void _jumpToCategory(String categoryId) {
+    setState(() => _highlightedCategoryId = categoryId);
+    Future.delayed(const Duration(milliseconds: 1200), () {
+      if (mounted) setState(() => _highlightedCategoryId = null);
+    });
+  }
+
   /// Clears the active inline-add row.
   void _closeInline() => setState(() => _inlineGroupId = null);
 
@@ -887,8 +902,16 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
             DateTime(state.month.year, state.month.month - 1)),
         onNext: () => notifier.goToMonth(
             DateTime(state.month.year, state.month.month + 1)),
+        onCollapseAll: collapseAllGroups,
+        onEditOrder:   () => setState(() => _reorderMode = true),
         ref: ref,
       ),
+    );
+
+    final chips = SliverToBoxAdapter(
+      child: isWide
+          ? const SizedBox.shrink()
+          : _AttentionChips(state: state, onJumpToCategory: _jumpToCategory),
     );
 
     if (state.groups.isEmpty) {
@@ -957,19 +980,24 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
           },
           itemBuilder: (ctx, idx) {
             final entry = group.entries[idx];
-            return ReorderableDelayedDragStartListener(
-              key:   ValueKey(entry.categoryId),
-              index: idx,
-              child: _CategoryTableRow(
+            // Only draggable in reorder mode: outside it a long-press on a
+            // row should do nothing surprising.
+            final row = _CategoryTableRow(
                 entry:       entry,
                 isWide:      isWide,
+                reorderMode: _reorderMode,
+                highlighted: _highlightedCategoryId == entry.categoryId,
                 isExpanded:  widget.onCategorySelect == null &&
                              _expandedCategoryId == entry.categoryId,
                 month:       state.month,
                 onToggle:    () => _toggleCategory(entry.categoryId),
                 onDetailTap: (e, m) => widget.onCategoryTap(e, m),
-              ),
             );
+            return _reorderMode
+                ? ReorderableDelayedDragStartListener(
+                    key: ValueKey(entry.categoryId), index: idx, child: row)
+                : KeyedSubtree(
+                    key: ValueKey(entry.categoryId), child: row);
           },
         ));
 
@@ -989,6 +1017,32 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
       child: CustomScrollView(
         slivers: [
           header,
+          if (_reorderMode)
+            SliverToBoxAdapter(
+              child: Container(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text('Drag to reorder',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onPrimaryContainer)),
+                    ),
+                    TextButton(
+                      onPressed: () => setState(() => _reorderMode = false),
+                      child: const Text('Done'),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            chips,
           // Column headers are for the wide table only; the mobile row states
           // its own figures in words.
           if (isWide)
@@ -1052,7 +1106,280 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
 // Budget header
 // ---------------------------------------------------------------------------
 
-class _BudgetHeader extends StatelessWidget {
+/// The Ready-to-Assign hero: one figure, one sentence explaining it, one
+/// action. Replaces a bordered card of four ledger lines that stated the
+/// arithmetic and left the reader to draw the conclusion.
+/// Attention chips: the two things worth acting on, stated as counts.
+///
+/// Hidden when their count is zero — a row of "0 overspent" chips is noise
+/// that trains you to stop reading the row.
+/// The controls that used to sit permanently on the budget: reordering,
+/// inactive categories, compare months, collapse all.
+class _BudgetOverflowMenu extends StatelessWidget {
+  final DateTime month;
+  final WidgetRef ref;
+  final bool showCompare;
+  final VoidCallback onCollapseAll;
+  final VoidCallback onEditOrder;
+
+  const _BudgetOverflowMenu({
+    required this.month,
+    required this.ref,
+    required this.showCompare,
+    required this.onCollapseAll,
+    required this.onEditOrder,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer(builder: (ctx, r, _) {
+      final inactive = r.watch(inactiveCategoriesProvider).valueOrNull?.length ?? 0;
+      return PopupMenuButton<String>(
+        icon: const Icon(Icons.more_horiz),
+        tooltip: 'More',
+        onSelected: (v) {
+          switch (v) {
+            case 'order':    onEditOrder();
+            case 'inactive': _showInactiveCategoriesSheet(ctx, r);
+            case 'compare':
+              r.read(budgetThreeColPrefProvider.notifier).state = true;
+            case 'collapse': onCollapseAll();
+          }
+        },
+        itemBuilder: (_) => [
+          const PopupMenuItem(value: 'order', child: Text('Edit category order')),
+          PopupMenuItem(
+              value: 'inactive',
+              child: Text('Inactive categories${inactive > 0 ? ' ($inactive)' : ''}')),
+          if (showCompare)
+            const PopupMenuItem(value: 'compare', child: Text('Compare months')),
+          const PopupMenuItem(value: 'collapse', child: Text('Collapse all groups')),
+        ],
+      );
+    });
+  }
+}
+
+class _AttentionChips extends ConsumerWidget {
+  final BudgetState state;
+  final ValueChanged<String> onJumpToCategory;
+  const _AttentionChips({required this.state, required this.onJumpToCategory});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final money     = context.money;
+    final overspent = state.groups
+        .expand((g) => g.entries)
+        .where((e) => e.balance < 0)
+        .toList();
+    final unfunded  = ref.watch(unfundedBillsProvider(state.month));
+
+    if (overspent.isEmpty && unfunded.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 4, 16, 10),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          if (overspent.isNotEmpty)
+            _AttentionChip(
+              icon:  Icons.error_outline,
+              label: '${overspent.length} overspent',
+              tint:  money.negative,
+              fill:  0.14,
+              border: 0.35,
+              onTap: () => onJumpToCategory(overspent.first.categoryId),
+            ),
+          if (unfunded.isNotEmpty)
+            _AttentionChip(
+              icon:  Icons.schedule,
+              label: '${unfunded.length} '
+                  '${unfunded.length == 1 ? 'bill' : 'bills'} unfunded',
+              tint:  money.warning,
+              fill:  0.12,
+              border: 0.32,
+              onTap: () => onJumpToCategory(unfunded.first.categoryId),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AttentionChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color tint;
+  final double fill;
+  final double border;
+  final VoidCallback onTap;
+  const _AttentionChip({
+    required this.icon,
+    required this.label,
+    required this.tint,
+    required this.fill,
+    required this.border,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          // 44px tall: this is a tap target, not a badge.
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: tint.withValues(alpha: fill),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: tint.withValues(alpha: border)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 15, color: tint),
+              const SizedBox(width: 7),
+              Text(label,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13, fontWeight: FontWeight.w600, color: tint)),
+            ],
+          ),
+        ),
+      );
+}
+
+class _ReadyToAssignHero extends StatelessWidget {
+  final double tbb;
+  final double income;
+  final double totalBudgeted;
+  final double carryForward;
+  final DateTime month;
+  final bool ledgerOpen;
+  final VoidCallback onToggleLedger;
+  final VoidCallback onGiveItAJob;
+
+  const _ReadyToAssignHero({
+    required this.tbb,
+    required this.income,
+    required this.totalBudgeted,
+    required this.carryForward,
+    required this.month,
+    required this.ledgerOpen,
+    required this.onToggleLedger,
+    required this.onGiveItAJob,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs    = Theme.of(context).colorScheme;
+    final money = context.money;
+    final neg   = tbb < 0;
+    final tint  = neg ? money.negative : cs.primary;
+    final f0    = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final f2    = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+
+    // Split the cents so the figure reads as one number rather than a wall
+    // of digits at 42px.
+    final whole = f2.format(tbb.abs()).split('.');
+
+    final prevMonth = DateFormat('MMMM').format(
+        DateTime(month.year, month.month - 1));
+    final sentence = neg
+        ? "You've given ${f0.format(tbb.abs())} more jobs than you have money."
+        : '${f0.format(income)} came in, ${f0.format(totalBudgeted)} has a job'
+            '${carryForward != 0 ? ', ${f0.format(carryForward.abs())} carried from $prevMonth' : ''}.';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+      decoration: BoxDecoration(
+        color: tint.withValues(alpha: 0.11),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: tint.withValues(alpha: 0.20)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: onToggleLedger,
+            borderRadius: BorderRadius.circular(8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(neg ? 'OVERBUDGETED BY' : 'READY TO ASSIGN',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.2,
+                          color: tint,
+                        )),
+                    const Spacer(),
+                    Icon(ledgerOpen ? Icons.expand_less : Icons.expand_more,
+                        size: 18,
+                        color: cs.onSurfaceVariant.withValues(alpha: 0.7)),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text.rich(
+                  TextSpan(
+                    text: whole.first,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 42,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -1.5,
+                      color: tint,
+                      height: 1.05,
+                    ),
+                    children: [
+                      TextSpan(
+                        text: '.${whole.length > 1 ? whole[1] : '00'}',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.5,
+                          color: tint,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(sentence,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      height: 1.5,
+                      color: cs.onSurfaceVariant,
+                    )),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            height: 46,
+            child: FilledButton.icon(
+              onPressed: onGiveItAJob,
+              icon: const Icon(Icons.auto_awesome, size: 16),
+              label: Text('Give it a job',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14, fontWeight: FontWeight.w700)),
+              style: FilledButton.styleFrom(
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BudgetHeader extends StatefulWidget {
   final DateTime month;
   final double tbb;
   final double income;
@@ -1062,6 +1389,8 @@ class _BudgetHeader extends StatelessWidget {
   final double carryForward;
   final VoidCallback onPrev;
   final VoidCallback onNext;
+  final VoidCallback onCollapseAll;
+  final VoidCallback onEditOrder;
   final WidgetRef ref;
 
   const _BudgetHeader({
@@ -1074,13 +1403,23 @@ class _BudgetHeader extends StatelessWidget {
     required this.carryForward,
     required this.onPrev,
     required this.onNext,
+    required this.onCollapseAll,
+    required this.onEditOrder,
     required this.ref,
   });
 
   @override
+  State<_BudgetHeader> createState() => _BudgetHeaderState();
+}
+
+class _BudgetHeaderState extends State<_BudgetHeader> {
+  /// The old TBB ledger, one tap away rather than always on screen.
+  bool _ledgerOpen = false;
+
+  @override
   Widget build(BuildContext context) {
     final cs       = Theme.of(context).colorScheme;
-    final isNeg    = tbb < 0;
+    final isNeg    = widget.tbb < 0;
     final tbbColor = isNeg ? cs.error : cs.primary;
     final fmt      = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
 
@@ -1088,7 +1427,7 @@ class _BudgetHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       child: Column(
         children: [
-          // Chevrons anchor the ends, month and Quick Budget sit centred
+          // Chevrons anchor the ends, widget.month and Quick Budget sit centred
           // between them. The layout toggle moves inside the right chevron
           // rather than trailing it, with a matching gap on the left so the
           // centre stays true.
@@ -1098,7 +1437,7 @@ class _BudgetHeader extends StatelessWidget {
             return Row(
               children: [
                 IconButton(
-                  onPressed: onPrev,
+                  onPressed: widget.onPrev,
                   icon: const Icon(Icons.chevron_left),
                   style: IconButton.styleFrom(
                       backgroundColor: cs.surfaceContainerHigh),
@@ -1108,14 +1447,14 @@ class _BudgetHeader extends StatelessWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(DateFormat('MMMM yyyy').format(month),
+                      Text(DateFormat('MMMM yyyy').format(widget.month),
                           style: GoogleFonts.plusJakartaSans(
                               fontSize: 18,
                               fontWeight: FontWeight.w700,
                               color: cs.onSurface)),
                       TextButton.icon(
                         onPressed: () =>
-                            _showQuickBudgetSheet(context, month, ref),
+                            _showQuickBudgetSheet(context, widget.month, widget.ref),
                         icon: Icon(Icons.auto_awesome,
                             size: 15, color: cs.primary),
                         label: Text('Quick Budget',
@@ -1139,7 +1478,7 @@ class _BudgetHeader extends StatelessWidget {
                     child: IconButton(
                       tooltip: 'Compare 3 months',
                       icon: const Icon(Icons.view_column_outlined, size: 18),
-                      onPressed: () => ref
+                      onPressed: () => widget.ref
                           .read(budgetThreeColPrefProvider.notifier)
                           .state = true,
                       style: IconButton.styleFrom(
@@ -1149,106 +1488,99 @@ class _BudgetHeader extends StatelessWidget {
                     ),
                   ),
                 IconButton(
-                  onPressed: onNext,
+                  onPressed: widget.onNext,
                   icon: const Icon(Icons.chevron_right),
                   style: IconButton.styleFrom(
                       backgroundColor: cs.surfaceContainerHigh),
+                ),
+                // Everything that used to be a permanent control on the row —
+                // reordering, inactive categories, compare, collapse.
+                _BudgetOverflowMenu(
+                  month:      widget.month,
+                  ref:        widget.ref,
+                  showCompare: showToggle,
+                  onCollapseAll: widget.onCollapseAll,
+                  onEditOrder:   widget.onEditOrder,
                 ),
               ],
             );
           }),
           const SizedBox(height: 6),
 
-          // ── TBB breakdown card ─────────────────────────────────────────────
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-            decoration: BoxDecoration(
-              color:        tbbColor.withValues(alpha: 0.07),
-              borderRadius: BorderRadius.circular(16),
-              border:       Border.all(color: tbbColor.withValues(alpha: 0.22)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // ── Breakdown lines ──────────────────────────────────────────
-                if (carryForward != 0) ...[
-                  _TbbLine(
-                    sign:       carryForward > 0 ? '+' : '−',
-                    value:      carryForward.abs(),
-                    label:      'Carried from ${DateFormat('MMM').format(DateTime(month.year, month.month - 1))}',
-                    valueColor: carryForward > 0 ? context.money.positive : cs.error,
+          // ── Ready to assign — the one number this screen is about ────────
+          // The old ledger said what happened; it never said what to do. The
+          // arithmetic is still here, one tap down.
+          _ReadyToAssignHero(
+            tbb:           widget.tbb,
+            income:        widget.income,
+            totalBudgeted: widget.totalBudgeted,
+            carryForward:  widget.carryForward,
+            month:         widget.month,
+            ledgerOpen:    _ledgerOpen,
+            onToggleLedger: () => setState(() => _ledgerOpen = !_ledgerOpen),
+            onGiveItAJob:  () =>
+                _showQuickBudgetSheet(context, widget.month, widget.ref),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeInOut,
+            alignment: Alignment.topCenter,
+            child: !_ledgerOpen
+                ? const SizedBox(width: double.infinity)
+                : Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(top: 8),
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                    decoration: BoxDecoration(
+                      color: cs.surfaceContainerHigh,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (widget.carryForward != 0) ...[
+                          _TbbLine(
+                            sign:  widget.carryForward > 0 ? '+' : '−',
+                            value: widget.carryForward.abs(),
+                            label:
+                                'Carried from ${DateFormat('MMM').format(DateTime(widget.month.year, widget.month.month - 1))}',
+                            valueColor: widget.carryForward > 0
+                                ? context.money.positive
+                                : context.money.negative,
+                          ),
+                          const SizedBox(height: 3),
+                        ],
+                        _IncomeLine(
+                          month:  widget.month,
+                          income: widget.income,
+                          txns:   widget.incomeTxns,
+                        ),
+                        const SizedBox(height: 3),
+                        _TbbLine(
+                          sign:  '−',
+                          value: widget.totalBudgeted,
+                          label:
+                              'Budgeted in ${DateFormat('MMM').format(widget.month)}',
+                          valueColor: cs.onSurfaceVariant,
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8, bottom: 4),
+                          child: Divider(
+                              height: 1,
+                              color:
+                                  cs.outlineVariant.withValues(alpha: 0.5)),
+                        ),
+                        _TbbLine(
+                          sign:  '',
+                          value: widget.totalSpent,
+                          label:
+                              'Spent in ${DateFormat('MMM').format(widget.month)}',
+                          valueColor: context.money.negative
+                              .withValues(alpha: 0.85),
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 3),
-                ],
-                _IncomeLine(
-                  month:  month,
-                  income: income,
-                  txns:   incomeTxns,
-                ),
-                const SizedBox(height: 3),
-                _TbbLine(
-                  sign:  '−',
-                  value: totalBudgeted,
-                  label: 'Budgeted in ${DateFormat('MMM').format(month)}',
-                  valueColor: cs.onSurfaceVariant,
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Divider(
-                    height: 1,
-                    color: tbbColor.withValues(alpha: 0.25),
-                  ),
-                ),
-                // ── TBB total line ───────────────────────────────────────────
-                Row(
-                  children: [
-                    Text('=  ',
-                        style: GoogleFonts.plusJakartaSans(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: tbbColor.withValues(alpha: 0.6))),
-                    Icon(
-                      isNeg
-                          ? Icons.warning_amber_rounded
-                          : Icons.savings_outlined,
-                      size: 14, color: tbbColor,
-                    ),
-                    const SizedBox(width: 5),
-                    Text(
-                      fmt.format(tbb),
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          color: tbbColor),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      isNeg ? 'overbudgeted' : 'ready to assign',
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                          color: tbbColor.withValues(alpha: 0.7)),
-                    ),
-                  ],
-                ),
-                // Spending sits outside the equation: it never reaches TBB
-                // (money leaves a category, not the unassigned pool), so
-                // showing it above the "=" made the sum look broken.
-                Padding(
-                  padding: const EdgeInsets.only(top: 8, bottom: 4),
-                  child: Divider(
-                      height: 1,
-                      color: cs.outlineVariant.withValues(alpha: 0.5)),
-                ),
-                _TbbLine(
-                  sign:  '',
-                  value: totalSpent,
-                  label: 'Spent in ${DateFormat('MMM').format(month)}',
-                  valueColor: cs.error.withValues(alpha: 0.8),
-                ),
-              ],
-            ),
           ),
         ],
       ),
@@ -2154,6 +2486,100 @@ class _GroupHeaderRow extends StatelessWidget {
 
 /// Icon avatar for a category row. The code point already existed and was only
 /// being drawn in the desktop panels.
+/// Named actions on an overspent row, replacing an unlabelled arrow.
+class _OverspendActions extends ConsumerWidget {
+  final BudgetEntry entry;
+  final DateTime month;
+  const _OverspendActions({required this.entry, required this.month});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final money = context.money;
+    final f2    = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    final short = f2.format(entry.balance.abs());
+    final tbb   = ref.watch(budgetProvider).valueOrNull?.tbb ?? 0;
+    final canCover = tbb > 0;
+    final nextMonth = DateFormat('MMM')
+        .format(DateTime(month.year, month.month + 1));
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          Tooltip(
+            message: canCover
+                ? 'Move $short from Ready to Assign'
+                : 'Nothing left in Ready to Assign to move',
+            child: _OverspendChip(
+              label: 'Cover $short',
+              tint:  money.positive,
+              enabled: canCover,
+              onTap: !canCover
+                  ? null
+                  // Assigning the shortfall on top of what is already there is
+                  // exactly what "cover it" means in envelope terms.
+                  : () => ref.read(budgetProvider.notifier).setBudgeted(
+                        entry.categoryId,
+                        entry.budgeted + entry.balance.abs(),
+                        month: month,
+                      ),
+            ),
+          ),
+          _OverspendChip(
+            label: entry.carryOverspend
+                ? 'Carrying to $nextMonth'
+                : 'Carry to $nextMonth',
+            tint: money.warning,
+            enabled: !entry.carryOverspend,
+            onTap: entry.carryOverspend
+                ? null
+                : () => ref
+                    .read(budgetProvider.notifier)
+                    .setCarryOverspend(entry.categoryId, true),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OverspendChip extends StatelessWidget {
+  final String label;
+  final Color tint;
+  final bool enabled;
+  final VoidCallback? onTap;
+  const _OverspendChip({
+    required this.label,
+    required this.tint,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = enabled ? tint : tint.withValues(alpha: 0.4);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(9),
+      child: Container(
+        height: 32,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: c.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(color: c.withValues(alpha: 0.4)),
+        ),
+        child: Text(label,
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 12, fontWeight: FontWeight.w600, color: c)),
+      ),
+    );
+  }
+}
+
 class _CategoryAvatar extends StatelessWidget {
   final BudgetEntry entry;
   const _CategoryAvatar({required this.entry});
@@ -2292,6 +2718,8 @@ class _CategoryTableRow extends ConsumerWidget {
   /// Drag handles appear only in reorder mode (T5); otherwise they are
   /// permanent chrome for an action taken once in a while.
   final bool reorderMode;
+  /// Briefly tinted after an attention chip jumped here.
+  final bool highlighted;
   final bool isExpanded;
   final DateTime month;
   final VoidCallback onToggle;
@@ -2301,6 +2729,7 @@ class _CategoryTableRow extends ConsumerWidget {
     required this.entry,
     required this.isWide,
     this.reorderMode = false,
+    this.highlighted = false,
     required this.isExpanded,
     required this.month,
     required this.onToggle,
@@ -2387,14 +2816,16 @@ class _CategoryTableRow extends ConsumerWidget {
               // Narrow reads as a sentence rather than a table line: what the
               // category is, what is left, and how much of it has gone.
               : Container(
-                  margin: isOverspent
+                  margin: (isOverspent || highlighted)
                       ? const EdgeInsets.symmetric(horizontal: 8, vertical: 2)
                       : EdgeInsets.zero,
                   padding: const EdgeInsets.fromLTRB(10, 12, 12, 12),
-                  decoration: isOverspent
+                  decoration: (isOverspent || highlighted)
                       ? BoxDecoration(
-                          color: context.money.negative
-                              .withValues(alpha: 0.07),
+                          color: highlighted
+                              ? cs.primary.withValues(alpha: 0.10)
+                              : context.money.negative
+                                  .withValues(alpha: 0.07),
                           borderRadius: BorderRadius.circular(14),
                         )
                       : null,
@@ -2403,7 +2834,20 @@ class _CategoryTableRow extends ConsumerWidget {
                     children: [
                       _CategoryAvatar(entry: entry),
                       const SizedBox(width: 12),
-                      Expanded(child: _CategoryRowBody(entry: entry)),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _CategoryRowBody(entry: entry),
+                            // The old affordance here was a 15px unlabelled
+                            // arrow. Naming both options, with the amount in
+                            // them, is the whole fix.
+                            if (isOverspent && !entry.isCcPayment)
+                              _OverspendActions(entry: entry, month: month),
+                          ],
+                        ),
+                      ),
                       if (reorderMode) ...[
                         const SizedBox(width: 8),
                         Icon(Icons.drag_handle,
