@@ -1143,6 +1143,7 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
                   .fold(0.0, (s, e) => s + e.activity),
               totalAvailable: state.groups
                   .fold(0.0, (acc, g) => acc + g.balance),
+              onLeftTap: () => _showLeftBreakdown(context, state),
             ),
           ),
           ...groupSlivers,
@@ -2425,12 +2426,14 @@ class _ColumnHeaders extends StatelessWidget {
   final double totalBudgeted;
   final double totalActivity;
   final double totalAvailable;
+  final VoidCallback? onLeftTap;
 
   const _ColumnHeaders({
     required this.isWide,
     required this.totalBudgeted,
     required this.totalActivity,
     required this.totalAvailable,
+    this.onLeftTap,
   });
 
   @override
@@ -2458,11 +2461,109 @@ class _ColumnHeaders extends StatelessWidget {
           // colouring every cell beneath it.
           _ColLabel('ASSIGNED', total: totalBudgeted,  cs: cs),
           _ColLabel('SPENT',    total: totalActivity,  cs: cs),
-          _ColLabel('LEFT',     total: totalAvailable, cs: cs),
+          _ColLabel('LEFT',     total: totalAvailable, cs: cs, onTap: onLeftTap),
         ],
       ),
     );
   }
+}
+
+/// Where the LEFT total comes from.
+///
+/// The figure is the whole budget, not the rows on screen: groups are
+/// collapsed one at a time, and a total that covers eleven groups while six
+/// rows are visible invites the reasonable suspicion that it is double
+/// counting. It is not — every category contributes
+/// `carried in + assigned + set aside − spent` exactly once — but a number
+/// nobody can reconcile is not much better than a wrong one.
+Future<void> _showLeftBreakdown(BuildContext context, BudgetState state) {
+  final entries   = state.groups.expand((g) => g.entries).toList();
+  final carriedIn = entries.fold(0.0, (s, e) => s + e.carriedIn);
+  final assigned  = entries.fold(0.0, (s, e) => s + e.budgeted);
+  final reserved  = entries.fold(0.0, (s, e) => s + e.reserved);
+  final activity  = entries.fold(0.0, (s, e) => s + e.activity);
+  final total     = carriedIn + assigned + reserved + activity;
+
+  final byGroup = [...state.groups]
+    ..sort((a, b) => b.balance.compareTo(a.balance));
+
+  return showModalBottomSheet(
+    context:            context,
+    isScrollControlled: true,
+    builder: (ctx) {
+      final cs  = Theme.of(ctx).colorScheme;
+      final f2  = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+      Widget line(String label, double value, {bool bold = false}) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(label,
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13,
+                          fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
+                          color: bold ? cs.onSurface : cs.onSurfaceVariant)),
+                ),
+                Text(f2.format(value),
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13,
+                        fontWeight: bold ? FontWeight.w700 : FontWeight.w600,
+                        color: isNegativeMoney(value)
+                            ? context.money.negative
+                            : cs.onSurface)),
+              ],
+            ),
+          );
+
+      return SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          child: Column(
+            mainAxisSize:       MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36, height: 4,
+                  decoration: BoxDecoration(
+                      color: cs.onSurfaceVariant.withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text("Where “left” comes from",
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: cs.onSurface)),
+              const SizedBox(height: 2),
+              Text('Every category in the budget, including groups that are '
+                  'collapsed right now.',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, height: 1.4, color: cs.onSurfaceVariant)),
+              const SizedBox(height: 14),
+              line('Carried in from earlier months', carriedIn),
+              line('Assigned this month', assigned),
+              if (!isZeroMoney(reserved)) line('Set aside for card charges', reserved),
+              line('Spent this month', activity),
+              const Divider(height: 20),
+              line('Left', total, bold: true),
+              const SizedBox(height: 18),
+              Text('BY GROUP',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1,
+                      color: cs.onSurfaceVariant)),
+              const SizedBox(height: 4),
+              for (final g in byGroup)
+                if (!isZeroMoney(g.balance)) line(g.name, g.balance),
+            ],
+          ),
+        ),
+      );
+    },
+  );
 }
 
 class _ColLabel extends StatelessWidget {
@@ -2470,7 +2571,9 @@ class _ColLabel extends StatelessWidget {
   final Color? bg;
   final double? total;
   final ColorScheme cs;
-  const _ColLabel(this.text, {required this.cs, this.bg, this.total});
+  final VoidCallback? onTap;
+  const _ColLabel(this.text,
+      {required this.cs, this.bg, this.total, this.onTap});
 
   static String _fmtTotal(double v) {
     final abs = v.abs();
@@ -2511,8 +2614,14 @@ class _ColLabel extends StatelessWidget {
         ],
       ),
     );
-    if (bg == null) return label;
-    return ColoredBox(color: bg!, child: label);
+    final wrapped = onTap == null
+        ? label
+        : InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(8),
+            child: label);
+    if (bg == null) return wrapped;
+    return ColoredBox(color: bg!, child: wrapped);
   }
 }
 
