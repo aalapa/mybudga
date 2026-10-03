@@ -321,13 +321,24 @@ final reportsProvider = FutureProvider.autoDispose
   final results = await Future.wait([
     client
         .from('transactions')
-        .select('date, amount, account_id, payees(name), '
+        .select('date, amount, account_id, transfer_id, status, '
+            'payees(name), accounts(is_tracking), '
             'categories(id, name, linked_account_id, '
             'category_groups(id, name, spending_tier))')
         .eq('household_id', householdId)
         .gte('date', startStr)
         .isFilter('deleted_at', null)
         .order('date', ascending: true),
+    // Every transfer leg keyed by id, with its account's tracking flag. A
+    // row's own embedded accounts(is_tracking) describes its own side; deciding
+    // whether a transfer leaves the budget needs the *counterpart*. Not date
+    // bounded, because the two legs can be dated into different months.
+    client
+        .from('transactions')
+        .select('id, accounts(is_tracking)')
+        .eq('household_id', householdId)
+        .not('transfer_id', 'is', null)
+        .isFilter('deleted_at', null),
     client
         .from('budget_months')
         .select('category_id, budgeted, month, '
@@ -338,7 +349,25 @@ final reportsProvider = FutureProvider.autoDispose
   ]);
 
   final res       = results[0] as List;
-  final budgetRes = results[1] as List;
+  final legsRes   = results[1] as List;
+  final budgetRes = results[2] as List;
+
+  // ── Does a transfer leg belong to the budget? ──────────────────────────────
+  // Lifted from budget_provider so both screens answer "what did I spend" the
+  // same way. Checking -> Savings never leaves the budget, so counting it is a
+  // double count; Checking -> Mortgage does leave, and that outgoing leg is
+  // real spending. The test is about the counterpart, not about being a
+  // transfer.
+  final legIsTracking = <String, bool>{};
+  for (final r in legsRes) {
+    legIsTracking[(r as Map)['id'] as String] =
+        (r['accounts'] as Map?)?['is_tracking'] as bool? ?? false;
+  }
+  bool touchesBudget(String? transferId, bool isTracking) {
+    if (isTracking)         return false;
+    if (transferId == null) return true;
+    return legIsTracking[transferId] ?? false;
+  }
 
   // ── Aggregate transactions ────────────────────────────────────────────────
   double totalIncome   = 0;
@@ -369,6 +398,17 @@ final reportsProvider = FutureProvider.autoDispose
           .update(mk, (v) => v + amount, ifAbsent: () => amount);
     }
 
+    // Past-balance reconstruction above needs every row, including transfers,
+    // tracking accounts and unconfirmed ones, because the trigger that
+    // maintains current_balance counts them all. Spending and income below
+    // need the budget's definition instead — so the gate sits here, not at the
+    // top of the loop.
+    if (r['status'] != 'confirmed') continue;
+    if (!touchesBudget(r['transfer_id'] as String?,
+        (r['accounts'] as Map?)?['is_tracking'] as bool? ?? false)) {
+      continue;
+    }
+
     // Outflow by tier. Card payment envelopes are skipped: their charges are
     // already counted against the categories they were booked to, so including
     // both would double every card purchase.
@@ -390,7 +430,11 @@ final reportsProvider = FutureProvider.autoDispose
     }
 
     if (amount > 0) {
-      totalIncome += amount;
+      if (cat == null) {
+        totalIncome += amount;
+      } else {
+        totalExpenses -= amount;
+      }
     } else {
       totalExpenses += amount.abs();
     }
@@ -434,15 +478,24 @@ final reportsProvider = FutureProvider.autoDispose
       monthKey,
       (v) {
         if (amount > 0) {
-          v.income += amount;
+          // A refund booked to Groceries is not earnings; it is Groceries
+          // costing less. Splitting it this way is what makes
+          // income - expenses equal the change in budget cash.
+          if (cat == null) {
+            v.income += amount;
+          } else {
+            v.expenses -= amount;
+          }
         } else {
           v.expenses += amount.abs();
         }
         return v;
       },
       ifAbsent: () => _MonthAgg(month: monthDate)
-        ..income   = amount > 0 ? amount : 0
-        ..expenses = amount < 0 ? amount.abs() : 0,
+        ..income   = (amount > 0 && cat == null) ? amount : 0
+        ..expenses = amount < 0
+            ? amount.abs()
+            : (cat != null ? -amount : 0),
     );
   }
 

@@ -926,6 +926,8 @@ class _BudgetBodyState extends ConsumerState<_BudgetBody> {
         totalBudgeted: state.totalBudgeted,
         totalSpent:    state.totalSpent,
         carryForward:  state.carryForward,
+        categorisedInflow: state.categorisedInflow,
+        groups:        state.groups,
         onPrev: () => notifier.goToMonth(
             DateTime(state.month.year, state.month.month - 1)),
         onNext: () => notifier.goToMonth(
@@ -1534,6 +1536,8 @@ class _BudgetHeader extends StatefulWidget {
   final double totalBudgeted;
   final double totalSpent;
   final double carryForward;
+  final double categorisedInflow;
+  final List<BudgetGroupData> groups;
   final VoidCallback onPrev;
   final VoidCallback onNext;
   final VoidCallback onCollapseAll;
@@ -1548,6 +1552,8 @@ class _BudgetHeader extends StatefulWidget {
     required this.totalBudgeted,
     required this.totalSpent,
     required this.carryForward,
+    required this.categorisedInflow,
+    required this.groups,
     required this.onPrev,
     required this.onNext,
     required this.onCollapseAll,
@@ -1667,6 +1673,15 @@ class _BudgetHeaderState extends State<_BudgetHeader> {
             onToggleLedger: () => setState(() => _ledgerOpen = !_ledgerOpen),
             onGiveItAJob:  () =>
                 _showQuickBudgetSheet(context, widget.month, widget.ref),
+          ),
+          _LivedWithinIncomeLine(
+            month:             widget.month,
+            income:            widget.income,
+            totalBudgeted:     widget.totalBudgeted,
+            totalSpent:        widget.totalSpent,
+            categorisedInflow: widget.categorisedInflow,
+            carryForward:      widget.carryForward,
+            groups:            widget.groups,
           ),
           AnimatedSize(
             duration: const Duration(milliseconds: 260),
@@ -6664,4 +6679,268 @@ class _SplitTxRow extends StatelessWidget {
       ),
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Did this month pay for itself?
+// ---------------------------------------------------------------------------
+
+/// Carry-forward is what makes envelope budgeting work, and also what makes
+/// "did I live within this month's income" unanswerable from the category
+/// rows: every Available figure mixes this month's money with what earlier
+/// months left behind. This states the answer with the carry-in taken out.
+class _LivedWithinIncomeLine extends StatelessWidget {
+  final DateTime month;
+  final double income;
+  final double totalBudgeted;
+  final double totalSpent;
+  final double categorisedInflow;
+  final double carryForward;
+  final List<BudgetGroupData> groups;
+
+  const _LivedWithinIncomeLine({
+    required this.month,
+    required this.income,
+    required this.totalBudgeted,
+    required this.totalSpent,
+    required this.categorisedInflow,
+    required this.carryForward,
+    required this.groups,
+  });
+
+  /// Spending this month beyond what this month earned.
+  ///
+  /// Equals the change in the total money the budget holds: every category
+  /// contributes carried-in + assigned + set-aside − spent, and across the
+  /// whole budget the assignments cancel against TBB, leaving income plus
+  /// refunds minus spending. Being derivable two ways is what makes it
+  /// checkable rather than just another figure.
+  double get net => income + categorisedInflow - totalSpent;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs    = Theme.of(context).colorScheme;
+    final money = context.money;
+    final f0    = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final name  = DateFormat('MMMM').format(month);
+
+    // Nothing earned and nothing spent — a future month. Say nothing rather
+    // than announcing a confident $0.
+    if (isZeroMoney(income) && isZeroMoney(totalSpent)) {
+      return const SizedBox.shrink();
+    }
+
+    final within = !isNegativeMoney(net);
+    final tint   = within ? money.positive : money.warning;
+
+    return InkWell(
+      onTap: () => _showThisMonthSheet(context, this),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(top: 10),
+        padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+        decoration: BoxDecoration(
+          color: tint.withValues(alpha: 0.09),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: tint.withValues(alpha: 0.28)),
+        ),
+        child: Row(
+          children: [
+            Icon(within ? Icons.check_circle_outline : Icons.trending_down,
+                size: 15, color: tint),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text.rich(
+                TextSpan(
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, height: 1.45, color: cs.onSurfaceVariant),
+                  children: [
+                    TextSpan(
+                      text: within
+                          ? 'Living within $name’s income'
+                          : 'Spending beyond $name’s income',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: tint),
+                    ),
+                    TextSpan(
+                      text: within
+                          ? ' — ${f0.format(net)} of it is still unspent.'
+                          : ' — ${f0.format(net.abs())} came from earlier '
+                              'months.',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Icon(Icons.chevron_right,
+                size: 16, color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// How much of this month's spending leaned on money carried in.
+///
+/// Envelope dollars carry no label, so this needs a convention: spending draws
+/// on this month's assignment first, and only then on the carry-in. Stated in
+/// the sheet, because it is an interpretation rather than a fact — the other
+/// convention would give a different, equally defensible number.
+double _spentFromCarryIn(List<BudgetGroupData> groups) {
+  var total = 0.0;
+  for (final g in groups) {
+    for (final e in g.entries) {
+      // Card envelopes are filled by charges rather than assignments, so the
+      // assignment-first rule does not describe them.
+      if (e.isCcPayment) continue;
+      final carried = e.carriedIn > 0 ? e.carriedIn : 0.0;
+      final beyond  = e.spent - e.budgeted;
+      if (beyond <= 0 || carried <= 0) continue;
+      total += beyond < carried ? beyond : carried;
+    }
+  }
+  return total;
+}
+
+Future<void> _showThisMonthSheet(
+    BuildContext context, _LivedWithinIncomeLine d) {
+  return showModalBottomSheet(
+    context:            context,
+    isScrollControlled: true,
+    builder: (ctx) {
+      final cs    = Theme.of(ctx).colorScheme;
+      final money = ctx.money;
+      final f2    = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+      final name  = DateFormat('MMMM').format(d.month);
+      final leaned    = _spentFromCarryIn(d.groups);
+      final unassigned = d.income - d.totalBudgeted;
+
+      Widget line(String label, double v,
+              {bool bold = false, bool signed = false}) =>
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(label,
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12.5,
+                          fontWeight:
+                              bold ? FontWeight.w700 : FontWeight.w500,
+                          color: bold ? cs.onSurface : cs.onSurfaceVariant)),
+                ),
+                Text(
+                    '${signed && v > 0 ? '+' : signed && v < 0 ? '-' : ''}'
+                    '${f2.format(v.abs())}',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13,
+                        fontWeight: bold ? FontWeight.w700 : FontWeight.w600,
+                        color: bold
+                            ? (isNegativeMoney(v)
+                                ? money.warning
+                                : money.positive)
+                            : cs.onSurface)),
+              ],
+            ),
+          );
+
+      Widget heading(String t) => Padding(
+            padding: const EdgeInsets.only(top: 18, bottom: 2),
+            child: Text(t,
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1,
+                    color: cs.onSurfaceVariant)),
+          );
+
+      return SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 26),
+          child: Column(
+            mainAxisSize:       MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36, height: 4,
+                  decoration: BoxDecoration(
+                      color: cs.onSurfaceVariant.withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text('$name on its own',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: cs.onSurface)),
+              const SizedBox(height: 2),
+              Text('Carry-in from earlier months taken out, so the figures are '
+                  'this month’s alone.',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, height: 1.4, color: cs.onSurfaceVariant)),
+
+              heading('DID THIS MONTH PAY FOR ITSELF'),
+              line('Earned', d.income),
+              if (!isZeroMoney(d.categorisedInflow))
+                line('Refunds and reimbursements', d.categorisedInflow),
+              line('Spent', -d.totalSpent, signed: true),
+              const Divider(height: 18),
+              line(d.net < 0 ? 'Short by' : 'Left over', d.net, bold: true),
+              const SizedBox(height: 6),
+              // The same number the other way round. If these ever disagree,
+              // one of the two is wrong, and that is worth being able to see.
+              Text(
+                'Your budget holds ${f2.format(d.net.abs())} '
+                '${d.net < 0 ? 'less' : 'more'} than it did on the 1st — the '
+                'same figure counted from the other end.',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    height: 1.45,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.8)),
+              ),
+
+              heading('DID THIS MONTH’S INCOME COVER ITS COMMITMENTS'),
+              line('Earned', d.income),
+              line('Assigned to categories', -d.totalBudgeted, signed: true),
+              const Divider(height: 18),
+              line(unassigned < 0 ? 'Assigned beyond income' : 'Not yet assigned',
+                  unassigned, bold: true),
+              const SizedBox(height: 6),
+              Text(
+                'This is the fairer test when you save for annual bills: you '
+                'assign a twelfth each month, so the month the bill lands does '
+                'not read as overspending.',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    height: 1.45,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.8)),
+              ),
+
+              if (leaned > 0) ...[
+                heading('LEANING ON EARLIER MONTHS'),
+                line('Spending drawn from carried-in balances', leaned),
+                const SizedBox(height: 6),
+                Text(
+                  'Counted by assuming each category spends this month’s '
+                  'assignment first and its carry-in second. Envelope dollars '
+                  'are not labelled, so this is one reading of them, not a '
+                  'fact.',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11,
+                      height: 1.45,
+                      color: cs.onSurfaceVariant.withValues(alpha: 0.8)),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    },
+  );
 }

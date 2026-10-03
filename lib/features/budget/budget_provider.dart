@@ -47,6 +47,13 @@ class BudgetState {
   /// TBB carried forward from the previous month (may be negative).
   final double carryForward;
 
+  /// Positive amounts booked *to a category* this month — refunds, returns,
+  /// reimbursements. Excluded from [income] on purpose (they raise that
+  /// category's Available instead), but needed to reconcile: the money the
+  /// budget holds changes by income + this − spending, so leaving it out makes
+  /// the two ways of computing that disagree.
+  final double categorisedInflow;
+
   const BudgetState({
     required this.month,
     required this.groups,
@@ -56,6 +63,7 @@ class BudgetState {
     this.totalBudgeted = 0,
     this.totalSpent    = 0,
     this.carryForward  = 0,
+    this.categorisedInflow = 0,
   });
 
   BudgetState copyWith({
@@ -67,6 +75,7 @@ class BudgetState {
     double?             totalBudgeted,
     double?             totalSpent,
     double?             carryForward,
+    double?             categorisedInflow,
   }) => BudgetState(
     month:         month         ?? this.month,
     groups:        groups        ?? this.groups,
@@ -76,6 +85,7 @@ class BudgetState {
     totalBudgeted: totalBudgeted ?? this.totalBudgeted,
     totalSpent:    totalSpent    ?? this.totalSpent,
     carryForward:  carryForward  ?? this.carryForward,
+    categorisedInflow: categorisedInflow ?? this.categorisedInflow,
   );
 }
 
@@ -939,6 +949,18 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       if (touchesBudget(transferId, isTracking) && amt < 0) totalSpent += amt.abs();
     }
 
+    // Refunds and reimbursements: positive, categorised, in-budget.
+    double categorisedInflow = 0;
+    for (final tx in results[2] as List) {
+      if (tx['category_id'] == null) continue;
+      final transferId = tx['transfer_id'] as String?;
+      final isTracking = (tx['accounts']   as Map?)?['is_tracking'] as bool? ?? false;
+      final amt        = (tx['amount']     as num).toDouble();
+      if (touchesBudget(transferId, isTracking) && amt > 0) {
+        categorisedInflow += amt;
+      }
+    }
+
     // ── TBB (cumulative) + carry-forward from previous month ─────────────────
     // Computed here rather than read from v_to_be_budgeted. That view is keyed
     // off `select distinct month from budget_months`, so any month you have not
@@ -967,6 +989,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       totalBudgeted: totalBudgeted,
       totalSpent:    totalSpent,
       carryForward:  carryForward,
+      categorisedInflow: categorisedInflow,
     );
   }
 
