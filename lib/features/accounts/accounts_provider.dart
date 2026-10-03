@@ -624,3 +624,148 @@ final lastReconciledDatesProvider =
   }
   return map;
 });
+
+// ---------------------------------------------------------------------------
+// Liquidity over time
+// ---------------------------------------------------------------------------
+
+/// Liquid cash and card debt on one day, and the net of the two.
+class LiquidityPoint {
+  final DateTime date;
+
+  /// Liquid cash: everything on-budget that is not a card.
+  final double cash;
+
+  /// Card balances, negative when owed.
+  final double debt;
+
+  const LiquidityPoint({
+    required this.date,
+    required this.cash,
+    required this.debt,
+  });
+
+  double get liquidity => cash + debt;
+}
+
+/// Liquidity across a window, with the two drivers kept separate.
+///
+/// The net on its own cannot distinguish "cash went up" from "cash went up
+/// less than the card did", which are opposite news reported as the same
+/// number. [cashChange] and [debtChange] are what make the headline honest.
+class LiquidityHistory {
+  /// Oldest first; the last entry is today.
+  final List<LiquidityPoint> points;
+
+  const LiquidityHistory(this.points);
+
+  bool get isEmpty => points.length < 2;
+
+  LiquidityPoint get first => points.first;
+  LiquidityPoint get last  => points.last;
+
+  double get change     => last.liquidity - first.liquidity;
+  double get cashChange => last.cash - first.cash;
+  double get debtChange => last.debt - first.debt;
+
+  /// The worst day in the window. Today's figure is a snapshot taken at some
+  /// arbitrary point in a pay cycle; this is the floor it actually hit.
+  LiquidityPoint get trough => points
+      .reduce((a, b) => b.liquidity < a.liquidity ? b : a);
+
+  /// Days the cards could not have been cleared from cash at all.
+  int get daysUnderwater =>
+      points.where((p) => p.liquidity < 0).length;
+
+  double get high => points
+      .map((p) => p.liquidity)
+      .reduce((a, b) => a > b ? a : b);
+}
+
+/// Daily liquidity for the last [days] days.
+///
+/// History is unwound backwards from today's balances, the same way the net
+/// worth and single-stat history views do it: balances are only stored as they
+/// stand now, so the balance at the end of a past day is today's balance minus
+/// everything that moved after it. Forwards from transactions alone would miss
+/// every opening balance set on the account rather than recorded as a
+/// transaction.
+///
+/// The consequence worth knowing: any balance corrected by hand rather than by
+/// a transaction makes the line drift further back you look. The sheet says so
+/// rather than presenting the tail as what the bank showed.
+final liquidityHistoryProvider = FutureProvider.autoDispose.family<
+    LiquidityHistory,
+    ({String cashIds, String ccIds, int days})>((ref, args) async {
+  final cashIds = args.cashIds.isEmpty ? <String>[] : args.cashIds.split(',');
+  final ccIds   = args.ccIds.isEmpty   ? <String>[] : args.ccIds.split(',');
+  if (cashIds.isEmpty && ccIds.isEmpty) return const LiquidityHistory([]);
+
+  final client = ref.watch(supabaseProvider);
+  final allIds = [...cashIds, ...ccIds];
+
+  String d(DateTime x) => '${x.year}-'
+      '${x.month.toString().padLeft(2, '0')}-'
+      '${x.day.toString().padLeft(2, '0')}';
+
+  final now   = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final start = today.subtract(Duration(days: args.days - 1));
+
+  final results = await Future.wait([
+    client
+        .from('accounts')
+        .select('id, current_balance')
+        .inFilter('id', allIds)
+        .eq('is_active', true),
+    // Bounded at today: today's point has to equal the figure on the header
+    // bar, and a future-dated row would quietly pull it away from it.
+    client
+        .from('transactions')
+        .select('account_id, amount, date')
+        .inFilter('account_id', allIds)
+        .gte('date', d(start))
+        .lte('date', d(today))
+        .isFilter('deleted_at', null),
+  ]);
+
+  final cashSet = cashIds.toSet();
+  var cashNow = 0.0;
+  var debtNow = 0.0;
+  for (final r in results[0] as List) {
+    final bal = ((r as Map)['current_balance'] as num).toDouble();
+    if (cashSet.contains(r['id'] as String)) {
+      cashNow += bal;
+    } else {
+      debtNow += bal;
+    }
+  }
+
+  // Per-day movement, split by which side of the net it belongs to.
+  final cashMoved = <String, double>{};
+  final debtMoved = <String, double>{};
+  for (final r in results[1] as List) {
+    final row = r as Map;
+    final amt = (row['amount'] as num).toDouble();
+    final key = (row['date'] as String).substring(0, 10);
+    if (cashSet.contains(row['account_id'] as String)) {
+      cashMoved[key] = (cashMoved[key] ?? 0.0) + amt;
+    } else {
+      debtMoved[key] = (debtMoved[key] ?? 0.0) + amt;
+    }
+  }
+
+  // Walk back from today, taking each day's movement off as we pass it.
+  final points = <LiquidityPoint>[];
+  var cash = cashNow;
+  var debt = debtNow;
+  for (var i = 0; i < args.days; i++) {
+    final day = today.subtract(Duration(days: i));
+    points.add(LiquidityPoint(date: day, cash: cash, debt: debt));
+    final key = d(day);
+    cash -= cashMoved[key] ?? 0.0;
+    debt -= debtMoved[key] ?? 0.0;
+  }
+
+  return LiquidityHistory(points.reversed.toList());
+});

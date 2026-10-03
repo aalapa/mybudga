@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+import '../../core/money.dart';
 import '../../core/theme/semantic_colors.dart';
 import 'dart:math' as math;
 import 'package:fl_chart/fl_chart.dart';
@@ -141,6 +143,10 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
             onLiquidCashTap:   liquidIdsKey.isEmpty
                 ? null
                 : () => _showLiquidCashHistorySheet(context, liquidIdsKey),
+            onLiquidityTap:    liquidIdsKey.isEmpty && ccIdsKey.isEmpty
+                ? null
+                : () => _showLiquidityReportSheet(
+                    context, liquidIdsKey, ccIdsKey),
           );
         },
       ),
@@ -164,6 +170,7 @@ class _AccountsBody extends ConsumerWidget {
   final VoidCallback onManageLabels;
   final VoidCallback? onCcDebtTap;
   final VoidCallback? onLiquidCashTap;
+  final VoidCallback? onLiquidityTap;
 
   const _AccountsBody({
     required this.accounts,
@@ -171,6 +178,7 @@ class _AccountsBody extends ConsumerWidget {
     required this.onManageLabels,
     this.onCcDebtTap,
     this.onLiquidCashTap,
+    this.onLiquidityTap,
   });
 
 
@@ -240,6 +248,7 @@ class _AccountsBody extends ConsumerWidget {
               onManageLabels:    onManageLabels,
               onCcDebtTap:       onCcDebtTap,
               onLiquidCashTap:   onLiquidCashTap,
+              onLiquidityTap:    onLiquidityTap,
             ),
           ),
           // ── "As of today" toggle ────────────────────────────────────
@@ -352,6 +361,7 @@ class _NetWorthHeader extends StatelessWidget {
   final VoidCallback onManageLabels;
   final VoidCallback? onCcDebtTap;
   final VoidCallback? onLiquidCashTap;
+  final VoidCallback? onLiquidityTap;
 
   double get _liquidity => liquidCash + ccDebt;
 
@@ -362,6 +372,7 @@ class _NetWorthHeader extends StatelessWidget {
     required this.onManageLabels,
     this.onCcDebtTap,
     this.onLiquidCashTap,
+    this.onLiquidityTap,
   });
 
   @override
@@ -445,7 +456,8 @@ class _NetWorthHeader extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           // Liquidity = liquid cash net of CC obligations
-          _LiquidityBar(liquidity: _liquidity, fmt: fmt),
+          _LiquidityBar(
+              liquidity: _liquidity, fmt: fmt, onTap: onLiquidityTap),
         ],
       ),
     );
@@ -519,7 +531,9 @@ class _NetWorthStat extends StatelessWidget {
 class _LiquidityBar extends StatelessWidget {
   final double liquidity;
   final NumberFormat fmt;
-  const _LiquidityBar({required this.liquidity, required this.fmt});
+  final VoidCallback? onTap;
+  const _LiquidityBar(
+      {required this.liquidity, required this.fmt, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -528,7 +542,7 @@ class _LiquidityBar extends StatelessWidget {
     final color   = isPos ? context.money.positive : cs.error;
     final sign    = isPos ? '' : '-';
 
-    return Container(
+    final body = Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
@@ -558,9 +572,18 @@ class _LiquidityBar extends StatelessWidget {
             child: Icon(Icons.info_outline, size: 13,
                 color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
           ),
+          if (onTap != null) ...[
+            const SizedBox(width: 2),
+            Icon(Icons.chevron_right, size: 16,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
+          ],
         ],
       ),
     );
+
+    if (onTap == null) return body;
+    return InkWell(
+        onTap: onTap, borderRadius: BorderRadius.circular(12), child: body);
   }
 }
 
@@ -3341,4 +3364,447 @@ void _showMoveToAccountSheet(BuildContext context, WidgetRef ref, Transaction tx
       ),
     ),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Liquidity report
+// ---------------------------------------------------------------------------
+
+void _showLiquidityReportSheet(
+    BuildContext context, String cashIds, String ccIds) {
+  showModalBottomSheet(
+    context:            context,
+    isScrollControlled: true,
+    backgroundColor:    Colors.transparent,
+    builder: (_) => _LiquidityReportSheet(cashIds: cashIds, ccIds: ccIds),
+  );
+}
+
+class _LiquidityReportSheet extends ConsumerStatefulWidget {
+  final String cashIds;
+  final String ccIds;
+  const _LiquidityReportSheet({required this.cashIds, required this.ccIds});
+
+  @override
+  ConsumerState<_LiquidityReportSheet> createState() =>
+      _LiquidityReportSheetState();
+}
+
+class _LiquidityReportSheetState extends ConsumerState<_LiquidityReportSheet> {
+  int _days = 30;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs  = Theme.of(context).colorScheme;
+    final f0  = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final async = ref.watch(liquidityHistoryProvider(
+        (cashIds: widget.cashIds, ccIds: widget.ccIds, days: _days)));
+
+    return Container(
+      decoration: BoxDecoration(
+        color:        cs.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize:       MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color:        cs.onSurfaceVariant.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text('Liquidity',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: cs.onSurface)),
+            const SizedBox(height: 2),
+            Text('Cash you would have left after clearing the cards',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12, color: cs.onSurfaceVariant)),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                for (final d in const [30, 60, 90])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: _DaysChip(
+                      days:     d,
+                      selected: _days == d,
+                      onTap:    () => setState(() => _days = d),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            async.when(
+              loading: () => const SizedBox(
+                  height: 300, child: Center(child: CircularProgressIndicator())),
+              error: (e, s) => SizedBox(
+                height: 300,
+                child: Center(
+                    child: Text('Could not load liquidity history',
+                        style: GoogleFonts.plusJakartaSans(
+                            color: cs.onSurfaceVariant))),
+              ),
+              data: (hist) {
+                if (hist.isEmpty) {
+                  return SizedBox(
+                    height: 300,
+                    child: Center(
+                        child: Text('Not enough history yet',
+                            style: GoogleFonts.plusJakartaSans(
+                                color: cs.onSurfaceVariant))),
+                  );
+                }
+                return _LiquidityReportBody(hist: hist, days: _days, f0: f0);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DaysChip extends StatelessWidget {
+  final int days;
+  final bool selected;
+  final VoidCallback onTap;
+  const _DaysChip(
+      {required this.days, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? cs.primary.withValues(alpha: 0.14) : null,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+              color: selected
+                  ? cs.primary.withValues(alpha: 0.6)
+                  : cs.outlineVariant),
+        ),
+        child: Text('${days}d',
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 13,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected ? cs.primary : cs.onSurfaceVariant)),
+      ),
+    );
+  }
+}
+
+class _LiquidityReportBody extends StatelessWidget {
+  final LiquidityHistory hist;
+  final int days;
+  final NumberFormat f0;
+  const _LiquidityReportBody(
+      {required this.hist, required this.days, required this.f0});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs    = Theme.of(context).colorScheme;
+    final money = context.money;
+    final now   = hist.last.liquidity;
+    final up    = hist.change > 0;
+    final tint  = now >= 0 ? money.positive : money.negative;
+
+    // Which driver actually moved it. "Up $380" reads as good news even when
+    // the cash rose only because the card did.
+    final borrowed = up && hist.debtChange < 0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${now < 0 ? '-' : ''}${f0.format(now.abs())}',
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 34, fontWeight: FontWeight.w800, color: tint),
+        ),
+        const SizedBox(height: 2),
+        Text.rich(
+          TextSpan(
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 12.5, height: 1.5, color: cs.onSurfaceVariant),
+            children: [
+              TextSpan(
+                text: isZeroMoney(hist.change)
+                    ? 'Level over $days days'
+                    : '${up ? 'Up' : 'Down'} '
+                        '${f0.format(hist.change.abs())} over $days days',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: up ? money.positive : money.warning),
+              ),
+              TextSpan(
+                text: ' — cash ${hist.cashChange >= 0 ? 'up' : 'down'} '
+                    '${f0.format(hist.cashChange.abs())}, card debt '
+                    '${hist.debtChange <= 0 ? 'up' : 'down'} '
+                    '${f0.format(hist.debtChange.abs())}.',
+              ),
+              if (borrowed)
+                TextSpan(
+                  text: ' Part of that gain is borrowed.',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: money.warning),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+        SizedBox(
+          height: 170,
+          child: LayoutBuilder(
+            builder: (context, c) => CustomPaint(
+              size: Size(c.maxWidth, 170),
+              painter: _LiquidityChartPainter(
+                hist:      hist,
+                lineColor: tint,
+                baseColor: cs.onSurfaceVariant,
+                gridColor: cs.outlineVariant,
+                negColor:  money.negative,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 14,
+          runSpacing: 6,
+          children: [
+            _LiqLegend(color: tint, label: 'Liquidity', bold: true),
+            _LiqLegend(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.55),
+                label: 'Liquid cash'),
+            _LiqLegend(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.35),
+                label: 'Card debt'),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Divider(height: 1, color: cs.outlineVariant.withValues(alpha: 0.5)),
+        const SizedBox(height: 14),
+        // The three things today's figure cannot tell you.
+        _LiqStat(
+          label: 'Lowest point',
+          value: '${hist.trough.liquidity < 0 ? '-' : ''}'
+              '${f0.format(hist.trough.liquidity.abs())}',
+          detail: DateFormat('d MMM').format(hist.trough.date),
+          color: hist.trough.liquidity < 0 ? money.negative : cs.onSurface,
+        ),
+        _LiqStat(
+          label: 'Days you could not clear the cards',
+          value: '${hist.daysUnderwater}',
+          detail: 'of $days',
+          color: hist.daysUnderwater > 0 ? money.warning : cs.onSurface,
+        ),
+        _LiqStat(
+          label: 'Highest point',
+          value: f0.format(hist.high),
+          detail: '',
+          color: cs.onSurface,
+        ),
+        const SizedBox(height: 14),
+        Text(
+          'Past balances are reconstructed from recorded transactions, so a '
+          'balance corrected by hand rather than by a transaction will pull '
+          'the earlier end of the line off.',
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 10.5,
+              height: 1.45,
+              color: cs.onSurfaceVariant.withValues(alpha: 0.7)),
+        ),
+      ],
+    );
+  }
+}
+
+class _LiqLegend extends StatelessWidget {
+  final Color color;
+  final String label;
+  final bool bold;
+  const _LiqLegend({required this.color, required this.label, this.bold = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+            width: 14, height: 2.5,
+            decoration: BoxDecoration(
+                color: color, borderRadius: BorderRadius.circular(2))),
+        const SizedBox(width: 5),
+        Text(label,
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
+                color: cs.onSurfaceVariant)),
+      ],
+    );
+  }
+}
+
+class _LiqStat extends StatelessWidget {
+  final String label;
+  final String value;
+  final String detail;
+  final Color color;
+  const _LiqStat({
+    required this.label,
+    required this.value,
+    required this.detail,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(label,
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12.5, color: cs.onSurfaceVariant)),
+          ),
+          Text(value,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13, fontWeight: FontWeight.w700, color: color)),
+          if (detail.isNotEmpty) ...[
+            const SizedBox(width: 5),
+            Text(detail,
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.7))),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Cash above the line, card debt below it, and their net floating between.
+///
+/// Zero is always on the axis: liquidity crossing it is the whole point of the
+/// stat, and a chart scaled to the data alone would hide the crossing.
+class _LiquidityChartPainter extends CustomPainter {
+  final LiquidityHistory hist;
+  final Color lineColor;
+  final Color baseColor;
+  final Color gridColor;
+  final Color negColor;
+
+  _LiquidityChartPainter({
+    required this.hist,
+    required this.lineColor,
+    required this.baseColor,
+    required this.gridColor,
+    required this.negColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const topPad = 8.0, bottomPad = 18.0, rightPad = 4.0;
+    final plotH = size.height - topPad - bottomPad;
+    final plotW = size.width - rightPad;
+    final pts   = hist.points;
+    if (pts.length < 2 || plotH <= 0) return;
+
+    var lo = 0.0, hi = 0.0;
+    for (final p in pts) {
+      for (final v in [p.cash, p.debt, p.liquidity]) {
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+    if (hi - lo < 1) return;
+    final pad = (hi - lo) * 0.08;
+    lo -= pad;
+    hi += pad;
+
+    double dx(int i) => plotW * i / (pts.length - 1);
+    double dy(double v) => topPad + plotH * (1 - (v - lo) / (hi - lo));
+
+    // Zero line, drawn first so the series sit over it.
+    final zeroY = dy(0);
+    canvas.drawLine(Offset(0, zeroY), Offset(plotW, zeroY),
+        Paint()..color = gridColor..strokeWidth = 1);
+
+    void series(double Function(LiquidityPoint) pick, Color c, double w) {
+      final path = Path();
+      for (var i = 0; i < pts.length; i++) {
+        final o = Offset(dx(i), dy(pick(pts[i])));
+        i == 0 ? path.moveTo(o.dx, o.dy) : path.lineTo(o.dx, o.dy);
+      }
+      canvas.drawPath(
+          path,
+          Paint()
+            ..color = c
+            ..strokeWidth = w
+            ..style = PaintingStyle.stroke
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round);
+    }
+
+    series((p) => p.cash, baseColor.withValues(alpha: 0.55), 1.4);
+    series((p) => p.debt, baseColor.withValues(alpha: 0.35), 1.4);
+    series((p) => p.liquidity, lineColor, 2.4);
+
+    // The trough, which is the number the live figure cannot show.
+    final tIdx = pts.indexOf(hist.trough);
+    if (tIdx >= 0) {
+      final o = Offset(dx(tIdx), dy(hist.trough.liquidity));
+      canvas.drawCircle(o, 4.5,
+          Paint()..color = (hist.trough.liquidity < 0 ? negColor : lineColor));
+      canvas.drawCircle(
+          o, 2.0, Paint()..color = const Color(0xFFFFFFFF).withValues(alpha: 0.9));
+    }
+
+    // Today's end of the line.
+    canvas.drawCircle(Offset(dx(pts.length - 1), dy(pts.last.liquidity)), 3.5,
+        Paint()..color = lineColor);
+
+    void label(String t, double x, {bool right = false}) {
+      final tp = TextPainter(
+        text: TextSpan(
+            text: t,
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 9.5,
+                fontWeight: FontWeight.w600,
+                color: baseColor.withValues(alpha: 0.7))),
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas,
+          Offset(right ? x - tp.width : x, topPad + plotH + 5));
+    }
+
+    label(DateFormat('d MMM').format(pts.first.date), 0);
+    label('Today', plotW, right: true);
+  }
+
+  @override
+  bool shouldRepaint(_LiquidityChartPainter old) =>
+      old.hist != hist || old.lineColor != lineColor;
 }
