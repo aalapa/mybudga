@@ -28,6 +28,10 @@ class ReportsState {
   /// Outflow split by how much choice you have over it, one entry per month.
   final List<TierMonth> byTierMonth;
 
+  /// 'yyyy-MM-dd' → tier → outflow. Kept by date so the same figures can be
+  /// reshaped onto a day-of-month or day-of-week axis without another query.
+  final Map<String, Map<SpendingTier, double>> byTierDay;
+
   /// Every group with its classification, for the inline editor.
   final List<GroupTier> groupTiers;
 
@@ -52,6 +56,7 @@ class ReportsState {
     required this.categoryMonthlySpend,
     required this.categoryDailySpend,
     this.byTierMonth    = const [],
+    this.byTierDay      = const {},
     this.groupTiers     = const [],
     this.categoryHealth  = const [],
     this.netWorthByMonth = const [],
@@ -380,6 +385,8 @@ final reportsProvider = FutureProvider.autoDispose
 
   // monthKey → tier → amount, plus every group seen and how it is classified.
   final Map<String, Map<SpendingTier, double>> tierAgg = {};
+  // 'yyyy-MM-dd' → tier → outflow
+  final Map<String, Map<SpendingTier, double>> dayTierAgg = {};
   final Map<String, GroupTier> groupTierMap = {};
 
   // accountId → monthKey → net movement, for reconstructing past balances.
@@ -426,7 +433,18 @@ final reportsProvider = FutureProvider.autoDispose
         final mk = '${date.year}-${date.month.toString().padLeft(2, '0')}';
         (tierAgg[mk] ??= {})
             .update(tier, (v) => v + amount.abs(), ifAbsent: () => amount.abs());
+        // The same figures kept by date rather than by month, for the
+        // day-of-month / day-of-week profile. Split by tier because a profile
+        // that includes rent only ever says "rent is on the 1st".
+        (dayTierAgg[_dayKey(date)] ??= {})
+            .update(tier, (v) => v + amount.abs(), ifAbsent: () => amount.abs());
       }
+    } else if (amount < 0 && cat == null) {
+      // Uncategorised spending has no group and so no tier, but it is still
+      // money out that day. Dropping it would leave the profile quietly short.
+      (dayTierAgg[_dayKey(date)] ??= {}).update(
+          SpendingTier.essential, (v) => v + amount.abs(),
+          ifAbsent: () => amount.abs());
     }
 
     if (amount > 0) {
@@ -711,6 +729,7 @@ final reportsProvider = FutureProvider.autoDispose
     categoryMonthlySpend: categoryMonthlySpend,
     categoryDailySpend:   catDayAgg,
     byTierMonth:          byTierMonth,
+    byTierDay:            dayTierAgg,
     groupTiers:           groupTiers,
     categoryHealth:       categoryHealth,
     netWorthByMonth:      netWorthByMonth,
@@ -830,4 +849,178 @@ double _median(List<double> xs) {
   final s = [...xs]..sort();
   final mid = s.length ~/ 2;
   return s.length.isOdd ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+String _dayKey(DateTime d) => '${d.year}-'
+    '${d.month.toString().padLeft(2, '0')}-'
+    '${d.day.toString().padLeft(2, '0')}';
+
+// ---------------------------------------------------------------------------
+// Spending rhythm: where in the month (or week) the money actually goes
+// ---------------------------------------------------------------------------
+
+enum RhythmAxis {
+  dayOfMonth('Day of month'),
+  dayOfWeek('Day of week');
+
+  const RhythmAxis(this.label);
+  final String label;
+}
+
+/// One slot on the axis — the 14th of the month, or every Tuesday.
+class RhythmSlot {
+  final int index;
+
+  /// One total per contributing month (day-of-month) or per occurrence of that
+  /// weekday. Sorted ascending.
+  final List<double> samples;
+
+  const RhythmSlot({required this.index, required this.samples});
+
+  /// How many periods could have contributed. Day 31 has far fewer than day 1,
+  /// and an average that ignores this makes month-end look cheap.
+  int get sampleCount => samples.length;
+
+  /// Median, not mean. One holiday or one car repair drags a mean upward for
+  /// good, and the question here is "what does this day usually cost" — which
+  /// is exactly what a mean stops answering as soon as an outlier lands.
+  double get typical {
+    if (samples.isEmpty) return 0;
+    final mid = samples.length ~/ 2;
+    return samples.length.isOdd
+        ? samples[mid]
+        : (samples[mid - 1] + samples[mid]) / 2;
+  }
+
+  double get low  => samples.isEmpty ? 0 : samples.first;
+  double get high => samples.isEmpty ? 0 : samples.last;
+
+  /// Periods where anything at all was spent. A peak present in 11 of 12
+  /// months is a commitment; one present in 2 is an accident, and the chart
+  /// has to be able to tell them apart.
+  int get activeCount => samples.where((v) => v > 0.005).length;
+
+  double get reliability =>
+      samples.isEmpty ? 0 : activeCount / samples.length;
+}
+
+class SpendingRhythm {
+  final RhythmAxis axis;
+  final List<RhythmSlot> slots;
+
+  /// Periods spanned — months for a day-of-month axis.
+  final int periods;
+
+  const SpendingRhythm({
+    required this.axis,
+    required this.slots,
+    required this.periods,
+  });
+
+  bool get isEmpty => slots.every((s) => s.typical <= 0.005);
+
+  double get peakValue =>
+      slots.fold(0.0, (m, s) => s.high > m ? s.high : m);
+
+  /// The slot worth acting on: the most expensive one that happens nearly
+  /// every period. Sorting by size alone surfaces the single worst day you
+  /// ever had, which is not something you can budget for.
+  RhythmSlot? get mostReliablePeak {
+    final candidates =
+        slots.where((s) => s.reliability >= 0.7 && s.typical > 0).toList();
+    if (candidates.isEmpty) return null;
+    candidates.sort((a, b) => b.typical.compareTo(a.typical));
+    return candidates.first;
+  }
+
+  /// Share of a typical period's spend falling in its first third.
+  double get frontLoad {
+    if (axis != RhythmAxis.dayOfMonth) return 0;
+    final all = slots.fold(0.0, (s, x) => s + x.typical);
+    if (all <= 0) return 0;
+    final head = slots
+        .where((s) => s.index <= 10)
+        .fold(0.0, (s, x) => s + x.typical);
+    return head / all;
+  }
+}
+
+/// Reshape [ReportsState.byTierDay] onto a day-of-month or day-of-week axis.
+///
+/// No query: this is the daily figures already aggregated for the reports
+/// screen, grouped differently. [tiers] narrows which spending counts — the
+/// default drops `fixed`, because a profile including rent only ever tells you
+/// that rent is on the 1st, which you already knew.
+SpendingRhythm buildRhythm(
+  ReportsState data, {
+  RhythmAxis axis = RhythmAxis.dayOfMonth,
+  Set<SpendingTier> tiers = const {
+    SpendingTier.essential,
+    SpendingTier.discretionary,
+  },
+}) {
+  // slot -> period key -> total, so each period contributes one sample even
+  // when it holds several transactions.
+  final bySlot = <int, Map<String, double>>{};
+  final periodKeys = <String>{};
+
+  for (final entry in data.byTierDay.entries) {
+    final parts = entry.key.split('-');
+    if (parts.length != 3) continue;
+    final date = DateTime(
+        int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+    var amount = 0.0;
+    for (final t in tiers) {
+      amount += entry.value[t] ?? 0.0;
+    }
+
+    final slot = axis == RhythmAxis.dayOfMonth ? date.day : date.weekday;
+    // A day-of-month sample belongs to its month; a weekday sample belongs to
+    // its week, so that a month with five Saturdays does not count one of them
+    // twice over.
+    final period = axis == RhythmAxis.dayOfMonth
+        ? '${date.year}-${date.month}'
+        : _isoWeekKey(date);
+    periodKeys.add(period);
+    (bySlot[slot] ??= {}).update(period, (v) => v + amount,
+        ifAbsent: () => amount);
+  }
+
+  // Zero-spend periods are real data: a day that costs nothing in eight months
+  // out of twelve is cheap, and omitting those periods would report it as
+  // expensive. So every slot is filled out to the periods that could have had
+  // it, with zeros.
+  final slots = <RhythmSlot>[];
+  final maxSlot = axis == RhythmAxis.dayOfMonth ? 31 : 7;
+  for (var i = 1; i <= maxSlot; i++) {
+    final seen = bySlot[i] ?? const <String, double>{};
+    final eligible = periodKeys
+        .where((p) => _periodHasSlot(p, i, axis))
+        .toList();
+    if (eligible.isEmpty) continue;
+    final samples = [for (final p in eligible) seen[p] ?? 0.0]..sort();
+    slots.add(RhythmSlot(index: i, samples: samples));
+  }
+
+  return SpendingRhythm(
+      axis: axis, slots: slots, periods: periodKeys.length);
+}
+
+/// Whether a period could contain this slot at all — February has no 30th, so
+/// counting it as a zero would drag the 30th's typical figure down.
+bool _periodHasSlot(String periodKey, int slot, RhythmAxis axis) {
+  if (axis == RhythmAxis.dayOfWeek) return true;
+  final parts = periodKey.split('-');
+  if (parts.length != 2) return false;
+  final year  = int.tryParse(parts[0]);
+  final month = int.tryParse(parts[1]);
+  if (year == null || month == null) return false;
+  return slot <= DateTime(year, month + 1, 0).day;
+}
+
+String _isoWeekKey(DateTime d) {
+  final thursday = d.add(Duration(days: 4 - (d.weekday == 7 ? 7 : d.weekday)));
+  final week =
+      ((thursday.difference(DateTime(thursday.year, 1, 1)).inDays) / 7).floor() + 1;
+  return '${thursday.year}-w$week';
 }

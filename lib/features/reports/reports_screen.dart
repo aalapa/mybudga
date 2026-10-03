@@ -1,6 +1,6 @@
 import '../../core/theme/semantic_colors.dart';
 import 'dart:ui' as ui;
-import 'dart:math' show max, min;
+import 'dart:math' show max, min, sqrt;
 
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
@@ -134,6 +134,7 @@ enum _RSection {
   savingsRate('Savings rate'),
   budgetHealth('Budget health'),
   tiers('Committed vs free'),
+  rhythm('Spending rhythm'),
   payees('Top payees');
 
   const _RSection(this.title);
@@ -445,6 +446,7 @@ class _ReportsBody extends StatelessWidget {
           months > 1 ? _SavingsRateTrendSection(data: data) : null,
         _RSection.budgetHealth => _BudgetHealthSection(data: data),
         _RSection.tiers        => _SpendingTierSection(data: data),
+        _RSection.rhythm       => _RhythmSection(data: data),
         _RSection.payees =>
           data.topPayees.isEmpty ? null : _PayeesSection(data: data),
       };
@@ -2956,5 +2958,483 @@ class _Section extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Spending rhythm
+// ---------------------------------------------------------------------------
+
+/// Where in the month — or the week — the money actually leaves.
+///
+/// A monthly budget can be perfectly healthy while leaving you short on the
+/// 20th, and nothing else in the app shows that. The useful distinction is
+/// between a peak that happens every month, which is a commitment you have not
+/// named, and one that happened once, which is noise. Hence a band for the
+/// spread and a reliability figure, rather than twelve overlaid lines where
+/// the two look identical.
+class _RhythmSection extends StatefulWidget {
+  final ReportsState data;
+  const _RhythmSection({required this.data});
+
+  @override
+  State<_RhythmSection> createState() => _RhythmSectionState();
+}
+
+class _RhythmSectionState extends State<_RhythmSection> {
+  RhythmAxis _axis = RhythmAxis.dayOfMonth;
+  bool _includeFixed = false;
+
+  Set<SpendingTier> get _tiers => _includeFixed
+      ? const {
+          SpendingTier.fixed,
+          SpendingTier.essential,
+          SpendingTier.discretionary,
+        }
+      : const {SpendingTier.essential, SpendingTier.discretionary};
+
+  @override
+  Widget build(BuildContext context) {
+    final cs    = Theme.of(context).colorScheme;
+    final money = context.money;
+    final f0    = NumberFormat.currency(symbol: '\$', decimalDigits: 0);
+    final rhythm = buildRhythm(widget.data, axis: _axis, tiers: _tiers);
+
+    if (rhythm.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: Text('Not enough spending in this window yet',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12.5, color: cs.onSurfaceVariant)),
+        ),
+      );
+    }
+
+    final peak = rhythm.mostReliablePeak;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final a in RhythmAxis.values)
+                    _RhythmChip(
+                      label:    a == RhythmAxis.dayOfMonth ? 'By day' : 'By weekday',
+                      selected: _axis == a,
+                      onTap:    () => setState(() => _axis = a),
+                    ),
+                  _RhythmChip(
+                    label:    _includeFixed ? 'All spending' : 'Excluding fixed',
+                    selected: !_includeFixed,
+                    onTap: () =>
+                        setState(() => _includeFixed = !_includeFixed),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          _includeFixed
+              ? 'Fixed bills included — they will dominate the shape.'
+              : 'Fixed bills left out, so what remains is spending you '
+                  'control.',
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 11,
+              height: 1.4,
+              color: cs.onSurfaceVariant.withValues(alpha: 0.8)),
+        ),
+        const SizedBox(height: 14),
+
+        // The finding, stated. The chart is the evidence for it.
+        if (peak != null)
+          Text.rich(
+            TextSpan(
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12.5, height: 1.5, color: cs.onSurfaceVariant),
+              children: [
+                const TextSpan(text: 'Your most dependable spike is '),
+                TextSpan(
+                  text: _axis == RhythmAxis.dayOfMonth
+                      ? 'day ${peak.index}'
+                      : _weekdayName(peak.index),
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: money.warning),
+                ),
+                TextSpan(
+                    text: ', about ${f0.format(peak.typical)} and showing up '
+                        'in ${(peak.reliability * 100).round()}% of '
+                        '${_axis == RhythmAxis.dayOfMonth ? 'months' : 'weeks'}'
+                        '. That is regular enough to budget for.'),
+              ],
+            ),
+          ),
+        if (_axis == RhythmAxis.dayOfMonth && rhythm.frontLoad > 0.45) ...[
+          const SizedBox(height: 6),
+          Text(
+            '${(rhythm.frontLoad * 100).round()}% of a typical month goes in '
+            'the first ten days. The month can balance and still leave you '
+            'thin before the next payday.',
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 12, height: 1.5, color: money.warning),
+          ),
+        ],
+        const SizedBox(height: 16),
+
+        SizedBox(
+          height: 160,
+          child: LayoutBuilder(
+            builder: (context, c) => CustomPaint(
+              size: Size(c.maxWidth, 160),
+              painter: _RhythmPainter(
+                rhythm:    rhythm,
+                lineColor: cs.primary,
+                bandColor: cs.primary.withValues(alpha: 0.14),
+                baseColor: cs.onSurfaceVariant,
+                gridColor: cs.outlineVariant,
+                peakIndex: peak?.index,
+                peakColor: money.warning,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Container(
+                width: 14, height: 2.5,
+                decoration: BoxDecoration(
+                    color: cs.primary,
+                    borderRadius: BorderRadius.circular(2))),
+            const SizedBox(width: 5),
+            Text('Typical',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11, color: cs.onSurfaceVariant)),
+            const SizedBox(width: 14),
+            Container(
+                width: 14, height: 8,
+                decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(2))),
+            const SizedBox(width: 5),
+            Expanded(
+              child: Text('Range across the window',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11, color: cs.onSurfaceVariant)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'The line is the median, not the average — one holiday would drag an '
+          'average up for good and stop it answering "what does this day '
+          'usually cost".',
+          style: GoogleFonts.plusJakartaSans(
+              fontSize: 10.5,
+              height: 1.45,
+              color: cs.onSurfaceVariant.withValues(alpha: 0.7)),
+        ),
+
+        if (_axis == RhythmAxis.dayOfMonth) ...[
+          const SizedBox(height: 20),
+          Text('EVERY MONTH, SIDE BY SIDE',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1,
+                  color: cs.onSurfaceVariant)),
+          const SizedBox(height: 2),
+          Text('A column that is dark all the way down happens every month.',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11,
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.8))),
+          const SizedBox(height: 10),
+          _RhythmHeatmap(data: widget.data, tiers: _tiers),
+        ],
+      ],
+    );
+  }
+}
+
+String _weekdayName(int weekday) => const [
+      'Monday', 'Tuesday', 'Wednesday', 'Thursday',
+      'Friday', 'Saturday', 'Sunday',
+    ][(weekday - 1).clamp(0, 6)];
+
+class _RhythmChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _RhythmChip(
+      {required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        height: 32,
+        padding: const EdgeInsets.symmetric(horizontal: 13),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? cs.primary.withValues(alpha: 0.13) : null,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+              color: selected
+                  ? cs.primary.withValues(alpha: 0.55)
+                  : cs.outlineVariant),
+        ),
+        child: Text(label,
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected ? cs.primary : cs.onSurfaceVariant)),
+      ),
+    );
+  }
+}
+
+/// Median line with a range band behind it.
+///
+/// The band is the whole point: a tall peak inside a narrow band is a bill you
+/// have not named, and a tall peak inside a wide band is one month's accident.
+/// A plain line cannot distinguish them, and nor can twelve overlaid lines.
+class _RhythmPainter extends CustomPainter {
+  final SpendingRhythm rhythm;
+  final Color lineColor;
+  final Color bandColor;
+  final Color baseColor;
+  final Color gridColor;
+  final int? peakIndex;
+  final Color peakColor;
+
+  _RhythmPainter({
+    required this.rhythm,
+    required this.lineColor,
+    required this.bandColor,
+    required this.baseColor,
+    required this.gridColor,
+    required this.peakIndex,
+    required this.peakColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const topPad = 8.0, bottomPad = 18.0, rightPad = 4.0;
+    final plotH = size.height - topPad - bottomPad;
+    final plotW = size.width - rightPad;
+    final slots = rhythm.slots;
+    if (slots.length < 2 || plotH <= 0) return;
+
+    final maxV = rhythm.peakValue;
+    if (maxV <= 0) return;
+    final top = maxV * 1.1;
+
+    double dx(int i) => plotW * i / (slots.length - 1);
+    double dy(double v) => topPad + plotH * (1 - v / top);
+
+    canvas.drawLine(Offset(0, topPad + plotH), Offset(plotW, topPad + plotH),
+        Paint()..color = gridColor..strokeWidth = 1);
+
+    // Band: high across, then low back.
+    final band = Path();
+    for (var i = 0; i < slots.length; i++) {
+      final o = Offset(dx(i), dy(slots[i].high));
+      if (i == 0) {
+        band.moveTo(o.dx, o.dy);
+      } else {
+        band.lineTo(o.dx, o.dy);
+      }
+    }
+    for (var i = slots.length - 1; i >= 0; i--) {
+      band.lineTo(dx(i), dy(slots[i].low));
+    }
+    band.close();
+    canvas.drawPath(band, Paint()..color = bandColor);
+
+    // Where the sample size drops — the 29th onwards is not measured as often
+    // as the 1st, and a line that says so is harder to over-read.
+    final full = slots.isEmpty ? 0 : slots.first.sampleCount;
+    final thin = slots.indexWhere((s) => s.sampleCount < full);
+    if (thin > 0) {
+      final x = dx(thin);
+      canvas.drawRect(
+          Rect.fromLTRB(x, topPad, plotW, topPad + plotH),
+          Paint()..color = baseColor.withValues(alpha: 0.05));
+    }
+
+    final median = Path();
+    for (var i = 0; i < slots.length; i++) {
+      final o = Offset(dx(i), dy(slots[i].typical));
+      i == 0 ? median.moveTo(o.dx, o.dy) : median.lineTo(o.dx, o.dy);
+    }
+    canvas.drawPath(
+        median,
+        Paint()
+          ..color = lineColor
+          ..strokeWidth = 2.2
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round);
+
+    if (peakIndex != null) {
+      final i = slots.indexWhere((s) => s.index == peakIndex);
+      if (i >= 0) {
+        final o = Offset(dx(i), dy(slots[i].typical));
+        canvas.drawCircle(o, 4.5, Paint()..color = peakColor);
+      }
+    }
+
+    void label(String t, double x, {bool right = false, bool mid = false}) {
+      final tp = TextPainter(
+        text: TextSpan(
+            text: t,
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 9.5,
+                fontWeight: FontWeight.w600,
+                color: baseColor.withValues(alpha: 0.7))),
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
+      var dxp = x;
+      if (right) {
+        dxp -= tp.width;
+      } else if (mid) {
+        dxp -= tp.width / 2;
+      }
+      tp.paint(canvas, Offset(dxp, topPad + plotH + 5));
+    }
+
+    if (rhythm.axis == RhythmAxis.dayOfWeek) {
+      for (var i = 0; i < slots.length; i++) {
+        label(_weekdayName(slots[i].index).substring(0, 3), dx(i), mid: i != 0);
+      }
+    } else {
+      label('${slots.first.index}', 0);
+      final midIdx = slots.length ~/ 2;
+      label('${slots[midIdx].index}', dx(midIdx), mid: true);
+      label('${slots.last.index}', plotW, right: true);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RhythmPainter old) =>
+      old.rhythm != rhythm || old.peakIndex != peakIndex;
+}
+
+/// Months down, days across. A column dark the whole way down is a recurring
+/// commitment; one dark cell is an accident.
+///
+/// This is what the twelve-line chart was reaching for — every month kept
+/// separate — without asking the eye to separate twelve overlapping curves.
+class _RhythmHeatmap extends StatelessWidget {
+  final ReportsState data;
+  final Set<SpendingTier> tiers;
+  const _RhythmHeatmap({required this.data, required this.tiers});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    // month key -> day -> amount
+    final grid = <String, Map<int, double>>{};
+    for (final e in data.byTierDay.entries) {
+      final p = e.key.split('-');
+      if (p.length != 3) continue;
+      var amount = 0.0;
+      for (final t in tiers) {
+        amount += e.value[t] ?? 0.0;
+      }
+      if (amount <= 0) continue;
+      (grid['${p[0]}-${p[1]}'] ??= {})[int.parse(p[2])] = amount;
+    }
+    if (grid.isEmpty) return const SizedBox.shrink();
+
+    final months = grid.keys.toList()..sort();
+    var peak = 0.0;
+    for (final m in grid.values) {
+      for (final v in m.values) {
+        if (v > peak) peak = v;
+      }
+    }
+    if (peak <= 0) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final mk in months)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 3),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 30,
+                  child: Text(_monthAbbrev(mk),
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w600,
+                          color: cs.onSurfaceVariant)),
+                ),
+                Expanded(
+                  child: Row(
+                    children: [
+                      for (var d = 1; d <= 31; d++)
+                        Expanded(
+                          child: Container(
+                            height: 13,
+                            margin: const EdgeInsets.symmetric(horizontal: 0.5),
+                            decoration: BoxDecoration(
+                              // Square-rooted so a single huge day does not
+                              // wash every ordinary one out to near-white.
+                              color: cs.primary.withValues(
+                                  alpha: _intensity(grid[mk]?[d], peak)),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            const SizedBox(width: 30),
+            Text('1',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 9, color: cs.onSurfaceVariant)),
+            const Spacer(),
+            Text('31',
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 9, color: cs.onSurfaceVariant)),
+          ],
+        ),
+      ],
+    );
+  }
+
+  static double _intensity(double? v, double peak) {
+    if (v == null || v <= 0) return 0.05;
+    final ratio = (v / peak).clamp(0.0, 1.0);
+    return 0.10 + 0.80 * sqrt(ratio);
+  }
+
+  static String _monthAbbrev(String monthKey) {
+    final p = monthKey.split('-');
+    if (p.length != 2) return monthKey;
+    return DateFormat('MMM')
+        .format(DateTime(int.parse(p[0]), int.parse(p[1])));
   }
 }
