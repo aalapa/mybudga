@@ -1,3 +1,4 @@
+import '../../core/offline/response_cache.dart';
 import 'package:intl/intl.dart';
 import '../cashflow/cashflow_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -114,7 +115,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
       ref.onDispose(() => client.removeChannel(ch));
     }
 
-    return _load(client, householdId, _month);
+    return _load(client, householdId, _month, ref.read(responseCacheProvider));
   }
 
   // ---------------------------------------------------------------------------
@@ -471,12 +472,15 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
     SupabaseClient client,
     String householdId,
     DateTime month,
+    ResponseCache cache,
   ) async {
     final monthStr     = _toMonthString(month);
     final nextMonthStr = _toMonthString(DateTime(month.year, month.month + 1));
 
     // Parallel fetch
-    final results = await Future.wait([
+    final results = await cache.read(
+        'budget:$householdId:$monthStr',
+        () async => await Future.wait([
       // 1. category groups + categories
       client
           .from('category_groups')
@@ -545,7 +549,7 @@ class BudgetNotifier extends AsyncNotifier<BudgetState> {
           .not('transfer_id', 'is', null)
           .isFilter('deleted_at', null)
           .limit(_kHistoryRowCap),
-    ]);
+    ])) as List;
 
     // Carry-forward and TBB are both running totals over *all* history, so a
     // truncated result set would produce silently wrong balances. Fail loudly
@@ -990,7 +994,8 @@ final budgetForMonthProvider = FutureProvider.autoDispose
   final client      = ref.watch(supabaseProvider);
   // Invalidate whenever the main budget changes (category edits, transactions, etc.)
   ref.watch(budgetProvider);
-  return BudgetNotifier._load(client, householdId, BudgetNotifier._firstOfMonth(month));
+  return BudgetNotifier._load(client, householdId,
+      BudgetNotifier._firstOfMonth(month), ref.read(responseCacheProvider));
 });
 
 /// Fetches actual transactions for a single category + month.

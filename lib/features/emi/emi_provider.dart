@@ -1,3 +1,4 @@
+import '../../core/ids.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/supabase/supabase_provider.dart';
@@ -95,6 +96,7 @@ class EmiPlansNotifier extends AsyncNotifier<List<EmiPlan>> {
 
     // Debit leg (from checking/savings)
     final debit = await client.from('transactions').insert({
+      'id':           newRowId(),
       'household_id': householdId,
       'account_id':   fromAccountId,
       'amount':       -plan.monthlyOutflow,
@@ -105,6 +107,7 @@ class EmiPlansNotifier extends AsyncNotifier<List<EmiPlan>> {
 
     // Credit leg (to credit card — reduces balance)
     final credit = await client.from('transactions').insert({
+      'id':           newRowId(),
       'household_id': householdId,
       'account_id':   plan.ccAccountId,
       'amount':       plan.monthlyOutflow,

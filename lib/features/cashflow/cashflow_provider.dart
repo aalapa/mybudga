@@ -1,3 +1,4 @@
+import '../../core/ids.dart';
 import '../../core/theme/theme_provider.dart' show sharedPreferencesProvider;
 import '../insights/payee_pattern.dart';
 import '../insights/insights_provider.dart';
@@ -156,6 +157,7 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
     }
 
     await client.from('transactions').insert({
+      'id':           newRowId(),
       'household_id': householdId,
       'account_id':   accountId,
       'payee_id':     payeeId,
@@ -228,6 +230,7 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
     if (st.isTransfer && st.transferToAccountId != null) {
       // Two-leg transfer: debit FROM → credit TO
       final debit = await client.from('transactions').insert({
+        'id':           newRowId(),
         'household_id': householdId,
         'account_id':   accountId,
         'amount':       -actualAmount.abs(),
@@ -237,6 +240,7 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
       }).select('id').single();
 
       final credit = await client.from('transactions').insert({
+        'id':           newRowId(),
         'household_id': householdId,
         'account_id':   st.transferToAccountId,
         'amount':       actualAmount.abs(),
@@ -251,6 +255,7 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
           .eq('id', debit['id'] as String);
     } else {
       await client.from('transactions').insert({
+        'id':           newRowId(),
         'household_id': householdId,
         'account_id':   accountId,
         'payee_id':     st.payeeId,
@@ -384,6 +389,7 @@ class CashflowNotifier extends AsyncNotifier<CashflowState> {
         if ((claimed as List).isEmpty) break;
 
         await client.from('transactions').insert({
+          'id':           newRowId(),
           'household_id': householdId,
           'account_id':   st.accountId,
           'payee_id':     st.payeeId,

@@ -1,4 +1,5 @@
 // ignore_for_file: avoid_print
+import '../../core/ids.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../shared/models/account.dart';
 
@@ -225,7 +226,7 @@ class YnabImportService {
     // Create groups
     final groups = pairs.values.toSet();
     final groupInserts = groups.map((g) => {
-          'household_id': _householdId,
+        'household_id': _householdId,
           'name':         g,
           'sort_order':   0,
         }).toList();
@@ -391,6 +392,7 @@ class YnabImportService {
       final payeeId = r.payee.trim().isNotEmpty ? payeeIdMap[r.payee.trim()] : null;
 
       inserts.add({
+        'id':           newRowId(),
         'household_id': _householdId,
         'account_id':   accountId,
         'payee_id':     payeeId,

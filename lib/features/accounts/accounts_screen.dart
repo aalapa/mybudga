@@ -1,3 +1,4 @@
+import '../../core/offline/response_cache.dart';
 import 'dart:ui' as ui;
 import '../../core/money.dart';
 import '../../core/theme/semantic_colors.dart';
@@ -2144,7 +2145,7 @@ void _showCloseAccountDialog(
                         if (ctx.mounted) {
                           setState(() => saving = false);
                           ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                            content: Text('Could not close account: $e'),
+                            content: Text(describeWriteFailure(e, 'Could not close account')),
                             behavior: SnackBarBehavior.floating,
                           ));
                         }
@@ -2235,7 +2236,7 @@ void _showDeleteAccountDialog(
                         if (ctx.mounted) {
                           setState(() => saving = false);
                           ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                            content: Text('Could not delete account: $e'),
+                            content: Text(describeWriteFailure(e, 'Could not delete account')),
                             behavior: SnackBarBehavior.floating,
                           ));
                         }
@@ -2340,7 +2341,7 @@ class _EditAccountSheetState extends State<_EditAccountSheet> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Could not save: $e'),
+          content: Text(describeWriteFailure(e, 'Could not save')),
           backgroundColor: Theme.of(context).colorScheme.error,
           behavior: SnackBarBehavior.floating,
         ));
@@ -2925,7 +2926,7 @@ class _AddAccountSheetState extends State<_AddAccountSheet> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Could not save account: $e'),
+          content: Text(describeWriteFailure(e, 'Could not save account')),
           backgroundColor: Theme.of(context).colorScheme.error,
           behavior: SnackBarBehavior.floating,
         ));

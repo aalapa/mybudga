@@ -1,3 +1,5 @@
+import '../../core/ids.dart';
+import '../../core/offline/response_cache.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -69,19 +71,21 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
       // Non-fatal: proceed with whatever is already in the table.
     }
 
-    return _fetch(client, householdId);
+    return _fetch(client, householdId, ref.read(responseCacheProvider));
   }
 
-  static Future<List<Transaction>> _fetch(
-      SupabaseClient client, String householdId) async {
-    final res = await client
-        .from('transactions')
-        .select(_joinClause)
-        .eq('household_id', householdId)
-        .isFilter('deleted_at', null)
-        .order('date', ascending: false)
-        .order('created_at', ascending: false)
-        .limit(200);
+  static Future<List<Transaction>> _fetch(SupabaseClient client,
+      String householdId, ResponseCache cache) async {
+    final res = await cache.read(
+        'transactions:$householdId',
+        () async => await client
+            .from('transactions')
+            .select(_joinClause)
+            .eq('household_id', householdId)
+            .isFilter('deleted_at', null)
+            .order('date', ascending: false)
+            .order('created_at', ascending: false)
+            .limit(200));
 
     return (res as List)
         .map((r) => Transaction.fromJson(r as Map<String, dynamic>))
@@ -111,6 +115,7 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
     }
 
     await client.from('transactions').insert({
+      'id':           newRowId(),
       'household_id': householdId,
       'account_id':   accountId,
       'payee_id':     payeeId,
@@ -159,6 +164,7 @@ class TransactionsNotifier extends AsyncNotifier<List<Transaction>> {
     }
 
     final rows = splits.map((s) => <String, dynamic>{
+      'id':             newRowId(),
       'household_id':   householdId,
       'account_id':     accountId,
       'payee_id':       payeeId,

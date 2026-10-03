@@ -1,3 +1,4 @@
+import '../../core/offline/response_cache.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/supabase/supabase_provider.dart';
 import '../models/category.dart';
@@ -7,7 +8,9 @@ final categoriesProvider = FutureProvider<List<CategoryGroup>>((ref) async {
   final householdId = await ref.watch(householdIdProvider.future);
   final client      = ref.watch(supabaseProvider);
 
-  final res = await client
+  final res = await ref.read(responseCacheProvider).read(
+      'categories:$householdId',
+      () async => await client
       .from('category_groups')
       .select('id, name, sort_order, categories(id, name, sort_order, is_cc_payment, is_hidden, inactive_from)')
       .eq('household_id', householdId)
@@ -23,7 +26,7 @@ final categoriesProvider = FutureProvider<List<CategoryGroup>>((ref) async {
       // transaction being entered, which this provider cannot know. Callers
       // narrow with categoriesOn().
       .order('sort_order')
-      .order('sort_order', referencedTable: 'categories');
+      .order('sort_order', referencedTable: 'categories'));
 
   return CategoryGroup.fromJsonList(res as List);
 });

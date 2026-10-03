@@ -1,3 +1,4 @@
+import 'core/offline/response_cache.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -26,11 +27,16 @@ void main() async {
 
   // Load persisted theme prefs before the first frame so there's no flash.
   final prefs = await SharedPreferences.getInstance();
+  // Opened before the first frame too: the cache has to be ready before any
+  // provider builds, or a cold start with no network has nothing to fall back
+  // on and the app is as empty as it was before.
+  final responseCache = await ResponseCache.open();
 
   FlutterNativeSplash.remove();
   runApp(ProviderScope(
     overrides: [
       sharedPreferencesProvider.overrideWithValue(prefs),
+      responseCacheProvider.overrideWithValue(responseCache),
     ],
     child: const MyBudgaApp(),
   ));

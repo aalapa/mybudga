@@ -1,3 +1,4 @@
+import '../../core/offline/response_cache.dart';
 import '../../core/theme/semantic_colors.dart';
 import 'dart:convert';
 import 'dart:io';
@@ -482,6 +483,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
     );
     if (confirmed != true) return;
+    await ref.read(responseCacheProvider).clear();
     await Supabase.instance.client.auth.signOut();
   }
 

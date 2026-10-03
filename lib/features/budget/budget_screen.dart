@@ -1,3 +1,4 @@
+import '../../core/offline/response_cache.dart';
 import '../../core/money.dart';
 import 'dart:ui' as ui;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -3486,7 +3487,7 @@ class _InlineAddRowState extends ConsumerState<_InlineAddRow> {
       if (mounted) {
         setState(() => _saving = false);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Could not add category: $e'),
+          content: Text(describeWriteFailure(e, 'Could not add category')),
           behavior: SnackBarBehavior.floating,
         ));
       }
@@ -4164,7 +4165,7 @@ class _CategoryDetailSheetState extends ConsumerState<_CategoryDetailSheet> {
         setState(() => _saving = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Could not save: $e'),
+            content: Text(describeWriteFailure(e, 'Could not save')),
             backgroundColor: Theme.of(context).colorScheme.error,
             behavior: SnackBarBehavior.floating,
           ),
@@ -5365,7 +5366,7 @@ class _ReorderGroupsSheetState extends State<_ReorderGroupsSheet> {
       if (mounted) {
         setState(() => _saving = false);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Could not save order: $e'),
+          content: Text(describeWriteFailure(e, 'Could not save order')),
           behavior: SnackBarBehavior.floating,
         ));
       }

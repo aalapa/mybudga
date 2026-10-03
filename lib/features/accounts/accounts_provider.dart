@@ -1,3 +1,5 @@
+import '../../core/ids.dart';
+import '../../core/offline/response_cache.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -30,17 +32,19 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
 
     ref.onDispose(() => client.removeChannel(channel));
 
-    return _fetch(client, householdId);
+    return _fetch(client, householdId, ref.read(responseCacheProvider));
   }
 
-  static Future<List<Account>> _fetch(
-      SupabaseClient client, String householdId) async {
-    final res = await client
-        .from('accounts')
-        .select()
-        .eq('household_id', householdId)
-        .eq('is_active', true)
-        .order('created_at');
+  static Future<List<Account>> _fetch(SupabaseClient client,
+      String householdId, ResponseCache cache) async {
+    final res = await cache.read(
+        'accounts:$householdId',
+        () async => await client
+            .from('accounts')
+            .select()
+            .eq('household_id', householdId)
+            .eq('is_active', true)
+            .order('created_at'));
     return (res as List).map((r) => Account.fromJson(r as Map<String, dynamic>)).toList();
   }
 
@@ -116,6 +120,7 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
           '${txDate.day.toString().padLeft(2, '0')}';
 
       await client.from('transactions').insert({
+        'id':           newRowId(),
         'household_id': householdId,
         'account_id':   res['id'] as String,
         'amount':       startingBalance,
@@ -187,6 +192,7 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
           '${txDate.day.toString().padLeft(2, '0')}';
 
       await client.from('transactions').insert({
+        'id':           newRowId(),
         'household_id': householdId,
         'account_id':   accountId,
         'category_id':  catRes['id'] as String,

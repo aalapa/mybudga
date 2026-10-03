@@ -1,3 +1,4 @@
+import '../../core/offline/response_cache.dart';
 import '../../core/theme/semantic_colors.dart';
 import '../../features/cashflow/cashflow_provider.dart';
 import 'package:flutter/material.dart';
@@ -132,6 +133,8 @@ class AppShell extends ConsumerWidget {
     // the result is not read, and failures are swallowed inside the provider
     // so a bad schedule cannot stop the app rendering.
     ref.watch(scheduledCatchUpProvider);
+    // One wrap for all three layouts below, so no shell can forget it.
+    final content = _StaleDataNotice(child: child);
     final isWide        = MediaQuery.sizeOf(context).width >= 800;
     final selectedIndex = _selectedIndex(context, isWide);
 
@@ -162,7 +165,7 @@ class AppShell extends ConsumerWidget {
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.only(right: 72),
-                    child: child,
+                    child: content,
                   ),
                 ),
               ],
@@ -185,7 +188,7 @@ class AppShell extends ConsumerWidget {
       var idx = tabs.indexWhere((t) => path.startsWith(t.path));
       if (idx < 0) idx = 0;
       return Scaffold(
-        body: SafeArea(bottom: false, child: child),
+        body: SafeArea(bottom: false, child: content),
         bottomNavigationBar: _NewBottomBar(
           tabs:          tabs,
           selectedIndex: idx,
@@ -197,7 +200,7 @@ class AppShell extends ConsumerWidget {
     }
 
     return Scaffold(
-      body: SafeArea(bottom: false, child: child),
+      body: SafeArea(bottom: false, child: content),
       bottomNavigationBar: _BottomBar(
         tabs:          _mobileTabs,
         selectedIndex: selectedIndex,
@@ -1459,4 +1462,69 @@ class _TabItem {
     required this.icon,
     required this.activeIcon,
   });
+}
+
+
+/// A strip above the app when what is on screen came from disk rather than the
+/// network.
+///
+/// Without it, cached data is indistinguishable from live data — which is worse
+/// than an error, because a budget that silently predates your last three
+/// purchases looks exactly like one that does not.
+class _StaleDataNotice extends ConsumerWidget {
+  final Widget child;
+  const _StaleDataNotice({required this.child});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cache = ref.watch(responseCacheProvider);
+    return ValueListenableBuilder<DateTime?>(
+      valueListenable: cache.servingFrom,
+      builder: (context, at, _) {
+        if (at == null) return child;
+        final cs    = Theme.of(context).colorScheme;
+        final money = context.money;
+        return Column(
+          children: [
+            Material(
+              color: money.warning.withValues(alpha: 0.16),
+              child: SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 7, 10, 7),
+                  child: Row(
+                    children: [
+                      Icon(Icons.cloud_off, size: 14, color: money.warning),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Offline — showing your budget as of '
+                          '${_when(at)}. Changes need a connection.',
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                              color: cs.onSurface),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Expanded(child: child),
+          ],
+        );
+      },
+    );
+  }
+
+  static String _when(DateTime at) {
+    final now = DateTime.now();
+    final sameDay = at.year == now.year &&
+        at.month == now.month &&
+        at.day == now.day;
+    return sameDay
+        ? DateFormat('h:mm a').format(at)
+        : DateFormat('d MMM, h:mm a').format(at);
+  }
 }
